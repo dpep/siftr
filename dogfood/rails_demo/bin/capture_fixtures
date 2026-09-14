@@ -5,7 +5,8 @@ set -euo pipefail
 
 APP=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=$(cd "$APP/../.." && pwd)
-LISTENER=$ROOT/docs/findings/siftr_rspec_listener.rb
+# The listener siftr embeds; the docs copy is the original experiment's.
+LISTENER=$ROOT/crates/siftr-cli/assets/siftr_rspec_listener.rb
 OUT=$ROOT/fixtures/rails_demo
 LOG=$APP/log/test.log
 
@@ -25,7 +26,7 @@ capture() {
 
   tail -c +$((start + 1)) "$LOG" > "$dir/test.log"
   # log_offset is absolute in the live log; rebase so it indexes the fixture's test.log.
-  ruby -rjson -i -ne 'h = JSON.parse($_); h["log_offset"] -= '"$start"' if h["log_offset"]; puts JSON.generate(h)' "$dir/rspec.ndjson"
+  ruby -rjson -i -ne 'h = JSON.parse($_); h["log_offset"] -= '"$start"' if h["log_offset"]; h.delete("log_ino"); puts JSON.generate(h)' "$dir/rspec.ndjson"
   echo "$name: exit=$code $(wc -c < "$dir/test.log" | tr -d ' ') log bytes"
 }
 

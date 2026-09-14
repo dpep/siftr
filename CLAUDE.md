@@ -148,5 +148,13 @@ cargo fmt --all --check
   a pipe changes what the user sees. `siftr run` gives the child a PTY for
   stdout when siftr's own stdout is a terminal, keeps stderr a pipe (the
   stream split is signal), and strips ANSI before analysis.
+- Ctrl-C under a TTY already reaches the child (same process group); siftr
+  must not forward it too — RSpec force-quits (`exit!`) on the second SIGINT.
+  Plain RSpec exits **1** after one Ctrl-C, so pass the child's code through
+  rather than assuming 130. Interrupted runs must never enter a baseline: a
+  partial run reads as mass DISAPPEARED.
+- The embedded RSpec listener (`crates/siftr-cli/assets/`) is the source of
+  truth; siftr rebases its absolute log offsets (checked by `log_ino`) onto the
+  captured slice.
 - Test timing is noisy (the same demo example varied 9x across two baseline
   runs): latency signals need an absolute floor as well as a ratio.
