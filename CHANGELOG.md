@@ -32,6 +32,9 @@ First version. If you ran a pre-release build, see **Upgrading** below.
 - A busy data directory no longer holds up `siftr run` indefinitely: if another siftr holds it for more than 2s, the command runs unrecorded, with a warning saying why.
 - Runs whose command was killed by a signal (exit 129–159) never join baselines, including runs recorded by older builds.
 - Retention never prunes a run that is still recording, and keeps the evidence a still-open reminder points `explain` to. When a signal's evidence was pruned anyway, `explain` shows its numbers and says so rather than failing.
+- `siftr run -- CMD | head` stops the command as it would unwrapped: the command gets SIGPIPE, siftr exits the same way, and the truncated run is kept out of baselines.
+- A busy store never delays the command's start or its output; if it stays busy, the run passes through unrecorded with one warning. `siftr run -j` prints a JSON document even then (`run: null`, `not_recorded: {code, message}`), and `busy` is a JSON error code for every command.
+- When earlier changes are still open, the run header says `no new changes · N still open` instead of `0 changes`.
 
 ### Upgrading
 
