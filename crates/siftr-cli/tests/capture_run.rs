@@ -105,19 +105,20 @@ fn an_interrupt_reaches_the_child_once_and_the_partial_run_stays_out_of_baseline
         Some(7),
         "the child's own exit, as without siftr"
     );
-    assert!(
-        stderr.contains("interrupted (signal 2): run r1"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("r1: interrupted by signal 2"), "{stderr}");
     assert!(
         home.path().join("runs/r1/stdout.log").exists(),
         "the capture is kept"
     );
     let history = siftr(&home, &["history", "-j"]).output().unwrap();
     let runs: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
-    assert!(
-        runs[0]["exit_code"].is_null(),
-        "unfinished, so never in a baseline: {runs}"
+    assert_eq!(
+        runs[0]["interrupted"], 2,
+        "flagged interrupted, so never in a baseline: {runs}"
+    );
+    assert_eq!(
+        runs[0]["exit_code"], 7,
+        "the child's own exit (it trapped SIGINT rather than dying by it): {runs}"
     );
 }
 

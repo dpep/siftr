@@ -1,10 +1,10 @@
 //! One recorded run, shared by `run` and `ingest`: raw bytes to the capture, lines through the analyzer,
 //! then aggregates, baseline and signals persisted together.
 
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context as _, Result};
-use siftr_core::analyze::Analyzer;
+use siftr_core::analyze::{Analysis, Analyzer};
 use siftr_core::baseline::{Baseline, MAX_RUNS};
 use siftr_core::context::Context;
 use siftr_core::observation::{LineSplitter, Observation, Stream};
@@ -73,36 +73,17 @@ impl Recording {
         });
     }
 
-    /// Keeps the raw capture but leaves the run unfinished; unfinished runs never join a baseline.
-    pub fn abandon(self) -> RunId {
-        if let Some(capture) = self.capture
-            && let Err(error) = capture.finish()
-        {
-            output::warn(format_args!("raw capture incomplete: {error}"));
-        }
-        self.run
-    }
-
     pub fn finish(self, exit_code: Option<i32>) -> Result<Recorded> {
         let Recording {
             mut store,
             run,
             context,
             capture,
-            mut streams,
-            mut analyzer,
+            streams,
+            analyzer,
             started,
         } = self;
-        let wall = started.elapsed();
-        for (stream, splitter) in &mut streams {
-            splitter.finish(|seq, line| analyzer.observe(Observation { stream, seq, line }));
-        }
-        if let Some(capture) = capture
-            && let Err(error) = capture.finish()
-        {
-            output::warn(format_args!("raw capture incomplete: {error}"));
-        }
-        let analysis = analyzer.finish();
+        let (wall, analysis) = analyze(capture, streams, analyzer, started);
 
         let baseline = store.baseline_runs(&context, run, MAX_RUNS)?;
         let signals = detect(
@@ -131,4 +112,55 @@ impl Recording {
             signals: store.signals(run)?,
         })
     }
+
+    /// Same analysis as `finish`, but kept as evidence only: no baseline comparison, no signals, and the run
+    /// itself is excluded from later baselines (its missing tail would read as mass DISAPPEARED).
+    ///
+    /// `exit_code` is the child's own exit, not assumed from `signal`: a trapping child (RSpec force-quits
+    /// only on the second SIGINT) can still exit with its own code rather than dying by the signal.
+    pub fn finish_interrupted(self, exit_code: Option<i32>, signal: i32) -> Result<Recorded> {
+        let Recording {
+            mut store,
+            run,
+            capture,
+            streams,
+            analyzer,
+            started,
+            ..
+        } = self;
+        let (wall, analysis) = analyze(capture, streams, analyzer, started);
+
+        let end = RunEnd {
+            wall,
+            exit_code,
+            lines: analysis.observations,
+        };
+        store.finish_interrupted_run(run, end, &analysis, signal)?;
+        Ok(Recorded {
+            run: store.run(run)?.context("the finished run is missing")?,
+            behaviors: analysis.aggregates.len() as u64,
+            baseline_runs: Vec::new(),
+            signals: Vec::new(),
+        })
+    }
+}
+
+/// Drains buffered lines through the analyzer and closes the capture: shared tail of `finish` and
+/// `finish_interrupted`.
+fn analyze(
+    capture: Option<Capture>,
+    mut streams: Vec<(Stream, LineSplitter)>,
+    mut analyzer: Analyzer,
+    started: Instant,
+) -> (Duration, Analysis) {
+    let wall = started.elapsed();
+    for (stream, splitter) in &mut streams {
+        splitter.finish(|seq, line| analyzer.observe(Observation { stream, seq, line }));
+    }
+    if let Some(capture) = capture
+        && let Err(error) = capture.finish()
+    {
+        output::warn(format_args!("raw capture incomplete: {error}"));
+    }
+    (wall, analyzer.finish())
 }

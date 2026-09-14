@@ -233,12 +233,12 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
         }
         match interrupts.and_then(|interrupts| interrupts.received()) {
             // A partial run would read as behaviors disappearing, next to every baseline it joined.
-            Some(signal) => {
-                let run = recording.abandon();
-                output::warn(format_args!(
-                    "interrupted (signal {signal}): run {run} keeps its capture but stays unfinished, out of baselines"
-                ));
-            }
+            Some(signal) => match recording.finish_interrupted(Some(code), signal) {
+                Ok(recorded) => report(&recorded, globals.json),
+                Err(error) => output::warn(format_args!(
+                    "analysis failed; the command's result is unaffected: {error:#}"
+                )),
+            },
             None => match recording.finish(Some(code)) {
                 Ok(recorded) => report(&recorded, globals.json),
                 Err(error) => output::warn(format_args!(
