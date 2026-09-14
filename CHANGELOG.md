@@ -35,6 +35,8 @@ First version. If you ran a pre-release build, see **Upgrading** below.
 - `siftr run -- CMD | head` stops the command as it would unwrapped: the command gets SIGPIPE, siftr exits the same way, and the truncated run is kept out of baselines.
 - A busy store never delays the command's start or its output; if it stays busy, the run passes through unrecorded with one warning. `siftr run -j` prints a JSON document even then (`run: null`, `not_recorded: {code, message}`), and `busy` is a JSON error code for every command.
 - When earlier changes are still open, the run header says `no new changes · N still open` instead of `0 changes`.
+- A new error outside examples — a `raise` after a describe block, a suite hook that raises — is a NEW change even when every example ran.
+- Deleting or renaming a spec file is one change (`N examples of <file>`), not one per example, and never outranks a real regression. Still-open reminders no longer repeat examples or queries that disappeared on purpose; a DISAPPEARED signal supporting a regression still rides with it.
 
 ### Upgrading
 
