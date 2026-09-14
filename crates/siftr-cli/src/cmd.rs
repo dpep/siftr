@@ -4,9 +4,11 @@ pub mod changes;
 pub mod evidence;
 pub mod explain;
 pub mod feedback;
+pub mod gc;
 pub mod history;
 pub mod ingest;
 pub mod run;
+pub mod status;
 pub mod summary;
 
 use std::path::PathBuf;
