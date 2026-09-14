@@ -61,7 +61,7 @@ Source ──Observation──▶ Interpreter ──Event──▶ Aggregator �
 - **Baseline** — derived from recent runs of the same context: occurrence
   ratio, typical count, typical latency, run-to-run spread.
 - **Signal** — a behavioral change worth attention: kind (NEW, DISAPPEARED,
-  FREQUENCY, LATENCY, ERROR), current vs baseline numbers, confidence, evidence
+  FREQUENCY, LATENCY, ERROR, INCOMPLETE), current vs baseline numbers, confidence, evidence
   refs. Related signals group under one headline (the example whose count
   moved). Rules and thresholds come from measured noise:
   `docs/findings/signals.md` — change them only with a new backtest.

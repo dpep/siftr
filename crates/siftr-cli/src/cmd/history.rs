@@ -29,7 +29,7 @@ pub struct Args {
     #[arg(long, value_name = "NAME")]
     context: Option<String>,
 
-    /// These runs' signals instead, each with what became of it: open, resolved, or recurred
+    /// These runs' signals instead, each with what became of it: open, resolved, recurred, or unknown
     #[arg(long)]
     signals: bool,
 }
@@ -100,7 +100,8 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             writeln!(
                 w,
                 "  {:<5} {:>8}  {status}  {}",
-                run.id,
+                // RunId's Display ignores width, so pad the rendered string.
+                run.id.to_string(),
                 age(run.started_at),
                 printable(&run.command, 80)
             )?;
