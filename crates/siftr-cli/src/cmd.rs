@@ -115,6 +115,32 @@ pub fn skipped_runs(
     Ok(baseline.skipped().to_vec())
 }
 
+/// The whole listener event an exemplar was kept from. An exemplar keeps only a line's first bytes, and an exception's
+/// message is often longer, so this reads the run's raw capture at the exemplar's line, falling back to the kept line
+/// when the capture is gone.
+pub fn listener_event(
+    store: &Store,
+    run: RunId,
+    exemplar: &siftr_core::aggregate::Exemplar,
+) -> Option<String> {
+    use std::io::BufRead as _;
+    if exemplar.stream != crate::sidechannel::rspec_events() {
+        return None;
+    }
+    let whole = std::fs::File::open(store.capture_file(run, &exemplar.stream))
+        .ok()
+        .and_then(|file| {
+            let index = usize::try_from(exemplar.seq).ok()?.checked_sub(1)?;
+            std::io::BufReader::new(file).split(b'\n').nth(index)?.ok()
+        })
+        .map(|line| {
+            String::from_utf8_lossy(&line)
+                .trim_end_matches('\r')
+                .to_owned()
+        });
+    Some(whole.unwrap_or_else(|| exemplar.line.clone()))
+}
+
 /// No run to show: under `-j` the command's `empty` document, else a hint on stderr.
 pub fn no_runs(globals: &Globals, empty: impl FnOnce() -> Value) -> Result<ExitCode> {
     if globals.json {

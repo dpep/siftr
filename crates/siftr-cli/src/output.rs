@@ -4,7 +4,8 @@
 //!
 //! - run: `id`, `project`, `context`, `command`, `cwd`, `started_at_ms`, `finished`, `wall_ms`,
 //!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap), `interrupted`
-//!   (the signal number, or null; interrupted runs are never compared or used as a baseline).
+//!   (the signal number, or null; interrupted runs are never compared or used as a baseline), `complete` (false
+//!   when the run is unfinished, interrupted, or signalled INCOMPLETE: it didn't run what its baseline runs did).
 //! - behavior: `id` (16 hex), `kind`, `template`.
 //! - signal: `id`, `run`, `kind` (error|new|disappeared|frequency|latency|incomplete), `confidence` (number in
 //!   [0, 1)), `measure` (count|queries|duration_ms|failed|examples|errors_outside_of_examples), `current`,
@@ -29,6 +30,9 @@
 //!   (run ids or null), `later_runs` (finished runs of the context judged against the signal's own baseline),
 //!   `investigated` (an explain, evidence or ack on its behavior before it resolved), `dismissed`, `feedback`
 //!   (on its behavior, from its run until the run it resolved in, oldest first).
+//! - exemplar (`explain`, `evidence`): `stream`, `seq` (line number in the run's capture of that stream), `line`
+//!   (the kept line, cut at 1024 bytes), `exception` ({`class`, `message`}, the message whole, read from the
+//!   capture, when the line is a test listener event that carries one; else null).
 //! - nothing found (exit 1) is still the command's document: `changes` with `run` null and empty arrays,
 //!   `summary` with `run` null, `evidence` with `run` null, `history` an empty array.
 //! - error (exit 2; `run` keeps its own codes), on stdout: {`error`: {`code`, `message`}}. `code` is `usage`
@@ -268,7 +272,7 @@ impl Changes<'_> {
     pub fn json(&self) -> Value {
         let groups = groups(self.signals);
         json!({
-            "run": run_json(self.run),
+            "run": run_json(self.run, complete(self.run, self.signals)),
             "behaviors": self.behaviors,
             "baseline_runs": ids(self.baseline_runs),
             "skipped_runs": self.skipped_runs.iter().map(|(run, why)| json!({
@@ -327,13 +331,15 @@ impl Changes<'_> {
                 plural(self.behaviors, "behavior")
             )?;
         } else {
+            let incomplete = incomplete_reason(&groups, self.signals)
+                .map_or_else(String::new, |why| format!(" (incomplete: {why})"));
             let skipped = match self.skipped_runs {
                 [] => String::new(),
                 skipped => format!("; skipped {}", skipped_label(skipped)),
             };
             write!(
                 w,
-                "{run} vs {} ({}{skipped}): {}",
+                "{run}{incomplete} vs {} ({}{skipped}): {}",
                 plural(n, "baseline run"),
                 runs_label(self.baseline_runs),
                 plural(code.len() as u64, "change")
@@ -472,12 +478,36 @@ pub fn change(stored: &StoredSignal) -> String {
             format!("{} {} → {}{range}", s.measure, at(b.median), s.current)
         }
         SignalKind::Latency => format!("{}ms → {}ms", at(b.median), s.current),
-        SignalKind::Incomplete => format!(
-            "{} {} now, {} in baseline runs",
-            s.measure,
-            s.current,
-            at(b.median)
-        ),
+        SignalKind::Incomplete => {
+            use siftr_core::behavior::Kind;
+            use siftr_core::interpret::rspec::summary::EXAMPLES;
+            use siftr_core::signal::measure::COUNT;
+            match (s.measure.as_str(), stored.behavior.kind) {
+                (COUNT, Kind::Exception) => format!(
+                    "failed outside examples: {} now, {} in baseline runs",
+                    s.current,
+                    at(b.median)
+                ),
+                (EXAMPLES, _) if b.min == b.max => format!(
+                    "ran {}, {} in every baseline run",
+                    plural(s.current as u64, "example"),
+                    at(b.median)
+                ),
+                (EXAMPLES, _) => format!(
+                    "ran {}, {}–{} in baseline runs",
+                    plural(s.current as u64, "example"),
+                    at(b.min),
+                    at(b.max)
+                ),
+                (COUNT, _) => "no test summary: stopped before the reporter finished".to_owned(),
+                _ => format!(
+                    "{} {} now, {} in baseline runs",
+                    s.measure,
+                    s.current,
+                    at(b.median)
+                ),
+            }
+        }
         SignalKind::New => format!(
             "new: {} now, in none of {} baseline runs",
             s.current, b.runs
@@ -553,7 +583,49 @@ pub fn ids(runs: &[RunId]) -> Vec<String> {
     runs.iter().map(RunId::to_string).collect()
 }
 
-pub fn run_json(run: &RunRecord) -> Value {
+/// Whether a run ran what it set out to: finished, not interrupted, and not signalled INCOMPLETE.
+pub fn complete(run: &RunRecord, signals: &[StoredSignal]) -> bool {
+    run.end.is_some()
+        && run.interrupted.is_none()
+        && !signals
+            .iter()
+            .any(|s| s.signal.kind == SignalKind::Incomplete)
+}
+
+/// What an incomplete run didn't do, in a few words, when its first group is headed by INCOMPLETE.
+fn incomplete_reason(groups: &[Group<'_>], signals: &[StoredSignal]) -> Option<String> {
+    use siftr_core::behavior::Kind;
+    use siftr_core::interpret::rspec::summary::EXAMPLES;
+    use siftr_core::signal::measure::COUNT;
+    let head = groups.first()?.headline();
+    if head.signal.kind != SignalKind::Incomplete {
+        return None;
+    }
+    let s = &head.signal;
+    Some(match (s.measure.as_str(), head.behavior.kind) {
+        (COUNT, Kind::Exception) => {
+            let errors: f64 = signals
+                .iter()
+                .filter(|m| {
+                    m.signal.kind == SignalKind::Incomplete && m.behavior.kind == Kind::Exception
+                })
+                .map(|m| m.signal.current)
+                .sum();
+            format!("{} outside examples", plural(errors as u64, "error"))
+        }
+        (EXAMPLES, _) => format!(
+            "ran {} of {} examples",
+            s.current,
+            s.baseline
+                .median
+                .map_or_else(|| "?".to_owned(), |m| m.to_string())
+        ),
+        (COUNT, _) => "no test summary".to_owned(),
+        _ => format!("{} {}", s.measure, s.current),
+    })
+}
+
+pub fn run_json(run: &RunRecord, complete: bool) -> Value {
     json!({
         "id": run.id.to_string(),
         "project": run.context.project(),
@@ -567,6 +639,7 @@ pub fn run_json(run: &RunRecord) -> Value {
         "lines": run.end.map(|end| end.lines),
         "overflow_events": run.overflow_events,
         "interrupted": run.interrupted,
+        "complete": complete,
     })
 }
 
@@ -641,31 +714,49 @@ pub fn signal_json(stored: &StoredSignal) -> Value {
     })
 }
 
-pub fn exemplar_json(exemplar: &Exemplar) -> Value {
-    json!({ "stream": exemplar.stream.to_string(), "seq": exemplar.seq, "line": exemplar.line })
-}
-
-/// `Class: message` when the exemplar is a failed example's listener event, whose raw line is JSON.
-pub fn exception(exemplar: &Exemplar) -> Option<String> {
-    if exemplar.stream.to_string() != crate::sidechannel::rspec_events().to_string() {
-        return None;
-    }
-    let event: Value = serde_json::from_str(&exemplar.line).ok()?;
-    let exception = event.get("exception")?;
-    let class = exception.get("class")?.as_str()?;
-    // Matcher messages span lines ("\nexpected: 1\n     got: 2"); one line reads better beside the raw event.
-    let message = exception
+/// The exception a test listener event carries, class and whole message: a failed example's, or an error outside
+/// examples'.
+fn failure(event: &str) -> Option<(String, String)> {
+    let event: Value = serde_json::from_str(event).ok()?;
+    let source = event.get("exception").unwrap_or(&event);
+    let class = source.get("class")?.as_str()?.to_owned();
+    let message = source
         .get("message")
         .and_then(Value::as_str)
-        .unwrap_or_default()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    Some(if message.is_empty() {
-        class.to_owned()
-    } else {
-        format!("{class}: {message}")
+        .unwrap_or_default();
+    Some((class, message.to_owned()))
+}
+
+pub fn exemplar_json(exemplar: &Exemplar, event: Option<&str>) -> Value {
+    json!({
+        "stream": exemplar.stream.to_string(),
+        "seq": exemplar.seq,
+        "line": exemplar.line,
+        "exception": event.and_then(failure).map(|(class, message)| json!({ "class": class, "message": message })),
     })
+}
+
+/// `Class: the message's first line`, then its other lines as written, for printing before the raw event.
+pub fn exception(event: &str) -> Option<Vec<String>> {
+    let (class, message) = failure(event)?;
+    // Matcher messages open with a blank line ("\nexpected: 1\n     got: 2").
+    let mut lines: Vec<&str> = message
+        .lines()
+        .map(str::trim_end)
+        .skip_while(|line| line.is_empty())
+        .collect();
+    while lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+    let first = match lines.first() {
+        Some(first) => format!("{class}: {}", first.trim_start()),
+        None => class,
+    };
+    Some(
+        std::iter::once(first)
+            .chain(lines.iter().skip(1).map(|line| (*line).to_owned()))
+            .collect(),
+    )
 }
 
 /// The signals a changes output shows: all of them as JSON; for a person, only what [`Changes::human`] prints.

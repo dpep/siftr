@@ -82,12 +82,20 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         })
         .collect();
 
+    let events: Vec<Option<String>> = exemplars
+        .iter()
+        .map(|e| super::listener_event(&store, run, e))
+        .collect();
     let as_json = || {
         json!({
             "behavior": behavior_json(&behavior),
             "run": run.to_string(),
             "stats": stats_json(&stats),
-            "exemplars": exemplars.iter().map(exemplar_json).collect::<Vec<_>>(),
+            "exemplars": exemplars
+                .iter()
+                .zip(&events)
+                .map(|(e, event)| exemplar_json(e, event.as_deref()))
+                .collect::<Vec<_>>(),
             "captures": captures,
         })
     };
@@ -106,9 +114,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             plural(stats.errors, "error"),
             plural(exemplars.len() as u64, "line")
         )?;
-        for exemplar in &exemplars {
-            if let Some(exception) = exception(exemplar) {
-                writeln!(w, "  {}", printable(&exception, 200))?;
+        for (exemplar, event) in exemplars.iter().zip(&events) {
+            for line in event.as_deref().and_then(exception).unwrap_or_default() {
+                writeln!(w, "  {}", printable(&line, 200))?;
             }
             let at = format!("{}:{}", exemplar.stream, exemplar.seq);
             writeln!(w, "  {at:<12} {}", printable(&exemplar.line, 200))?;

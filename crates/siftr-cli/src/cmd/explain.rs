@@ -82,6 +82,13 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         })
         .unwrap_or_default();
 
+    let events: Vec<Option<String>> = match evidence_run {
+        Some(run) => exemplars
+            .iter()
+            .map(|e| super::listener_event(&store, run, e))
+            .collect(),
+        None => Vec::new(),
+    };
     let values = |rows: &[(RunId, Option<f64>)]| -> Value {
         rows.iter()
             .map(|(run, v)| json!({ "run": run.to_string(), "value": v }))
@@ -99,7 +106,11 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             "scope_runs": scoped.as_deref().map(values),
             "evidence": {
                 "run": evidence_run.map(|run| run.to_string()),
-                "exemplars": exemplars.iter().map(exemplar_json).collect::<Vec<_>>(),
+                "exemplars": exemplars
+                    .iter()
+                    .zip(&events)
+                    .map(|(e, event)| exemplar_json(e, event.as_deref()))
+                    .collect::<Vec<_>>(),
             },
             "group": group.iter().map(|m| m.id.to_string()).collect::<Vec<_>>(),
         })
@@ -158,9 +169,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             Some(run) => writeln!(w, "evidence  {run}")?,
             None => writeln!(w, "evidence  none kept")?,
         }
-        for exemplar in &exemplars {
-            if let Some(exception) = exception(exemplar) {
-                writeln!(w, "          {}", printable(&exception, 160))?;
+        for (exemplar, event) in exemplars.iter().zip(&events) {
+            for line in event.as_deref().and_then(exception).unwrap_or_default() {
+                writeln!(w, "          {}", printable(&line, 240))?;
             }
             let at = format!("{}:{}", exemplar.stream, exemplar.seq);
             writeln!(w, "          {at:<20} {}", printable(&exemplar.line, 160))?;

@@ -46,28 +46,31 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     if args.signals {
         return signals(&store, &runs, globals);
     }
-    // (code-level changes, signals) per run.
+    // (code-level changes, signals, complete) per run.
     let counts = runs
         .iter()
         .map(|run| {
             let signals = store.signals(run.id)?;
             let changes = groups(&signals).iter().filter(|g| !g.setup).count();
-            Ok((changes, signals.len()))
+            Ok((changes, signals.len(), output::complete(run, &signals)))
         })
         .collect::<Result<Vec<_>>>()?;
 
     let as_json = || {
-        let rows = runs.iter().zip(&counts).map(|(run, &(changes, signals))| {
-            let mut row = run_json(run);
-            row["changes"] = Value::from(changes);
-            row["signals"] = Value::from(signals);
-            row
-        });
+        let rows = runs
+            .iter()
+            .zip(&counts)
+            .map(|(run, &(changes, signals, complete))| {
+                let mut row = run_json(run, complete);
+                row["changes"] = Value::from(changes);
+                row["signals"] = Value::from(signals);
+                row
+            });
         Value::Array(rows.collect())
     };
     output::emit(globals.json, as_json, |w| {
         writeln!(w, "runs in {project}")?;
-        for (run, &(changes, _)) in runs.iter().zip(&counts) {
+        for (run, &(changes, _, _)) in runs.iter().zip(&counts) {
             let status = match run.end {
                 Some(end) if run.interrupted.is_some() => format!(
                     "interrupted (signal {}) {:>8} lines",

@@ -46,13 +46,14 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     };
     let rows = store.behaviors(run.id, order, args.limit)?;
     let total = store.behavior_count(run.id)?;
+    let complete = output::complete(&run, &store.signals(run.id)?);
 
     let as_json = || {
         let behaviors: Vec<_> = rows
             .iter()
             .map(|(behavior, stats)| json!({ "behavior": behavior_json(behavior), "stats": stats_json(stats) }))
             .collect();
-        json!({ "run": run_json(&run), "behaviors_total": total, "behaviors": behaviors })
+        json!({ "run": run_json(&run, complete), "behaviors_total": total, "behaviors": behaviors })
     };
     output::emit(globals.json, as_json, |w| {
         let lines = run.end.map_or(0, |end| end.lines);
