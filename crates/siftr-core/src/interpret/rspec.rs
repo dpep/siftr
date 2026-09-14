@@ -101,13 +101,26 @@ impl Rspec {
             }
             Record::Example(example) => self.example(obs, &example, emit),
             Record::Summary(summary) => summary.emit(obs, std::mem::take(&mut self.start), emit),
-            Record::ErrorOutsideExamples { context, class } => {
+            Record::ErrorOutsideExamples {
+                context,
+                class,
+                message,
+            } => {
                 self.template.clear();
-                if let Some(class) = class {
-                    self.template.extend_from_slice(class.as_bytes());
-                    self.template.extend_from_slice(b": ");
+                match loaded_file(&context) {
+                    Some(file) => {
+                        self.template.extend_from_slice(file.as_bytes());
+                        self.template.extend_from_slice(b" failed to load");
+                    }
+                    None => self
+                        .template
+                        .extend_from_slice(context.trim_end_matches('.').as_bytes()),
                 }
-                self.template.extend_from_slice(context.as_bytes());
+                let cause = message.as_deref().and_then(cause);
+                for part in [class.as_deref(), cause.as_deref()].into_iter().flatten() {
+                    self.template.extend_from_slice(b": ");
+                    self.template.extend_from_slice(part.as_bytes());
+                }
                 emit(&Event {
                     kind: Kind::Exception,
                     template: literal(&self.template),
@@ -182,6 +195,7 @@ enum Record {
         /// RSpec's own first line, e.g. `An error occurred while loading ./spec/a_spec.rb.`
         context: String,
         class: Option<String>,
+        message: Option<String>,
     },
     #[serde(other)]
     Other,
@@ -282,6 +296,42 @@ impl Summary {
             measures: &measures,
         });
     }
+}
+
+/// The spec file RSpec names in a load error's context: `While loading ./spec/a_spec.rb a …`,
+/// `An error occurred while loading ./spec/a_spec.rb.`
+fn loaded_file(context: &str) -> Option<&str> {
+    let (_, rest) = context.split_once("loading ")?;
+    let file = rest.split_whitespace().next()?.trim_end_matches('.');
+    (!file.is_empty()).then_some(file)
+}
+
+/// Longest cause kept in a template: it names a behavior, so it stays one line of what went wrong.
+const MAX_CAUSE_CHARS: usize = 160;
+
+/// What went wrong, in one line of an exception message. Ruby's parser points at the source with `^~~` lines,
+/// the last naming the root (`expected a block beginning with \`do\` to end with \`end\``); other messages
+/// lead with it, after any `path:line:` prefix.
+fn cause(message: &str) -> Option<String> {
+    let caret = message.lines().rev().find_map(|line| {
+        let pointed = line.trim_start().strip_prefix('|')?.trim_start();
+        pointed
+            .starts_with('^')
+            .then(|| pointed.trim_start_matches(['^', '~']).trim())
+    });
+    let first = || {
+        let line = message
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())?;
+        let unprefixed = line.split_once(": ").and_then(|(head, rest)| {
+            let (_, number) = head.rsplit_once(':')?;
+            number.bytes().all(|b| b.is_ascii_digit()).then_some(rest)
+        });
+        Some(unprefixed.unwrap_or(line))
+    };
+    let cause = caret.filter(|c| !c.is_empty()).or_else(first)?;
+    Some(cause.chars().take(MAX_CAUSE_CHARS).collect())
 }
 
 fn seconds(secs: f64) -> Option<Duration> {
@@ -522,7 +572,30 @@ mod tests {
     }
 
     #[test]
-    fn an_error_outside_examples_is_an_unscoped_exception_named_by_class_and_context() {
+    fn a_load_error_is_named_by_its_file_class_and_cause() {
+        // A spec missing its `end`, as Ruby 3.4's parser reports it through the listener.
+        let missing_end = r#"{"event":"error_outside_examples","context":"While loading ./spec/models/post_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.","class":"SyntaxError","message":"/project/spec/models/post_spec.rb:5: syntax errors found\n  3 |     expect(1).to eq 1\n  4 | \n> 5 | end\n    |    ^ unexpected end-of-input, assuming it is closing the parent top level context\n> 6 | \n    | ^ expected a block beginning with `do` to end with `end`\n"}"#;
+        let hook = r#"{"event":"error_outside_examples","context":"An error occurred in an `after(:suite)` hook.","class":"RuntimeError","message":"after suite boom"}"#;
+        let missing_file = r#"{"event":"error_outside_examples","context":"An error occurred while loading ./spec/gone_spec.rb.","class":"LoadError","message":"/project/spec/gone_spec.rb:1: cannot load such file -- gone"}"#;
+        let templates: Vec<String> = interpret(&[(
+            EVENTS_STREAM,
+            [missing_end, hook, missing_file].join("\n").as_bytes(),
+        )])
+        .into_iter()
+        .map(|seen| seen.template)
+        .collect();
+        assert_eq!(
+            templates,
+            [
+                "./spec/models/post_spec.rb failed to load: SyntaxError: expected a block beginning with `do` to end with `end`",
+                "An error occurred in an `after(:suite)` hook: RuntimeError: after suite boom",
+                "./spec/gone_spec.rb failed to load: LoadError: cannot load such file -- gone",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_error_outside_examples_is_an_unscoped_failed_exception() {
         let event = r#"{"event":"error_outside_examples","context":"While loading ./spec/a_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.","class":"SyntaxError","message":"unexpected 'end'"}"#;
         let [seen] = interpret(&[(EVENTS_STREAM, event.as_bytes())])
             .try_into()
@@ -531,7 +604,7 @@ mod tests {
             (seen.kind, seen.template.as_str(), seen.scope, seen.outcome),
             (
                 Kind::Exception,
-                "SyntaxError: While loading ./spec/a_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.",
+                "./spec/a_spec.rb failed to load: SyntaxError: unexpected 'end'",
                 None,
                 Some(Outcome::Failure)
             )

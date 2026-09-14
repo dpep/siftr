@@ -77,7 +77,7 @@ fn a_spec_file_that_failed_to_load_is_the_one_change() {
             "incomplete",
             "count",
             1.0,
-            "SyntaxError: While loading ./spec/requests/users_spec.rb a `raise SyntaxError` occurred, RSpec will now quit."
+            "./spec/requests/users_spec.rb failed to load: SyntaxError: unexpected 'end'; expected a `)` to close the arguments"
         )]
     );
 }
