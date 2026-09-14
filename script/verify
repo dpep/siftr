@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Verify a commit end to end in a throwaway worktree: the full gate, then the
+# rails_demo dogfood sequence with a release build. The shared tree is never
+# touched except rails_demo specs, which are restored on exit.
+#
+#   script/verify [SHA]        (default HEAD)
+#   SKIP_GATE=1 script/verify  (dogfood only)
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+SHA=$(git -C "$ROOT" rev-parse --short "${1:-HEAD}")
+SCRATCH=${VERIFY_SCRATCH:-${TMPDIR:-/tmp}/siftr-verify}
+WT=$SCRATCH/wt-$SHA
+DEMO=$ROOT/dogfood/rails_demo
+SPEC=$DEMO/spec/requests/users_spec.rb
+mkdir -p "$SCRATCH"
+
+cleanup() {
+  [ -f "$SCRATCH/users_spec.rb.orig" ] && cp "$SCRATCH/users_spec.rb.orig" "$SPEC" && rm "$SCRATCH/users_spec.rb.orig"
+  git -C "$ROOT" worktree remove --force "$WT" 2>/dev/null || true
+}
+trap cleanup EXIT
+git -C "$ROOT" worktree add --detach "$WT" "$SHA" >/dev/null
+
+echo "== verify $SHA"
+if [ -z "${SKIP_GATE:-}" ]; then
+  export CARGO_TARGET_DIR=$SCRATCH/target
+  cargo test --workspace --no-fail-fast --manifest-path "$WT/Cargo.toml" >"$SCRATCH/test.log" 2>&1 || true
+  failed=$(grep -c '^test result: FAILED' "$SCRATCH/test.log" || true)
+  ok=$(grep -c '^test result: ok' "$SCRATCH/test.log" || true)
+  echo "tests: $ok binaries ok, $failed failed (log: $SCRATCH/test.log)"
+  cargo clippy --workspace --all-targets --manifest-path "$WT/Cargo.toml" -- -D warnings >"$SCRATCH/clippy.log" 2>&1 \
+    && echo "clippy: ok" || echo "clippy: FAILED (log: $SCRATCH/clippy.log)"
+  cargo fmt --all --check --manifest-path "$WT/Cargo.toml" >/dev/null 2>&1 && echo "fmt: ok" || echo "fmt: FAILED"
+  [ "$failed" = 0 ] || exit 1
+fi
+
+CARGO_TARGET_DIR=$SCRATCH/release cargo build --release --manifest-path "$WT/Cargo.toml" >/dev/null 2>&1
+SIFTR=$SCRATCH/release/release/siftr
+export SIFTR_HOME=$SCRATCH/home-$SHA
+rm -rf "$SIFTR_HOME"
+cp "$SPEC" "$SCRATCH/users_spec.rb.orig"
+
+# Failing suites are the point of several steps, so the child's exit status must not stop the script.
+run() { (cd "$DEMO" && env "$@" "$SIFTR" run -q -- bundle exec rspec 2>&1 | sed -e '/^next:/d' | cut -c1-170) || true; }
+restore() { cp "$SCRATCH/users_spec.rb.orig" "$SPEC"; }
+
+echo "== clean x3";            run X=1; run X=1; run X=1
+echo "== N+1";                 run SIFTR_DEMO_N_PLUS_ONE=1
+echo "== N+1 unfixed";         run SIFTR_DEMO_N_PLUS_ONE=1
+echo "== fixed";               run X=1
+echo "== spec fails to load";  printf 'RSpec.describe "broken" do\n' >>"$SPEC"; run X=1; restore
+echo "== raise after describe"; echo 'raise SyntaxError' >>"$SPEC"; run X=1; restore
+echo "== clean after";         run X=1
+echo "== history";             (cd "$DEMO" && "$SIFTR" history 2>&1 | sed -e '/^next:/d')
+echo "== history --signals";   (cd "$DEMO" && "$SIFTR" history --signals 2>&1 | sed -e '/^next:/d' | cut -c1-150)
+echo "== demo git";            git -C "$ROOT" status --short dogfood/ || true
