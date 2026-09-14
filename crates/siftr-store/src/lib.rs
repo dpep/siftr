@@ -2,6 +2,7 @@
 //! plus each run's raw capture, byte for byte, under `<home>/runs/<run>/`.
 
 mod capture;
+mod feedback;
 mod ids;
 mod read;
 mod schema;
@@ -17,6 +18,7 @@ use siftr_core::context::Context;
 use siftr_core::signal::Signal;
 
 pub use capture::Capture;
+pub use feedback::{Feedback, FeedbackKind, Interface};
 pub use ids::{InvalidId, RunId, SignalId};
 pub use read::Order;
 pub use write::Finished;

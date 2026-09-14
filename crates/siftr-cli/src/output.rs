@@ -14,6 +14,10 @@
 //! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `baseline_runs`, `changes`
 //!   (code-level groups), `groups` [{`rank`, `setup`, `headline` (signal id), `signals` (ids)}],
 //!   `signals` (rank order).
+//! - feedback (`ack -j`, `dismiss -j`): `kind` (surfaced|investigated|evidence_requested|dismissed|acked),
+//!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
+//!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
+//!   behavior was named, as by `evidence`), `note`.
 
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -26,7 +30,7 @@ use siftr_core::aggregate::{Exemplar, MAX_BEHAVIORS, Stats};
 use siftr_core::behavior::Behavior;
 use siftr_core::num::round_sig;
 use siftr_core::signal::{MIN_BASELINE_RUNS, Signal, SignalKind};
-use siftr_store::{RunId, RunRecord, StoredSignal};
+use siftr_store::{Feedback, RunId, RunRecord, StoredSignal};
 
 pub fn warn(message: impl Display) {
     eprintln!("siftr: warning: {message}");
@@ -395,6 +399,34 @@ pub fn signal_json(stored: &StoredSignal) -> Value {
 
 pub fn exemplar_json(exemplar: &Exemplar) -> Value {
     json!({ "stream": exemplar.stream.to_string(), "seq": exemplar.seq, "line": exemplar.line })
+}
+
+/// The signals a changes output shows: all of them as JSON; for a person, only what [`Changes::human`] prints.
+pub fn surfaced(signals: &[StoredSignal], json: bool) -> Vec<&StoredSignal> {
+    if json {
+        return signals.iter().collect();
+    }
+    let (setup, code): (Vec<Group<'_>>, Vec<Group<'_>>) =
+        groups(signals).into_iter().partition(|g| g.setup);
+    // As `human` prints them: the first code groups in full, and each setup group by its headline's id.
+    code.into_iter()
+        .take(SHOWN_GROUPS)
+        .flat_map(|g| g.members)
+        .chain(setup.into_iter().map(|g| g.members[0]))
+        .collect()
+}
+
+pub fn feedback_json(feedback: &Feedback) -> Value {
+    json!({
+        "kind": feedback.kind.as_str(),
+        "at_ms": feedback.at.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
+        "command": feedback.command,
+        "interface": feedback.interface.as_str(),
+        "run": feedback.run.to_string(),
+        "behavior": feedback.behavior.to_string(),
+        "signal": feedback.signal.map(|s| s.to_string()),
+        "note": feedback.note,
+    })
 }
 
 fn micros(duration: Duration) -> u64 {

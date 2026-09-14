@@ -6,9 +6,9 @@ use anyhow::{Context as _, Result};
 use serde_json::{Value, json};
 use siftr_core::aggregate::RunStats;
 use siftr_core::signal::{self, measure};
-use siftr_store::{RunId, SignalId};
+use siftr_store::{Feedback, FeedbackKind, RunId, SignalId};
 
-use super::Globals;
+use super::{Globals, record_feedback};
 use crate::output::{
     self, behavior_json, change, exemplar_json, groups, label, printable, rule, signal_json,
 };
@@ -171,5 +171,14 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             behavior.id.short()
         )
     })?;
+    record_feedback(
+        &store,
+        &[Feedback::on_signal(
+            FeedbackKind::Investigated,
+            "explain",
+            globals.interface(),
+            &stored,
+        )],
+    );
     Ok(ExitCode::SUCCESS)
 }

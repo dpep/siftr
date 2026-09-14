@@ -144,6 +144,26 @@ CREATE INDEX signals_by_run ON signals (run_id, group_rank);
 -- The signal that interrupted the run. A partial run would read as mass DISAPPEARED, so it never joins a baseline.
 ALTER TABLE runs ADD COLUMN interrupted INTEGER;
 ",
+    r"
+-- What people and agents did with what siftr showed them. Facts only: outcomes are derived, never stored.
+CREATE TABLE feedback (
+    id          INTEGER PRIMARY KEY,
+    at_ms       INTEGER NOT NULL,
+    -- surfaced | investigated | evidence_requested | dismissed | acked
+    kind        TEXT NOT NULL,
+    -- The siftr command that recorded it; for surfaced, where the signal was shown.
+    command     TEXT NOT NULL,
+    -- human | json
+    interface   TEXT NOT NULL,
+    -- The run whose data was shown; the context is the run's.
+    run_id      INTEGER NOT NULL REFERENCES runs (id),
+    behavior_id TEXT NOT NULL REFERENCES behaviors (id),
+    -- NULL when the command named a behavior, not a signal.
+    signal_id   INTEGER REFERENCES signals (id),
+    note        TEXT
+);
+CREATE INDEX feedback_by_behavior ON feedback (behavior_id, at_ms);
+",
 ];
 
 pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {

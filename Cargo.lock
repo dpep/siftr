@@ -408,6 +408,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "rusqlite",
  "rustix",
  "serde_json",
  "siftr-core",

@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use siftr_core::context::Context;
 use siftr_store::RunId;
 
-use super::{Globals, found, no_runs, resolve_run};
+use super::{Globals, found, no_runs, record_surfaced, resolve_run};
 use crate::output::{self, Changes};
 use crate::project;
 
@@ -44,5 +44,6 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         signals: &signals,
     };
     output::emit(globals.json, || changes.json(), |w| changes.human(w))?;
+    record_surfaced(globals, "changes", &signals);
     Ok(found(!signals.is_empty()))
 }

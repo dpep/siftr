@@ -201,7 +201,7 @@ pub(crate) fn micros(duration: Duration) -> i64 {
     i64::try_from(duration.as_micros()).unwrap_or(i64::MAX)
 }
 
-fn unix_ms(time: SystemTime) -> i64 {
+pub(crate) fn unix_ms(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH).map_or(0, |since| {
         i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
     })

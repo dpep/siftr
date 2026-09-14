@@ -5,9 +5,9 @@ use std::process::ExitCode;
 
 use anyhow::{Context as _, Result, bail};
 use serde_json::json;
-use siftr_store::RunId;
+use siftr_store::{Feedback, FeedbackKind, RunId};
 
-use super::{Globals, found};
+use super::{Globals, found, record_feedback};
 use crate::output::{self, behavior_json, exemplar_json, printable, stats_json};
 use crate::project;
 
@@ -93,5 +93,15 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         }
         writeln!(w, "next: siftr summary {run}")
     })?;
+    record_feedback(
+        &store,
+        &[Feedback::on_behavior(
+            FeedbackKind::EvidenceRequested,
+            "evidence",
+            globals.interface(),
+            run,
+            behavior.id,
+        )],
+    );
     Ok(found(!exemplars.is_empty()))
 }

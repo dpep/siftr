@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use siftr_store::FeedbackKind;
 
 const AFTER_HELP: &str = "\
 Exit codes:
@@ -21,7 +22,8 @@ Exit codes:
 Examples:
   siftr run -- bundle exec rspec
   siftr changes
-  siftr explain s3";
+  siftr explain s3
+  siftr ack s3 -m 'fixing the N+1'";
 
 #[derive(Parser)]
 #[command(
@@ -57,6 +59,10 @@ enum Command {
     Evidence(cmd::evidence::Args),
     /// A signal's current and baseline numbers, and its evidence
     Explain(cmd::explain::Args),
+    /// Mark a signal as being acted on
+    Ack(cmd::feedback::Args),
+    /// Mark a signal as not worth acting on
+    Dismiss(cmd::feedback::Args),
     /// Runs recorded in this project
     History(cmd::history::Args),
 }
@@ -75,6 +81,10 @@ fn main() -> ExitCode {
         Command::Summary(args) => cmd::summary::run(args, &globals),
         Command::Evidence(args) => cmd::evidence::run(args, &globals),
         Command::Explain(args) => cmd::explain::run(args, &globals),
+        Command::Ack(args) => cmd::feedback::run(FeedbackKind::Acked, "ack", args, &globals),
+        Command::Dismiss(args) => {
+            cmd::feedback::run(FeedbackKind::Dismissed, "dismiss", args, &globals)
+        }
         Command::History(args) => cmd::history::run(args, &globals),
     };
     result.unwrap_or_else(|error| {

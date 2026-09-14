@@ -450,7 +450,7 @@ fn stats(row: &Row<'_>, at: usize) -> rusqlite::Result<Stats> {
     })
 }
 
-fn parsed<T>(row: &Row<'_>, at: usize) -> rusqlite::Result<T>
+pub(crate) fn parsed<T>(row: &Row<'_>, at: usize) -> rusqlite::Result<T>
 where
     T: FromStr,
     T::Err: Error + Send + Sync + 'static,
