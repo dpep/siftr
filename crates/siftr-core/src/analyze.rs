@@ -147,6 +147,8 @@ mod tests {
                     source,
                     duration: None,
                     outcome: None,
+                    scope: None,
+                    measures: &[],
                 });
             }
         }

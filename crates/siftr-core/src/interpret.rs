@@ -8,7 +8,7 @@ pub mod generic;
 use std::time::Duration;
 
 use crate::aggregate::Aggregator;
-use crate::behavior::Kind;
+use crate::behavior::{BehaviorId, Kind};
 use crate::normalize::{Normalized, Normalizer};
 use crate::observation::Observation;
 
@@ -29,6 +29,10 @@ pub struct Event<'a> {
     pub source: Observation<'a>,
     pub duration: Option<Duration>,
     pub outcome: Option<Outcome>,
+    /// The enclosing test example's behavior, when known (e.g. SQL attributed via log offsets).
+    pub scope: Option<BehaviorId>,
+    /// Named measures beyond duration, e.g. `("queries", 3.0)` on a request.
+    pub measures: &'a [(&'static str, f64)],
 }
 
 #[must_use]

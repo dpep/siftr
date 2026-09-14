@@ -43,12 +43,14 @@ Source ──Observation──▶ Interpreter ──Event──▶ Aggregator �
 ```
 
 - **Observation** — one raw record (a line) with stream (`stdout`, `stderr`,
-  `file:<path>`), sequence number and run-relative time.
+  `file:<name>`) and per-stream line number (= its line in the run's capture of
+  that stream).
 - **Template** — an observation with incidental variation masked into typed
   slots (`<uuid>`, `<int>`, `<duration>`, `<path>`, …) plus the slot values.
 - **Event** — an interpreted observation: semantic kind (`test.example`,
   `test.summary`, `db.query`, `http.request`, `exception`, `log`), template,
-  and extracted measures (duration, status, outcome).
+  duration, outcome, named measures (`queries`), and **scope** — the enclosing
+  test example when known, so a SQL change is attributable to one example.
 - **Behavior** — a recurring pattern identified by a **stable** id derived from
   (semantic kind, template). Stable across runs and machines: use a fixed hash
   (never `std` `DefaultHasher`/`RandomState`).
@@ -59,7 +61,10 @@ Source ──Observation──▶ Interpreter ──Event──▶ Aggregator �
 - **Baseline** — derived from recent runs of the same context: occurrence
   ratio, typical count, typical latency, run-to-run spread.
 - **Signal** — a behavioral change worth attention: kind (NEW, DISAPPEARED,
-  FREQUENCY, LATENCY, ERROR, …), magnitude, confidence, evidence refs.
+  FREQUENCY, LATENCY, ERROR), current vs baseline numbers, confidence, evidence
+  refs. Related signals group under one headline (the example whose count
+  moved). Rules and thresholds come from measured noise:
+  `docs/findings/signals.md` — change them only with a new backtest.
 - **Evidence** — exemplar raw lines kept per aggregate (bounded), plus the
   run's raw capture on disk.
 
@@ -69,7 +74,7 @@ Source ──Observation──▶ Interpreter ──Event──▶ Aggregator �
 crates/
   siftr-normalize  per-line masker → template + typed slots; slot stats + identifier/enum classification. Zero deps.
   siftr-core    pure: domain types, interpret, aggregate, baseline, signal. No I/O.
-  siftr-store   persistence behind store traits; SQLite (rusqlite, bundled) today.
+  siftr-store   one concrete `Store` over SQLite (rusqlite, bundled); a trait arrives with a second backend.
   siftr-cli     the `siftr` binary: capture, commands, rendering.
 dogfood/        real projects/scripts used to exercise siftr end to end
 fixtures/       committed captured outputs used by tests (no private data)
@@ -108,7 +113,7 @@ logging to stderr, flag > env > XDG for paths).
 - Data dir: `--home` > `SIFTR_HOME` > `$XDG_DATA_HOME/siftr` > `~/.local/share/siftr`.
   Every test sets `SIFTR_HOME` to a temp dir.
 - `siftr run -- CMD…` exits with CMD's code; siftr's own failure before the
-  child starts exits 125.
+  child starts exits 125; 126 cannot execute, 127 not found. `ingest` exits 0 or 2.
 - Query commands: `0` results, `1` empty, `2` error.
 - IDs are short and copyable; every command's human output ends with the next
   command to run for drill-down.

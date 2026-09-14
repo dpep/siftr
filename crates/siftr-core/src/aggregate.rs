@@ -211,6 +211,8 @@ mod tests {
             source,
             duration,
             outcome: None,
+            scope: None,
+            measures: &[],
         });
     }
 

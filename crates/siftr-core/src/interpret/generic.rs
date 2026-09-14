@@ -32,6 +32,8 @@ impl Interpreter for Generic {
             source: obs,
             duration,
             outcome,
+            scope: None,
+            measures: &[],
         });
         Claim::Claimed
     }
