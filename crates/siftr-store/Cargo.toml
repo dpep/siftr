@@ -1,0 +1,15 @@
+[package]
+name = "siftr-store"
+description = "Siftr persistence: SQLite metadata plus raw run captures on disk."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+siftr-core.workspace = true
+anyhow.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

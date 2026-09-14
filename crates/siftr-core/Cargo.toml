@@ -1,0 +1,9 @@
+[package]
+name = "siftr-core"
+description = "Siftr's pure domain: observations, normalization, interpretation, aggregation, baselines and signals."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
