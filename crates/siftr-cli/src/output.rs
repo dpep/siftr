@@ -332,6 +332,7 @@ impl Changes<'_> {
             groups.iter().partition(|g| g.setup);
         let run = self.run.id;
         let n = self.baseline_runs.len() as u64;
+        let open = open_groups(self.open_signals);
         let named: Vec<RunId> = (self.baseline_runs.iter().copied())
             .chain(self.skipped_runs.iter().map(|&(run, _)| run))
             .collect();
@@ -361,12 +362,18 @@ impl Changes<'_> {
                 [] => String::new(),
                 skipped => format!("; skipped {}", skipped_label(skipped, &named)),
             };
+            // "0 changes" beside a still-open reminder reads as "did it change or not?".
+            let moved = match (code.len() as u64, open.len()) {
+                (0, 0) => plural(0, "change"),
+                (0, open) => format!("no new changes · {open} still open"),
+                (changes, 0) => plural(changes, "change"),
+                (changes, open) => format!("{} · {open} still open", plural(changes, "change")),
+            };
             write!(
                 w,
-                "{run}{incomplete} vs {} ({}{skipped}): {}",
+                "{run}{incomplete} vs {} ({}{skipped}): {moved}",
                 plural(n, "baseline run"),
                 runs_label(self.baseline_runs, &named),
-                plural(code.len() as u64, "change")
             )?;
             if n < u64::from(MIN_BASELINE_RUNS) {
                 write!(
@@ -404,7 +411,6 @@ impl Changes<'_> {
                 self.run.overflow_events
             )?;
         }
-        let open = open_groups(self.open_signals);
         for change in open.iter().take(SHOWN_GROUPS) {
             let head = change[0];
             let supporting = match change.len() {

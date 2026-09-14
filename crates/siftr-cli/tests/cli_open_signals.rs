@@ -105,7 +105,7 @@ fn an_unfixed_regression_is_reminded_until_it_is_fixed_or_dismissed() {
     );
     let human = String::from_utf8(changes.stdout).unwrap();
     assert!(
-        human.starts_with("r5 vs 4 baseline runs (r1…r4): 0 changes\n"),
+        human.starts_with("r5 vs 4 baseline runs (r1…r4): no new changes · 1 still open\n"),
         "{human}"
     );
     let reminder = human
@@ -160,7 +160,7 @@ fn the_run_summary_reminds_of_an_unfixed_regression() {
     let again = sandbox.siftr(&suite);
     let report = String::from_utf8(again.stderr).unwrap();
     assert!(
-        report.starts_with("r5 vs 4 baseline runs (r1…r4): 0 changes\n"),
+        report.starts_with("r5 vs 4 baseline runs (r1…r4): no new changes · 1 still open\n"),
         "{report}"
     );
     assert!(
