@@ -1,0 +1,14 @@
+{"event":"start","expected":10,"load_time":0.528733,"log_offset":400}
+{"event":"example_started","id":"./spec/models/comment_spec.rb[1:1]","log_offset":400}
+{"event":"example","id":"./spec/models/comment_spec.rb[1:1]","description":"requires a body","full_description":"Comment requires a body","file_path":"./spec/models/comment_spec.rb","line_number":4,"status":"passed","run_time":0.003773,"log_offset":546}
+{"event":"example_started","id":"./spec/models/comment_spec.rb[1:2]","log_offset":546}
+{"event":"example","id":"./spec/models/comment_spec.rb[1:2]","description":"is hidden when flagged","full_description":"Comment is hidden when flagged","file_path":"./spec/models/comment_spec.rb","line_number":8,"status":"pending","run_time":0.002639,"pending_message":"moderation is not built yet","log_offset":692}
+{"event":"example_started","id":"./spec/models/post_spec.rb[1:1]","log_offset":692}
+{"event":"example","id":"./spec/models/post_spec.rb[1:1]","description":"requires a title","full_description":"Post requires a title","file_path":"./spec/models/post_spec.rb","line_number":6,"status":"passed","run_time":0.007466,"log_offset":1282}
+{"event":"example_started","id":"./spec/models/post_spec.rb[1:2]","log_offset":1282}
+{"event":"example","id":"./spec/models/post_spec.rb[1:2]","description":"summarizes the body","full_description":"Post summarizes the body","file_path":"./spec/models/post_spec.rb","line_number":10,"status":"passed","run_time":0.00062,"log_offset":1872}
+{"event":"example_started","id":"./spec/models/user_spec.rb[1:1]","log_offset":1872}
+{"event":"example","id":"./spec/models/user_spec.rb[1:1]","description":"requires a name","full_description":"User requires a name","file_path":"./spec/models/user_spec.rb","line_number":4,"status":"passed","run_time":0.000186,"log_offset":2018}
+{"event":"example_started","id":"./spec/models/user_spec.rb[1:2]","log_offset":2018}
+{"event":"example","id":"./spec/models/user_spec.rb[1:2]","description":"requires an email","full_description":"User requires an email","file_path":"./spec/models/user_spec.rb","line_number":8,"status":"failed","run_time":0.000201,"exception":{"class":"RSpec::Expectations::ExpectationNotMetError","message":"expected #<User id: nil, created_at: nil, email: nil, name: \"Ada\", updated_at: nil> not to be valid"},"log_offset":2164}
+{"event":"summary","duration":0.016608,"load_time":0.528733,"examples":6,"failures":1,"pending":1,"errors_outside_of_examples":0,"log_offset":2164}

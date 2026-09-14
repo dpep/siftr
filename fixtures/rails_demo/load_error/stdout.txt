@@ -47,6 +47,6 @@ Pending: (Failures listed here are expected and do not affect your suite's statu
        expected #<Comment id: nil, body: nil, created_at: nil, post_id: nil, updated_at: nil> to respond to :hidden?
      # ./spec/models/comment_spec.rb:10:in 'block (2 levels) in <top (required)>'
 
-Finished in 0.02562 seconds (files took 0.89888 seconds to load)
+Finished in 0.02412 seconds (files took 0.84504 seconds to load)
 8 examples, 0 failures, 1 pending, 1 error occurred outside of examples
 

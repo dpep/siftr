@@ -258,6 +258,12 @@ pub fn change(stored: &StoredSignal) -> String {
             format!("{} {} → {}{range}", s.measure, at(b.median), s.current)
         }
         SignalKind::Latency => format!("{}ms → {}ms", at(b.median), s.current),
+        SignalKind::Incomplete => format!(
+            "{} {} now, {} in baseline runs",
+            s.measure,
+            s.current,
+            at(b.median)
+        ),
         SignalKind::New => format!(
             "new: {} now, in none of {} baseline runs",
             s.current, b.runs
@@ -318,6 +324,9 @@ pub fn rule(s: &Signal) -> String {
         ),
         SignalKind::Error => format!(
             "failed now; no baseline failure had the same exception; confidence 1 - (failures+1)/(n+2) = {c}"
+        ),
+        SignalKind::Incomplete => format!(
+            "didn't run what all {n} baseline runs did, so what it lacks isn't signalled; confidence (n+1)/(n+2) = {c}"
         ),
     }
 }

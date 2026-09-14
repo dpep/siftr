@@ -59,12 +59,36 @@ module SiftrRspec
       @io.write(JSON.generate(h) << "\n")
     end
   end
+
+  # Errors outside examples (a spec file that fails to load, a suite hook) reach listeners only as
+  # formatted text whose wording varies by cause; the reporter call itself has the exception.
+  module ErrorsOutsideExamples
+    def self.for(listener)
+      Module.new do
+        define_method(:notify_non_example_exception) do |exception, context_description|
+          listener.error_outside_examples(exception, context_description)
+          super(exception, context_description)
+        end
+      end
+    end
+  end
+
+  class Listener
+    def error_outside_examples(exception, context)
+      emit(event: "error_outside_examples", context: context.to_s.lines.first.to_s.chomp,
+           class: exception.class.name, message: exception.message.to_s[0, 2000])
+    end
+  end
 end
 
 if (path = ENV["SIFTR_RSPEC_EVENTS"]) && !path.empty?
   log_path = ENV["SIFTR_RSPEC_LOG"]
   log_path = nil if log_path&.empty?
   RSpec.configure do |c|
-    c.reporter.register_listener(SiftrRspec::Listener.new(path, log_path), *SiftrRspec::Listener::EVENTS)
+    listener = SiftrRspec::Listener.new(path, log_path)
+    c.reporter.register_listener(listener, *SiftrRspec::Listener::EVENTS)
+    if c.reporter.respond_to?(:notify_non_example_exception)
+      c.reporter.singleton_class.prepend(SiftrRspec::ErrorsOutsideExamples.for(listener))
+    end
   end
 end

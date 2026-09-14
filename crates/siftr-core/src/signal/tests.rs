@@ -470,3 +470,38 @@ fn runs_recorded_before_test_results_were_read_are_no_baseline_for_a_test_run() 
     assert_eq!(baseline(&current, &old).skipped().len(), 3);
     assert_eq!(rows(&current, &old), []);
 }
+
+/// A run that stopped early: what it didn't run stays quiet, what did run is still judged.
+#[test]
+fn an_incomplete_run_keeps_what_ran_and_names_what_did_not() {
+    use SignalKind::*;
+    let [a, c, d] = ["a", "c", "d"].map(|t| b(Kind::TestExample, t));
+    let posts = |q| {
+        b(Kind::HttpRequest, "PostsController#index")
+            .within(&c, 1, Some(q))
+            .queries(q)
+    };
+    let clean = run(&[
+        summary(3.0, 3.0, 0.0),
+        a.clone(),
+        c.clone(),
+        d.clone(),
+        posts(3.0),
+        b(Kind::Log, "warming cache").stderr(),
+    ]);
+    let stopped = run(&[
+        summary(2.0, 3.0, 0.0),
+        a.clone().failed(),
+        c.clone(),
+        posts(5.0),
+    ]);
+    assert_eq!(
+        rows(&stopped, &vec![clean; 3]),
+        [
+            row(1, true, Incomplete, "examples", 2.0, 0.8),
+            row(2, true, Error, "failed", 1.0, 0.8),
+            row(3, true, Frequency, "queries", 5.0, 0.8),
+        ],
+        "no DISAPPEARED for d, which didn't run, nor for stderr, which a partial run can lack"
+    );
+}

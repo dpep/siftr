@@ -12,14 +12,18 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::aggregate::{BehaviorStats, Phase, RunStats, overflow_behavior};
-use crate::baseline::Baseline;
+use crate::baseline::{Baseline, Ineligible};
 use crate::behavior::{BehaviorId, Kind};
+use crate::interpret::rspec::{EVENTS_STREAM, summary};
 use crate::num::{median, round_sig};
 use crate::observation::Stream;
 use rules::Presence;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SignalKind {
+    /// The run didn't run what its baseline runs did (a spec file failed to load, it stopped early): what it
+    /// lacks is not signalled, and this says why.
+    Incomplete,
     /// An example failed that passed in the baseline.
     Error,
     /// Occurs now; absent from every baseline run.
@@ -33,7 +37,8 @@ pub enum SignalKind {
 }
 
 impl SignalKind {
-    pub const ALL: [SignalKind; 5] = [
+    pub const ALL: [SignalKind; 6] = [
+        SignalKind::Incomplete,
         SignalKind::Error,
         SignalKind::New,
         SignalKind::Disappeared,
@@ -44,6 +49,7 @@ impl SignalKind {
     /// Persisted and printed in JSON: stable.
     pub const fn as_str(self) -> &'static str {
         match self {
+            SignalKind::Incomplete => "incomplete",
             SignalKind::Error => "error",
             SignalKind::New => "new",
             SignalKind::Disappeared => "disappeared",
@@ -170,7 +176,13 @@ pub fn detect<K>(current: &RunStats, baseline: &Baseline<'_, K>) -> Vec<Signal> 
     for id in ids {
         comparison.judge(id, &mut found);
     }
-    comparison.latency(&mut found);
+    match baseline.incomplete() {
+        None => comparison.latency(&mut found),
+        Some(why) => {
+            found.retain(|f| !comparison.partial_run_explains(&f.signal));
+            comparison.incomplete(why, &mut found);
+        }
+    }
     rank(found)
 }
 
@@ -250,7 +262,7 @@ fn tier(kind: SignalKind, class: Class) -> u8 {
     use Class::*;
     use SignalKind::*;
     match (kind, class) {
-        (Error, _) => 1,
+        (Error | Incomplete, _) => 1,
         (Frequency, Request) | (New, Stderr) | (Latency, Example) => 2,
         (Frequency, _) => 3,
         _ => 4,
@@ -260,6 +272,8 @@ fn tier(kind: SignalKind, class: Class) -> u8 {
 /// Signals sharing a key form one group.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Key {
+    /// The run's own incompleteness.
+    Incomplete,
     /// An example, or one phase outside them.
     Scope(Phase),
     /// Stderr has no per-example attribution: the same message from different call sites groups by prefix.
@@ -582,6 +596,117 @@ impl<'a> Comparison<'a> {
         }
     }
 
+    /// Whether a partial run could account for `signal` by what it didn't run. NEW and ERROR stand: a partial
+    /// run adds nothing, and an example that ran failed. LATENCY never stands, since a partial suite's
+    /// duration can't veto a machine stall.
+    fn partial_run_explains(&self, signal: &Signal) -> bool {
+        match signal.kind {
+            SignalKind::Incomplete | SignalKind::Error | SignalKind::New => false,
+            SignalKind::Latency => true,
+            SignalKind::Disappeared | SignalKind::Frequency => {
+                !self.within_examples_that_ran(signal.behavior)
+            }
+        }
+    }
+
+    /// Every occurrence of `id`, now and in the baseline, is an example that ran now or lies inside one.
+    fn within_examples_that_ran(&self, id: BehaviorId) -> bool {
+        let ran = |example: BehaviorId| {
+            self.current
+                .get(example)
+                .is_some_and(|b| b.behavior.kind == Kind::TestExample && b.stats.count > 0)
+        };
+        std::iter::once(self.current)
+            .chain(self.runs.iter().copied())
+            .filter_map(|run| run.get(id))
+            .all(|b| match b.behavior.kind {
+                Kind::TestExample => ran(id),
+                _ => {
+                    b.unattributed == 0
+                        && b.unscoped_count() == 0
+                        && b.scopes.iter().all(|s| {
+                            matches!(Phase::from_scope_id(Some(s.scope)), Phase::Example(e) if ran(e))
+                        })
+                }
+            })
+    }
+
+    /// INCOMPLETE, on the behaviors that show it: each new error outside examples, else the test summary.
+    fn incomplete(&self, why: Ineligible, found: &mut Vec<Found>) {
+        let Some(confidence) = rules::incomplete(self.n()) else {
+            return;
+        };
+        let numbers = |values: &[Option<f64>]| {
+            let present: Vec<f64> = values.iter().flatten().copied().collect();
+            BaselineNumbers {
+                runs: values.len() as u32,
+                present_in: present.len() as u32,
+                median: median(&present),
+                min: present.iter().copied().reduce(f64::min),
+                max: present.iter().copied().reduce(f64::max),
+                failures: None,
+            }
+        };
+        let summary_of = |run: &RunStats| {
+            run.iter()
+                .find(|b| b.behavior.kind == Kind::TestSummary)
+                .map(|b| b.behavior.id)
+        };
+        let mut evidence: Vec<(BehaviorId, &'static str, f64, BaselineNumbers)> = Vec::new();
+        let on_summary = |name: &'static str| {
+            let Some(id) = summary_of(self.current)
+                .or_else(|| self.runs.iter().find_map(|run| summary_of(run)))
+            else {
+                return Vec::new();
+            };
+            let then: Vec<Option<f64>> = self.runs.iter().map(|run| value(run, id, name)).collect();
+            let now = value(self.current, id, name).unwrap_or(0.0);
+            vec![(id, name, now, numbers(&then))]
+        };
+        match why {
+            Ineligible::NoTestSummary => evidence = on_summary(measure::COUNT),
+            Ineligible::Stopped { .. } | Ineligible::Subset { .. } => {
+                evidence = on_summary(summary::EXAMPLES);
+            }
+            Ineligible::ErrorsOutsideExamples { .. } => {
+                for b in self.current.iter().filter(|b| error_outside_examples(b)) {
+                    let then: Vec<Option<f64>> = self
+                        .runs
+                        .iter()
+                        .map(|run| Some(run.count(b.behavior.id) as f64))
+                        .collect();
+                    let most = then.iter().flatten().copied().fold(0.0, f64::max);
+                    let now = b.stats.count as f64;
+                    if now > most {
+                        evidence.push((b.behavior.id, measure::COUNT, now, numbers(&then)));
+                    }
+                }
+                // A listener that predates error events: the summary's count is the evidence.
+                if evidence.is_empty() {
+                    evidence = on_summary(summary::ERRORS_OUTSIDE_OF_EXAMPLES);
+                }
+            }
+        }
+        for (behavior, name, current, baseline) in evidence {
+            found.push(Found {
+                signal: Signal {
+                    kind: SignalKind::Incomplete,
+                    behavior,
+                    measure: name.to_owned(),
+                    current,
+                    baseline,
+                    exception: None,
+                    attribution: None,
+                    confidence,
+                    tier: tier(SignalKind::Incomplete, Class::Output),
+                    group: 0,
+                    headline: false,
+                },
+                key: Key::Incomplete,
+            });
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn push(
         &self,
@@ -677,6 +802,13 @@ impl<'a> Comparison<'a> {
             })
             .collect()
     }
+}
+
+/// An error the RSpec listener reported outside every example, such as a spec file that failed to load.
+fn error_outside_examples(b: &BehaviorStats) -> bool {
+    b.behavior.kind == Kind::Exception
+        && b.scopes.is_empty()
+        && matches!(&b.first, Some((Stream::File(name), _)) if &**name == EVENTS_STREAM)
 }
 
 /// Exception behaviors attributed to `example` in `run`, by id, with their templates.

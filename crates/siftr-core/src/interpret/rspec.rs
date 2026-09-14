@@ -99,6 +99,24 @@ impl Rspec {
             }
             Record::Example(example) => self.example(obs, &example, emit),
             Record::Summary(summary) => summary.emit(obs, self.expected.take(), emit),
+            Record::ErrorOutsideExamples { context, class } => {
+                self.template.clear();
+                if let Some(class) = class {
+                    self.template.extend_from_slice(class.as_bytes());
+                    self.template.extend_from_slice(b": ");
+                }
+                self.template.extend_from_slice(context.as_bytes());
+                emit(&Event {
+                    kind: Kind::Exception,
+                    template: literal(&self.template),
+                    input: &self.template,
+                    source: obs,
+                    duration: None,
+                    outcome: Some(Outcome::Failure),
+                    scope: None,
+                    measures: &[],
+                });
+            }
             Record::Other => {}
         }
     }
@@ -159,6 +177,12 @@ enum Record {
     },
     Example(Example),
     Summary(Summary),
+    /// A spec file that failed to load, or a suite or context hook that raised.
+    ErrorOutsideExamples {
+        /// RSpec's own first line, e.g. `An error occurred while loading ./spec/a_spec.rb.`
+        context: String,
+        class: Option<String>,
+    },
     #[serde(other)]
     Other,
 }
@@ -481,6 +505,23 @@ mod tests {
                 ("errors_outside_of_examples", 1.0),
                 ("expected", 4.0)
             ]
+        );
+    }
+
+    #[test]
+    fn an_error_outside_examples_is_an_unscoped_exception_named_by_class_and_context() {
+        let event = r#"{"event":"error_outside_examples","context":"While loading ./spec/a_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.","class":"SyntaxError","message":"unexpected 'end'"}"#;
+        let [seen] = interpret(&[(EVENTS_STREAM, event.as_bytes())])
+            .try_into()
+            .expect("one event");
+        assert_eq!(
+            (seen.kind, seen.template.as_str(), seen.scope, seen.outcome),
+            (
+                Kind::Exception,
+                "SyntaxError: While loading ./spec/a_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.",
+                None,
+                Some(Outcome::Failure)
+            )
         );
     }
 

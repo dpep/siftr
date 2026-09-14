@@ -12,6 +12,7 @@ use std::fmt;
 use crate::aggregate::RunStats;
 use crate::behavior::Kind;
 use crate::interpret::rspec::summary;
+use crate::num::median;
 
 /// Older runs than this say more about the past than about normal.
 pub const MAX_RUNS: usize = 10;
@@ -21,6 +22,7 @@ pub const MAX_RUNS: usize = 10;
 pub struct Baseline<'a, K> {
     runs: Vec<(K, &'a RunStats)>,
     skipped: Vec<(K, Ineligible)>,
+    incomplete: Option<Ineligible>,
 }
 
 impl<'a, K> Baseline<'a, K> {
@@ -33,6 +35,7 @@ impl<'a, K> Baseline<'a, K> {
         let mut baseline = Baseline {
             runs: Vec::new(),
             skipped: Vec::new(),
+            incomplete: None,
         };
         for (key, run) in candidates.into_iter().take(MAX_RUNS) {
             match now.map_or(Ok(()), |now| now.comparable(Tests::of(run))) {
@@ -40,7 +43,14 @@ impl<'a, K> Baseline<'a, K> {
                 Err(why) => baseline.skipped.push((key, why)),
             }
         }
+        let then: Vec<Option<Tests>> = baseline.iter().map(Tests::of).collect();
+        baseline.incomplete = Tests::incomplete(now, &then);
         baseline
+    }
+
+    /// Why the current run itself didn't run what every baseline run did; `None` when it did, or there are none.
+    pub fn incomplete(&self) -> Option<Ineligible> {
+        self.incomplete
     }
 
     pub fn runs(&self) -> u32 {
@@ -63,18 +73,19 @@ impl<'a, K> Baseline<'a, K> {
     }
 }
 
-/// Why a recent run of the context isn't comparable with a test run.
+/// Why a test run didn't run what the run it's compared with did: a recent run skipped from the baseline,
+/// or the current run against its baseline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ineligible {
     /// Stopped before the test reporter summarized (e.g. killed), or recorded before siftr read test results.
     NoTestSummary,
-    /// More errors outside examples than now. RSpec still runs the other files when one fails to load, so
-    /// this is the only mark of the examples that never ran.
-    ErrorsOutsideExamples { then: u64, now: u64 },
+    /// More errors outside examples than the other side. RSpec still runs the other files when one fails to
+    /// load, so this is the only mark of the examples that never ran.
+    ErrorsOutsideExamples { errors: u64, compared: u64 },
     /// Ran fewer examples than it loaded, e.g. stopped by `--fail-fast`.
     Stopped { ran: u64, loaded: u64 },
-    /// Ran under half the examples the current run loaded, e.g. a focus filter.
-    Subset { ran: u64, now: u64 },
+    /// Ran under half the examples of the other side, e.g. a focus filter.
+    Subset { ran: u64, compared: u64 },
 }
 
 impl Ineligible {
@@ -93,13 +104,15 @@ impl fmt::Display for Ineligible {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Ineligible::NoTestSummary => f.write_str("no test summary"),
-            Ineligible::ErrorsOutsideExamples { then, now } => {
-                write!(f, "{then} errors outside examples, {now} now")
+            Ineligible::ErrorsOutsideExamples { errors, compared } => {
+                write!(f, "{errors} errors outside examples vs {compared}")
             }
             Ineligible::Stopped { ran, loaded } => {
                 write!(f, "stopped after {ran} of {loaded} examples")
             }
-            Ineligible::Subset { ran, now } => write!(f, "ran {ran} examples, {now} now"),
+            Ineligible::Subset { ran, compared } => {
+                write!(f, "ran {ran} examples vs {compared}")
+            }
         }
     }
 }
@@ -134,8 +147,8 @@ impl Tests {
         let then = then.ok_or(Ineligible::NoTestSummary)?;
         if then.errors_outside > self.errors_outside {
             return Err(Ineligible::ErrorsOutsideExamples {
-                then: then.errors_outside,
-                now: self.errors_outside,
+                errors: then.errors_outside,
+                compared: self.errors_outside,
             });
         }
         if let Some(loaded) = then.loaded
@@ -149,9 +162,43 @@ impl Tests {
         // Example counts are identical run to run and an edit moves them by a few; a filter moves them by most.
         let now = self.loaded.unwrap_or(self.ran);
         if then.ran * 2 < now {
-            return Err(Ineligible::Subset { ran: then.ran, now });
+            return Err(Ineligible::Subset {
+                ran: then.ran,
+                compared: now,
+            });
         }
         Ok(())
+    }
+
+    /// The same judgement turned around: whether `now` ran what its baseline runs `then` did.
+    fn incomplete(now: Option<Tests>, then: &[Option<Tests>]) -> Option<Ineligible> {
+        let Some(now) = now else {
+            let all = !then.is_empty() && then.iter().all(Option::is_some);
+            return all.then_some(Ineligible::NoTestSummary);
+        };
+        // `from_runs` already skipped baseline runs without a summary.
+        let then: Vec<Tests> = then.iter().flatten().copied().collect();
+        let errors = then.iter().map(|t| t.errors_outside).max()?;
+        if now.errors_outside > errors {
+            return Some(Ineligible::ErrorsOutsideExamples {
+                errors: now.errors_outside,
+                compared: errors,
+            });
+        }
+        if let Some(loaded) = now.loaded
+            && now.ran < loaded
+        {
+            return Some(Ineligible::Stopped {
+                ran: now.ran,
+                loaded,
+            });
+        }
+        let ran: Vec<f64> = then.iter().map(|t| t.ran as f64).collect();
+        let compared = median(&ran)? as u64;
+        (now.ran * 2 < compared).then_some(Ineligible::Subset {
+            ran: now.ran,
+            compared,
+        })
     }
 }
 
@@ -228,7 +275,10 @@ mod tests {
             (
                 "a spec file failed to load",
                 tests(9, Some(9), 1),
-                Some(Ineligible::ErrorsOutsideExamples { then: 1, now: 0 }),
+                Some(Ineligible::ErrorsOutsideExamples {
+                    errors: 1,
+                    compared: 0,
+                }),
             ),
             (
                 "--fail-fast",
@@ -238,7 +288,10 @@ mod tests {
             (
                 "a focus filter",
                 tests(1, Some(1), 0),
-                Some(Ineligible::Subset { ran: 1, now: 10 }),
+                Some(Ineligible::Subset {
+                    ran: 1,
+                    compared: 10,
+                }),
             ),
             ("half the suite", tests(5, Some(5), 0), None),
         ];
@@ -265,6 +318,48 @@ mod tests {
         let runs = [tests(1, Some(10), 3), RunStats::default()];
         let baseline = Baseline::from_runs(&RunStats::default(), runs.iter().enumerate());
         assert_eq!(baseline.runs(), 2);
+    }
+
+    #[test]
+    fn a_current_run_that_did_not_run_what_its_baseline_did_is_incomplete() {
+        let clean = [tests(10, Some(10), 0), tests(10, Some(10), 0)];
+        let cases: [(&str, RunStats, Option<Ineligible>); 6] = [
+            ("clean", tests(10, Some(10), 0), None),
+            ("an example deleted", tests(9, Some(9), 0), None),
+            (
+                "killed",
+                RunStats::default(),
+                Some(Ineligible::NoTestSummary),
+            ),
+            (
+                "a spec file failed to load",
+                tests(8, Some(8), 1),
+                Some(Ineligible::ErrorsOutsideExamples {
+                    errors: 1,
+                    compared: 0,
+                }),
+            ),
+            (
+                "--fail-fast",
+                tests(6, Some(10), 0),
+                Some(Ineligible::Stopped { ran: 6, loaded: 10 }),
+            ),
+            (
+                "a focus filter",
+                tests(1, Some(1), 0),
+                Some(Ineligible::Subset {
+                    ran: 1,
+                    compared: 10,
+                }),
+            ),
+        ];
+        for (name, now, expected) in cases {
+            let baseline = Baseline::from_runs(&now, clean.iter().enumerate());
+            assert_eq!(baseline.incomplete(), expected, "{name}");
+        }
+        let none: [RunStats; 0] = [];
+        let alone = Baseline::from_runs(&RunStats::default(), none.iter().enumerate());
+        assert_eq!(alone.incomplete(), None, "nothing to compare with");
     }
 
     #[test]

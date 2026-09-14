@@ -83,6 +83,11 @@ pub fn frequency(baseline: &[f64], current: f64) -> Option<Frequency> {
     })
 }
 
+/// The current run didn't run what its `n ≥ 1` baseline runs all did. Like a failure, one run is enough to say so.
+pub fn incomplete(n: usize) -> Option<f64> {
+    (n > 0).then(|| confidence(evidence(n)))
+}
+
 /// A failure now, judged against the `n ≥ 1` baseline runs that ran the example, `failures` of which failed.
 /// `known_flaky`: a baseline failure had the same exception, so this one is not news.
 pub fn error(failures: usize, n: usize, known_flaky: bool) -> Option<f64> {
