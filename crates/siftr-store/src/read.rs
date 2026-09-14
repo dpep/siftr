@@ -194,9 +194,8 @@ impl Store {
         }
 
         let sql = format!(
-            "SELECT b.id, b.kind, b.template, {STATS_COLUMNS}, a.unattributed, e.stream, e.seq
+            "SELECT b.id, b.kind, b.template, {STATS_COLUMNS}, a.unattributed, a.first_stream, a.first_seq
              FROM aggregates a JOIN behaviors b ON b.id = a.behavior_id
-             LEFT JOIN exemplars e ON e.run_id = a.run_id AND e.behavior_id = a.behavior_id AND e.position = 0
              WHERE a.run_id = ?1"
         );
         let mut stmt = self.conn.prepare(&sql)?;

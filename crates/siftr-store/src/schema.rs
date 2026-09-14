@@ -167,6 +167,14 @@ CREATE TABLE feedback (
 );
 CREATE INDEX feedback_by_behavior ON feedback (behavior_id, at_ms);
 ",
+    r"
+-- Where each aggregate first occurred (its first exemplar), so reading a baseline needn't touch exemplars.
+ALTER TABLE aggregates ADD COLUMN first_stream TEXT;
+ALTER TABLE aggregates ADD COLUMN first_seq INTEGER;
+UPDATE aggregates SET first_stream = e.stream, first_seq = e.seq
+FROM exemplars e
+WHERE e.run_id = aggregates.run_id AND e.behavior_id = aggregates.behavior_id AND e.position = 0;
+",
 ];
 
 /// Brings the database at `conn` to WAL and the latest schema. `lock` serializes processes doing so.
@@ -208,4 +216,50 @@ fn checked_version(conn: &Connection) -> Result<i64> {
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A database left at `version` by an older siftr.
+    fn at_version(home: &Path, version: usize) -> Connection {
+        let conn = Connection::open(home.join("siftr.db")).unwrap();
+        for migration in &MIGRATIONS[..version] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.pragma_update(None, "user_version", version as i64)
+            .unwrap();
+        conn
+    }
+
+    #[test]
+    fn first_occurrence_is_backfilled_from_the_first_exemplar() {
+        let home = tempfile::tempdir().unwrap();
+        let mut conn = at_version(home.path(), 4);
+        conn.execute_batch(
+            "INSERT INTO runs (id, project, context, command, cwd, started_at_ms) VALUES (1, 'p', 'c', 'c', '/', 0);
+             INSERT INTO behaviors (id, kind, template) VALUES ('a', 'log', 'a'), ('b', 'log', 'b');
+             INSERT INTO aggregates (run_id, behavior_id, count, errors) VALUES (1, 'a', 2, 0), (1, 'b', 1, 0);
+             INSERT INTO exemplars (run_id, behavior_id, position, stream, seq, line)
+                 VALUES (1, 'a', 1, 'stdout', 9, 'a'), (1, 'a', 0, 'file:log/test.log', 4, 'a');",
+        )
+        .unwrap();
+        migrate(&mut conn, &home.path().join("siftr.lock")).unwrap();
+
+        let first = |id: &str| -> (Option<String>, Option<i64>) {
+            conn.query_row(
+                "SELECT first_stream, first_seq FROM aggregates WHERE behavior_id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(first("a"), (Some("file:log/test.log".into()), Some(4)));
+        assert_eq!(
+            first("b"),
+            (None, None),
+            "no exemplar kept, no first occurrence"
+        );
+    }
 }

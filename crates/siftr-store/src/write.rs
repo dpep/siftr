@@ -80,8 +80,8 @@ impl Store {
                 "INSERT OR IGNORE INTO behaviors (id, kind, template) VALUES (?1, ?2, ?3)",
             )?;
             let mut aggregate = tx.prepare(
-                "INSERT INTO aggregates (run_id, behavior_id, count, errors, duration_count, duration_total_us, p50_us, p95_us, max_us, unattributed)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO aggregates (run_id, behavior_id, count, errors, duration_count, duration_total_us, p50_us, p95_us, max_us, unattributed, first_stream, first_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             )?;
             let mut measure = tx.prepare(
                 "INSERT INTO aggregate_measures (run_id, behavior_id, name, count, sum, min, max) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -118,6 +118,8 @@ impl Store {
                     duration.map(|d| micros(d.p95)),
                     duration.map(|d| micros(d.max)),
                     int(agg.unattributed),
+                    agg.exemplars.first().map(|e| e.stream.to_string()),
+                    agg.exemplars.first().map(|e| int(e.seq)),
                 ])?;
                 for m in &agg.measures {
                     let s = m.stats;
