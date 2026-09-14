@@ -21,7 +21,14 @@ First version. If you ran a pre-release build, see **Upgrading** below.
 - An incomplete run reports one INCOMPLETE change (e.g. the spec file that failed to load, with its error) instead of everything it didn't get to run.
 - A command killed by a signal counts as interrupted. siftr stops waiting on leftover background output about a second after the command exits. If the data directory can't be used, the command still runs — unrecorded, with a warning.
 - SQL logged between or after examples is attributed as such rather than as setup, and attribution no longer drifts after CRLF or very long log lines.
+- `-j` always prints one JSON document: empty results (exit 1) and errors, argument errors included (`{"error":{"code","message"}}`, exit 2).
+- An unfixed regression the rolling baseline has absorbed shows as `still open:` in `run`, `ingest` and `changes` (`open_signals` in `-j`) until it's fixed or dismissed.
+- Reports name skipped baseline runs and why (`skipped_runs`), and say when a run was incomplete (`run.complete`). `explain` and `evidence` show a failure's whole message.
+- Changes outside examples say whether they happened before, between or after them. In `-j`, `attribution.setup` is now true only for setup; use `attribution.phase`.
+- Two apps in one repository no longer share a baseline: the project is the nearest directory with a manifest (Gemfile, Cargo.toml, package.json, …), else the current directory.
 
 ### Upgrading
+
+- An app below its repository root, or a directory in a repository with no manifest, starts a fresh baseline once ("no earlier runs"). Runs at a repository root with a manifest keep theirs.
 
 - The first command after upgrading migrates the database — seconds on a large store. Then run `siftr gc` once to prune the backlog and shrink the file; until you do, each run prunes a bounded amount.
