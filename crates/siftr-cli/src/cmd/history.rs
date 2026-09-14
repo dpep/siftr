@@ -43,6 +43,12 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         }
         None => store.runs(&project, args.limit)?,
     };
+    // An unknown context is an error, as in `changes`; an empty project is just empty.
+    if let (true, Some(name)) = (runs.is_empty(), &args.context) {
+        return Err(output::not_found(format!(
+            "no runs of context {name:?} in this project; siftr history lists them"
+        )));
+    }
     if args.signals {
         return signals(&store, &runs, globals);
     }
