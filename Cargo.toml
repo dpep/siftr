@@ -10,6 +10,7 @@ license = "MIT"
 
 [workspace.dependencies]
 siftr-core = { path = "crates/siftr-core" }
+siftr-normalize = { path = "crates/siftr-normalize" }
 siftr-store = { path = "crates/siftr-store" }
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive", "env"] }

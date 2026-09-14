@@ -1,6 +1,7 @@
 //! Interpreters turn observations into events: a semantic kind, a template, and extracted measures.
 //!
 //! Each interpreter lives in its own submodule and is registered in [`default_interpreters`].
+//! Numeric slot values (durations in ms, sizes in bytes) come from [`crate::normalize::slot_value_f64`].
 
 pub mod generic;
 
@@ -19,7 +20,6 @@ pub enum Outcome {
 }
 
 /// An interpreted observation. Borrowed: it lives only as long as the call that records it.
-#[derive(Debug, Clone, Copy)]
 pub struct Event<'a> {
     pub kind: Kind,
     pub template: Normalized<'a>,
@@ -56,44 +56,4 @@ pub trait Interpreter {
 /// The interpreter chain, most specific first. `generic` claims everything, so it stays last.
 pub fn default_interpreters() -> Vec<Box<dyn Interpreter>> {
     vec![Box::new(generic::Generic)]
-}
-
-/// Parses a duration such as `12.3ms`, `0.5 seconds` or `40µs`.
-pub fn parse_duration(text: &[u8]) -> Option<Duration> {
-    let number_len = text
-        .iter()
-        .take_while(|b| b.is_ascii_digit() || **b == b'.')
-        .count();
-    let (number, unit) = text.split_at(number_len);
-    let value: f64 = std::str::from_utf8(number).ok()?.parse().ok()?;
-    let seconds_per_unit = match unit.strip_prefix(b" ").unwrap_or(unit) {
-        b"ns" => 1e-9,
-        b"us" => 1e-6,
-        b"ms" | b"milliseconds" => 1e-3,
-        b"s" | b"sec" | b"secs" | b"second" | b"seconds" => 1.0,
-        b"min" | b"minutes" => 60.0,
-        unit if unit == "µs".as_bytes() => 1e-6,
-        _ => return None,
-    };
-    Duration::try_from_secs_f64(value * seconds_per_unit).ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_durations() {
-        let cases: [(&str, Option<Duration>); 6] = [
-            ("12.5ms", Some(Duration::from_micros(12_500))),
-            ("1.5 seconds", Some(Duration::from_millis(1_500))),
-            ("40µs", Some(Duration::from_micros(40))),
-            ("2min", Some(Duration::from_secs(120))),
-            ("12", None),
-            ("fast", None),
-        ];
-        for (text, expected) in cases {
-            assert_eq!(parse_duration(text.as_bytes()), expected, "{text}");
-        }
-    }
 }

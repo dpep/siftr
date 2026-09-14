@@ -16,7 +16,7 @@ pub mod baseline;
 pub mod behavior;
 pub mod context;
 pub mod interpret;
-pub mod normalize;
+pub use siftr_normalize as normalize;
 pub mod num;
 pub mod observation;
 pub mod signal;

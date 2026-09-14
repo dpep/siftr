@@ -416,6 +416,13 @@ dependencies = [
 [[package]]
 name = "siftr-core"
 version = "0.1.0"
+dependencies = [
+ "siftr-normalize",
+]
+
+[[package]]
+name = "siftr-normalize"
+version = "0.1.0"
 
 [[package]]
 name = "siftr-store"

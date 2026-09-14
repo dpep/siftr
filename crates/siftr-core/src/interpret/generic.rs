@@ -1,9 +1,11 @@
 //! Fallback interpreter: every line is a `log` behavior keyed by its normalized template.
 
-use super::{Claim, Event, Interpreter, Outcome, parse_duration};
+use std::time::Duration;
+
+use super::{Claim, Event, Interpreter, Outcome};
 use crate::aggregate::Aggregator;
 use crate::behavior::Kind;
-use crate::normalize::{Normalizer, SlotKind};
+use crate::normalize::{Normalizer, SlotKind, slot_value_f64};
 use crate::observation::Observation;
 
 pub struct Generic;
@@ -20,7 +22,8 @@ impl Interpreter for Generic {
             .slots
             .iter()
             .find(|slot| slot.kind == SlotKind::Duration)
-            .and_then(|slot| parse_duration(&obs.line[slot.start as usize..slot.end as usize]));
+            .and_then(|slot| slot_value_f64(obs.line, slot))
+            .and_then(|ms| Duration::try_from_secs_f64(ms / 1e3).ok());
         let outcome = has_error_level(template.template).then_some(Outcome::Failure);
         sink.record(&Event {
             kind: Kind::Log,
@@ -57,5 +60,23 @@ mod tests {
         for (line, expected) in cases {
             assert_eq!(has_error_level(line.as_bytes()), expected, "{line}");
         }
+    }
+
+    #[test]
+    fn takes_the_duration_from_the_first_duration_slot() {
+        let stream = crate::observation::Stream::Stdout;
+        let line = b"Completed 200 OK in 12.5ms (Views: 3ms)";
+        let mut aggregator = Aggregator::new();
+        let obs = Observation {
+            stream: &stream,
+            seq: 1,
+            line,
+        };
+        let _ = Generic.observe(obs, &mut Normalizer::new(), &mut aggregator);
+        let stats = aggregator.finish()[0].stats;
+        assert_eq!(
+            stats.duration.map(|d| d.max),
+            Some(Duration::from_micros(12_500))
+        );
     }
 }
