@@ -247,7 +247,10 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
                 )),
             },
             None => match recording.finish(Some(code)) {
-                Ok(recorded) => report(&recorded, globals.json),
+                Ok(recorded) => {
+                    report(&recorded, globals.json);
+                    super::record_surfaced(globals, "run", &recorded.signals);
+                }
                 Err(error) => output::warn(format_args!(
                     "analysis failed; the command's result is unaffected: {error:#}"
                 )),

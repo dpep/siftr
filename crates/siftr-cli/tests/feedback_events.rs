@@ -182,6 +182,33 @@ fn reading_and_acting_on_signals_is_recorded_where_it_happened() {
 }
 
 #[test]
+fn a_run_that_shows_a_signal_records_it_as_surfaced() {
+    let sandbox = Sandbox {
+        home: tempfile::tempdir().unwrap(),
+        project: tempfile::tempdir().unwrap(),
+    };
+    // Same command every time (env alone decides the extra line), so all three share one context.
+    let script = r#"echo hi; if [ -n "$SIFTR_TEST_EXTRA" ]; then echo surprise; fi"#;
+    for _ in 0..2 {
+        let output = sandbox.siftr(&["run", "--", "sh", "-c", script]);
+        assert!(output.status.success(), "{}", stderr(&output));
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_siftr"))
+        .args(["run", "-j", "--", "sh", "-c", script])
+        .current_dir(sandbox.project.path())
+        .env("SIFTR_HOME", sandbox.home.path())
+        .env_remove("XDG_DATA_HOME")
+        .env("SIFTR_TEST_EXTRA", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let signals = json(&output)["signals"].as_array().unwrap().clone();
+    assert_eq!(signals.len(), 1, "{signals:?}");
+
+    assert_eq!(sandbox.feedback(), ["surfaced run json r3 s1 -".to_owned()]);
+}
+
+#[test]
 fn feedback_that_cannot_be_recorded_warns_and_never_fails_a_reading_command() {
     let sandbox = Sandbox::n_plus_one();
     sandbox
