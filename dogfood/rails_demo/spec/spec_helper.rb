@@ -92,3 +92,4 @@ RSpec.configure do |config|
   Kernel.srand config.seed
 =end
 end
+RSpec.configure { |c| c.after(:suite) { raise "after suite boom" } } if ENV["SIFTR_DEMO_AFTER_SUITE_ERROR"]

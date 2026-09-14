@@ -7,7 +7,7 @@ APP=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=$(cd "$APP/../.." && pwd)
 # The listener siftr embeds; the docs copy is the original experiment's.
 LISTENER=$ROOT/crates/siftr-cli/assets/siftr_rspec_listener.rb
-OUT=$ROOT/fixtures/rails_demo
+OUT=${OUT:-$ROOT/fixtures/rails_demo}
 LOG=$APP/log/test.log
 
 # capture <scenario> [VAR=value ...] -- extra env for the run
@@ -40,3 +40,5 @@ capture n_plus_one SIFTR_DEMO_N_PLUS_ONE=1
 capture slow SIFTR_DEMO_SLOW=1
 capture warn SIFTR_DEMO_WARN=1
 capture fail SIFTR_DEMO_FAIL=1
+capture load_error_after_examples SIFTR_DEMO_RAISE_AFTER=1
+capture after_suite_error SIFTR_DEMO_AFTER_SUITE_ERROR=1

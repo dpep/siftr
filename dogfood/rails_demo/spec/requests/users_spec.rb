@@ -22,3 +22,4 @@ RSpec.describe "Users", type: :request do
     expect(response.body).to include("Post 7", "Comment 7.1")
   end
 end
+raise SyntaxError, "compile error" if ENV["SIFTR_DEMO_RAISE_AFTER"]

@@ -25,6 +25,8 @@ level, ANSI-colored).
 | `SIFTR_DEMO_SLOW=1` | `Post#summary` sleeps 0.3s | example `Post summarizes the body` ~1–10ms → ~310ms |
 | `SIFTR_DEMO_WARN=1` | `User#display_name` emits a deprecation | 2 `DEPRECATION WARNING: User#display_name is deprecated…` lines on **stderr** (not the log) |
 | `SIFTR_DEMO_FAIL=1` | `User` drops its email validation | `User requires an email` fails, exit code 1 |
+| `SIFTR_DEMO_RAISE_AFTER=1` | `spec/requests/users_spec.rb` raises a `SyntaxError` after its `describe` block | all 10 examples still run; `1 error occurred outside of examples` |
+| `SIFTR_DEMO_AFTER_SUITE_ERROR=1` | `spec/spec_helper.rb`'s `after(:suite)` hook raises | all 10 examples still run; `1 error occurred outside of examples` |
 
 ## Fixtures
 
