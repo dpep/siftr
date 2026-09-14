@@ -1,5 +1,6 @@
-//! Retention as commands see it: a pruned run's stats and evidence fail loudly naming the setting, and a
-//! signal whose baseline was pruned has an unknown outcome, never a verdict from partial data.
+//! Retention as commands see it: a pruned run's stats fail loudly naming the setting, pruned evidence is said
+//! so next to the numbers, and a signal whose baseline was pruned has an unknown outcome, never a verdict from
+//! partial data.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -7,17 +8,35 @@ use std::process::{Command, Output};
 use serde_json::Value;
 use tempfile::TempDir;
 
+/// The smallest retention siftr allows.
+const SMALLEST: &[(&str, &str)] = &[("SIFTR_KEEP_RUNS", "21"), ("SIFTR_KEEP_EVIDENCE", "2")];
+
 struct Sandbox {
     home: TempDir,
     project: TempDir,
+    retention: &'static [(&'static str, &'static str)],
 }
 
 impl Sandbox {
-    fn new() -> Self {
-        Sandbox {
+    /// Three clean runs, the N+1 (r4, whose s1 was judged against r1–r3), then 20 clean runs: r24.
+    fn n_plus_one_then_twenty(retention: &'static [(&'static str, &'static str)]) -> Self {
+        let sandbox = Sandbox {
             home: tempfile::tempdir().unwrap(),
             project: tempfile::tempdir().unwrap(),
+            retention,
+        };
+        for scenario in [
+            "baseline",
+            "baseline_2",
+            "baseline_documentation",
+            "n_plus_one",
+        ] {
+            sandbox.ingest(scenario);
         }
+        for _ in 0..20 {
+            sandbox.ingest("baseline");
+        }
+        sandbox
     }
 
     fn ingest(&self, scenario: &str) {
@@ -34,16 +53,19 @@ impl Sandbox {
         assert!(output.status.success(), "{}", stderr(&output));
     }
 
-    /// With the smallest retention siftr allows: stats for 21 runs, evidence for 2.
+    /// With this sandbox's retention and nothing else from the environment.
     fn siftr(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_siftr"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_siftr"));
+        command
             .args(args)
             .current_dir(self.project.path())
             .env("SIFTR_HOME", self.home.path())
-            .env("SIFTR_KEEP_RUNS", "21")
-            .env("SIFTR_KEEP_EVIDENCE", "2")
-            .env_remove("SIFTR_KEEP_DAYS")
-            .env_remove("XDG_DATA_HOME")
+            .env_remove("XDG_DATA_HOME");
+        for name in ["SIFTR_KEEP_RUNS", "SIFTR_KEEP_EVIDENCE", "SIFTR_KEEP_DAYS"] {
+            command.env_remove(name);
+        }
+        command
+            .envs(self.retention.iter().copied())
             .output()
             .unwrap()
     }
@@ -65,19 +87,7 @@ fn stderr(output: &Output) -> String {
 
 #[test]
 fn what_retention_pruned_is_named_never_read_as_empty() {
-    // r1–r3 clean, r4 the N+1 (s1, judged against r1–r3), then 20 clean runs: r24.
-    let sandbox = Sandbox::new();
-    for scenario in [
-        "baseline",
-        "baseline_2",
-        "baseline_documentation",
-        "n_plus_one",
-    ] {
-        sandbox.ingest(scenario);
-    }
-    for _ in 0..20 {
-        sandbox.ingest("baseline");
-    }
+    let sandbox = Sandbox::n_plus_one_then_twenty(SMALLEST);
 
     let runs = sandbox.json(&["history", "-n", "50", "-j"]);
     assert_eq!(
@@ -85,20 +95,16 @@ fn what_retention_pruned_is_named_never_read_as_empty() {
         24,
         "pruned runs stay listed"
     );
-    let captures: Vec<bool> = (1..=24)
-        .map(|n| sandbox.home.path().join(format!("runs/r{n}")).exists())
+    let captured: Vec<usize> = (1..=24)
+        .filter(|n| sandbox.home.path().join(format!("runs/r{n}")).exists())
         .collect();
     assert_eq!(
-        captures.iter().filter(|&&kept| kept).count(),
-        2,
-        "{captures:?}"
-    );
-    assert!(
-        captures[22] && captures[23],
-        "the latest two keep their capture"
+        captured,
+        (13..=24).collect::<Vec<_>>(),
+        "evidence back to r13: r24's baseline, and the run each of those was judged against"
     );
 
-    // r4 keeps its stats (it's the 21st newest) but its baseline, r1–r3, doesn't.
+    // r4 keeps its stats (r14 was judged against it) but its own baseline, r1–r3, doesn't.
     let explain = sandbox.siftr(&["explain", "s1"]);
     assert_eq!(explain.status.code(), Some(2));
     assert!(
@@ -140,4 +146,25 @@ fn what_retention_pruned_is_named_never_read_as_empty() {
         "a pruned run's id is never reused"
     );
     assert_eq!(latest["baseline_runs"].as_array().unwrap().len(), 10);
+}
+
+#[test]
+fn explain_shows_the_numbers_when_only_the_evidence_was_pruned() {
+    let sandbox = Sandbox::n_plus_one_then_twenty(&[("SIFTR_KEEP_EVIDENCE", "2")]);
+
+    let explain = sandbox.siftr(&["explain", "s1"]);
+    let stdout = String::from_utf8_lossy(&explain.stdout);
+    assert_eq!(explain.status.code(), Some(0), "{}", stderr(&explain));
+    assert!(
+        stdout.contains("r4 10  |  baseline r3 3  r2 3  r1 3"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("evidence  r4 pruned (SIFTR_KEEP_EVIDENCE)"),
+        "{stdout}"
+    );
+
+    let json = sandbox.json(&["explain", "s1", "-j"]);
+    assert_eq!(json["evidence"]["pruned"], "SIFTR_KEEP_EVIDENCE");
+    assert_eq!(json["evidence"]["exemplars"], serde_json::json!([]));
 }

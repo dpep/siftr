@@ -1,14 +1,18 @@
 //! Recording a run: begun before output arrives, finished in one transaction after analysis.
 
+use std::fs::File;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use rusqlite::params;
 use siftr_core::aggregate::Stats;
 use siftr_core::analyze::Analysis;
 use siftr_core::signal::Signal;
 
-use crate::{NewRun, RunEnd, RunId, Store};
+use crate::{BUSY_WAIT, NewRun, RECORDING_LOCK, RunEnd, RunId, Store, busy, lock_within};
+
+/// A whole run's data is worth a longer wait on another siftr than its start is.
+const FINISH_WAIT: Duration = Duration::from_secs(5);
 
 /// Everything a finished run persists.
 #[derive(Debug, Clone, Copy)]
@@ -22,18 +26,40 @@ pub struct Finished<'a> {
 }
 
 impl Store {
+    /// Records that a run began, and holds its run dir's recording lock until it finishes, so no prune takes it
+    /// meanwhile. Waits at most `BUSY_WAIT` on another siftr's writes, then fails with `StoreBusy`.
     pub fn begin_run(&self, run: &NewRun<'_>) -> Result<RunId> {
-        self.conn.execute(
-            "INSERT INTO runs (project, context, command, cwd, started_at_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                run.context.project(),
-                run.context.name(),
-                run.command,
-                run.cwd,
-                unix_ms(run.started_at),
-            ],
-        )?;
-        Ok(RunId(self.conn.last_insert_rowid()))
+        self.conn
+            .execute(
+                "INSERT INTO runs (project, context, command, cwd, started_at_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    run.context.project(),
+                    run.context.name(),
+                    run.command,
+                    run.cwd,
+                    unix_ms(run.started_at),
+                ],
+            )
+            .map_err(|error| busy(&self.home, error.into()))?;
+        let id = RunId(self.conn.last_insert_rowid());
+        let lock = self.run_dir(id).join(RECORDING_LOCK);
+        std::fs::create_dir_all(self.run_dir(id))
+            .and_then(|()| File::create(&lock))
+            .and_then(|file| {
+                // Only a prune checking whether the run is live contends, and only for an instant.
+                if lock_within(&file, BUSY_WAIT)? {
+                    self.recording.borrow_mut().push((id, file));
+                }
+                Ok(())
+            })
+            .with_context(|| format!("locking {}", lock.display()))?;
+        Ok(id)
+    }
+
+    /// From here a prune may take `run`.
+    fn stop_recording(&self, run: RunId) {
+        self.recording.borrow_mut().retain(|(held, _)| *held != run);
+        let _ = std::fs::remove_file(self.run_dir(run).join(RECORDING_LOCK));
     }
 
     pub fn finish_run(&mut self, run: RunId, finished: &Finished<'_>) -> Result<()> {
@@ -64,6 +90,7 @@ impl Store {
         finished: &Finished<'_>,
         interrupted: Option<i32>,
     ) -> Result<()> {
+        self.conn.busy_timeout(FINISH_WAIT)?;
         let tx = self.conn.transaction()?;
         tx.execute(
             "UPDATE runs SET wall_ms = ?1, exit_code = ?2, lines = ?3, interrupted = ?4 WHERE id = ?5",
@@ -190,6 +217,7 @@ impl Store {
             }
         }
         tx.commit()?;
+        self.stop_recording(run);
         self.prune_after_finish();
         Ok(())
     }

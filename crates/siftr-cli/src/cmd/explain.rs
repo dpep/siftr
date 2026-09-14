@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use siftr_core::aggregate::{Phase, RunStats};
 use siftr_core::signal::{self, measure};
-use siftr_store::{Feedback, FeedbackKind, RunId, SignalId};
+use siftr_store::{Feedback, FeedbackKind, Pruned, RunId, SignalId};
 
 use super::{Globals, record_feedback};
 use crate::output::{
@@ -65,9 +65,13 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         .iter()
         .find(|(_, stats)| stats.count(behavior.id) > 0)
         .map(|(run, _)| *run);
-    let exemplars = match evidence_run {
-        Some(run) => store.exemplars(run, behavior.id, EXEMPLARS)?,
-        None => Vec::new(),
+    // Pruned evidence costs the lines, not the explanation: the numbers above don't need it.
+    let (exemplars, evidence_pruned) = match evidence_run {
+        Some(run) => match store.exemplars(run, behavior.id, EXEMPLARS) {
+            Ok(exemplars) => (exemplars, None),
+            Err(error) => (Vec::new(), Some(error.downcast::<Pruned>()?)),
+        },
+        None => (Vec::new(), None),
     };
     let signals = store.signals(stored.run)?;
     let group = groups(&signals)
@@ -106,6 +110,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             "scope_runs": scoped.as_deref().map(values),
             "evidence": {
                 "run": evidence_run.map(|run| run.to_string()),
+                "pruned": evidence_pruned.as_ref().map(|pruned| pruned.setting()),
                 "exemplars": exemplars
                     .iter()
                     .zip(&events)
@@ -165,9 +170,12 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             }
             writeln!(w, "          {}", show(&rows))?;
         }
-        match evidence_run {
-            Some(run) => writeln!(w, "evidence  {run}")?,
-            None => writeln!(w, "evidence  none kept")?,
+        match (evidence_run, &evidence_pruned) {
+            (Some(run), Some(pruned)) => {
+                writeln!(w, "evidence  {run} pruned ({})", pruned.setting())?;
+            }
+            (Some(run), None) => writeln!(w, "evidence  {run}")?,
+            (None, _) => writeln!(w, "evidence  none kept")?,
         }
         for (exemplar, event) in exemplars.iter().zip(&events) {
             for line in event.as_deref().and_then(exception).unwrap_or_default() {
@@ -187,11 +195,14 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             )?;
         }
         let run = evidence_run.unwrap_or(stored.run);
-        writeln!(
-            w,
-            "next: siftr evidence {} --run {run}",
-            behavior.id.short()
-        )
+        match evidence_pruned {
+            Some(_) => writeln!(w, "next: siftr summary {run}"),
+            None => writeln!(
+                w,
+                "next: siftr evidence {} --run {run}",
+                behavior.id.short()
+            ),
+        }
     })?;
     record_feedback(
         &store,

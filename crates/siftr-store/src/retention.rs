@@ -4,22 +4,29 @@
 //! capture, most of the bytes) for the last `SIFTR_KEEP_EVIDENCE`. A command idle for `SIFTR_KEEP_DAYS` keeps
 //! neither: every distinct command line is its own command, so their number grows too, not just their runs.
 //!
+//! Past the limits, still kept: a run still recording (it holds a lock in its run dir until it finishes, which
+//! the OS drops if siftr dies), and what answers about the latest usable run read. `changes` reads its baseline
+//! and re-judges those runs' signals against their own baselines, so all of those keep stats; `explain` of a
+//! reminded signal shows evidence from its run, or for a disappearance from the run just before, so those keep
+//! evidence. An unfinished run whose lock is free was abandoned, and goes by the same rules as any other.
+//!
 //! A pruned run stays a row with its signals, baselines and feedback, so ids are never reused and reading
 //! what was pruned fails with [`Pruned`], naming the setting, instead of reading as empty.
 
 use std::collections::HashMap;
 use std::fmt;
+use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Statement, TransactionBehavior, params};
 use siftr_core::baseline::MAX_RUNS;
 use siftr_core::context::Context;
 
 use crate::write::unix_ms;
-use crate::{RunId, Store, schema};
+use crate::{BUSY_WAIT, RunId, Store, is_busy, schema};
 
 /// How long a run's finish may keep starting prune steps; the rest waits for the next run or `siftr gc`.
 pub(crate) const FINISH_BUDGET: Duration = Duration::from_millis(500);
@@ -27,8 +34,11 @@ pub(crate) const FINISH_BUDGET: Duration = Duration::from_millis(500);
 /// re-judges the baseline runs' own signals to keep an unfixed regression in view.
 const LIVE_STATS: u64 = 2 * MAX_RUNS as u64 + 1;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
-/// An unfinished run younger than this may still be recording.
+/// An unfinished run without a recording lock (recorded before there was one) younger than this may still be
+/// recording.
 const LIVE_MS: i64 = DAY_MS;
+/// Held by the process recording a run, in the run's dir, until the run finishes.
+pub(crate) const RECORDING_LOCK: &str = "recording.lock";
 /// Children before parents: foreign keys are on.
 const STATS_TABLES: [&str; 5] = [
     "exemplars",
@@ -229,7 +239,7 @@ impl Store {
 
     /// What a prune would do now.
     pub fn prune_plan(&self) -> Result<Vec<Step>> {
-        plan(&self.conn, &self.retention, SystemTime::now())
+        plan(&self.conn, &self.home, &self.retention, SystemTime::now())
     }
 
     /// Prunes runs past the retention limits, oldest first. With a `budget`, one batch that starts no step once
@@ -257,7 +267,7 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let steps = plan(&tx, &self.retention, SystemTime::now())?;
+        let steps = plan(&tx, &self.home, &self.retention, SystemTime::now())?;
         let mut done = Vec::new();
         for step in steps {
             if started.elapsed() >= budget {
@@ -282,7 +292,7 @@ impl Store {
             tx.execute(pruned_by, params![step.by, step.run.0])?;
             done.push(step);
         }
-        let pending = plan(&tx, &self.retention, SystemTime::now())?.len();
+        let pending = plan(&tx, &self.home, &self.retention, SystemTime::now())?.len();
         tx.commit()?;
         // Only after the commit: a crash in between leaves a capture `gc` removes, never a run missing one.
         let mut capture_bytes = 0;
@@ -296,7 +306,8 @@ impl Store {
         })
     }
 
-    /// A finished run's upkeep: bounded, and never the run's failure, since the run is recorded by now.
+    /// A finished run's upkeep: bounded, and never the run's failure, since the run is recorded by now. It doesn't
+    /// wait on another siftr's writes: the next finish, or `siftr gc`, prunes instead.
     pub(crate) fn prune_after_finish(&mut self) {
         for setting in self.retention.settings() {
             if let Source::Adjusted { given, why } = &setting.source {
@@ -306,9 +317,13 @@ impl Store {
                 ));
             }
         }
-        if let Err(error) = self.prune(Some(FINISH_BUDGET)) {
-            warn(format_args!("pruning old runs failed: {error:#}"));
+        let _ = self.conn.busy_timeout(Duration::ZERO);
+        match self.prune(Some(FINISH_BUDGET)) {
+            Err(error) if is_busy(&error) => {}
+            Err(error) => warn(format_args!("pruning old runs failed: {error:#}")),
+            Ok(_) => {}
         }
+        let _ = self.conn.busy_timeout(BUSY_WAIT);
     }
 
     /// Captures left behind by a prune interrupted between its commit and removing them.
@@ -353,7 +368,7 @@ impl Store {
         };
         let db = home.join("siftr.db");
         let database = match db.try_exists()? {
-            true => Some(database(&db, &retention, &dirs)?),
+            true => Some(database(home, &db, &retention, &dirs)?),
             false => None,
         };
         Ok(Inspection {
@@ -409,7 +424,12 @@ pub struct ContextRuns {
     pub capture_bytes: u64,
 }
 
-fn database(db: &Path, retention: &Retention, dirs: &[CaptureDir]) -> Result<Database> {
+fn database(
+    home: &Path,
+    db: &Path,
+    retention: &Retention,
+    dirs: &[CaptureDir],
+) -> Result<Database> {
     let conn = Connection::open_with_flags(
         db,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -428,7 +448,7 @@ fn database(db: &Path, retention: &Retention, dirs: &[CaptureDir]) -> Result<Dat
     };
     if schema == supported {
         database.contexts = contexts(&conn, dirs)?;
-        database.pending = plan(&conn, retention, SystemTime::now())?;
+        database.pending = plan(&conn, home, retention, SystemTime::now())?;
         database.orphaned = orphans(&conn, dirs)?;
     }
     Ok(database)
@@ -479,9 +499,14 @@ struct Candidate {
     evidence_kept: bool,
 }
 
-/// Steps past the limits, oldest run first. Never an unfinished run that may still be recording, nor the
-/// runs a live answer reads: the latest usable run's stats and baseline, and evidence for the latest two.
-fn plan(conn: &Connection, retention: &Retention, now: SystemTime) -> Result<Vec<Step>> {
+/// Steps past the limits, oldest run first. Never a run still recording, nor what answers about the latest usable
+/// run read (see the module docs).
+fn plan(
+    conn: &Connection,
+    home: &Path,
+    retention: &Retention,
+    now: SystemTime,
+) -> Result<Vec<Step>> {
     let mut stmt = conn.prepare(
         "SELECT id, project, context, started_at_ms, wall_ms IS NOT NULL, interrupted IS NOT NULL,
                 evidence_pruned_by IS NULL
@@ -504,23 +529,34 @@ fn plan(conn: &Connection, retention: &Retention, now: SystemTime) -> Result<Vec
     let idle_after = i64::try_from(retention.days.value)
         .unwrap_or(i64::MAX)
         .saturating_mul(DAY_MS);
+    let mut baselines =
+        conn.prepare("SELECT baseline_run_id FROM run_baselines WHERE run_id = ?1")?;
     let mut steps = Vec::new();
     for context in runs.chunk_by(|a, b| (&a.project, &a.context) == (&b.project, &b.context)) {
         let idle = now.saturating_sub(context[0].started_ms) > idle_after;
+        let (stats_from, evidence_from) =
+            match context.iter().find(|run| run.finished && !run.interrupted) {
+                Some(latest) => live_reads(&mut baselines, latest.id)?,
+                None => (i64::MAX, i64::MAX),
+            };
         let mut usable = 0;
         for (position, run) in (0_u64..).zip(context) {
             let is_usable = run.finished && !run.interrupted;
             usable += u64::from(is_usable);
-            if !run.finished && now.saturating_sub(run.started_ms) < LIVE_MS {
+            // However idle: a dev server left running for days is still recording.
+            if !run.finished && recording(home, RunId(run.id), run.started_ms, now) {
                 continue;
             }
             let (tier, setting) = if idle {
                 (Tier::Stats, &retention.days)
-            } else if position >= retention.runs.value && !(is_usable && usable <= LIVE_STATS) {
+            } else if position >= retention.runs.value
+                && run.id < stats_from
+                && !(is_usable && usable <= LIVE_STATS)
+            {
                 (Tier::Stats, &retention.runs)
             } else if position >= retention.evidence.value
                 && run.evidence_kept
-                && !(is_usable && usable <= 2)
+                && run.id < evidence_from
             {
                 (Tier::Evidence, &retention.evidence)
             } else {
@@ -536,6 +572,39 @@ fn plan(conn: &Connection, retention: &Retention, now: SystemTime) -> Result<Vec
     }
     steps.sort_by_key(|step| step.run);
     Ok(steps)
+}
+
+/// The oldest runs whose (stats, evidence) answers about `latest` read: its baseline and those runs' baselines
+/// for stats; its baseline and the newest run each of those was judged against for evidence.
+fn live_reads(baselines: &mut Statement<'_>, latest: i64) -> rusqlite::Result<(i64, i64)> {
+    let (mut stats, mut evidence) = (latest, latest);
+    for run in baselines_of(baselines, latest)? {
+        let theirs = baselines_of(baselines, run)?;
+        stats = stats
+            .min(run)
+            .min(theirs.iter().copied().min().unwrap_or(run));
+        evidence = evidence
+            .min(run)
+            .min(theirs.iter().copied().max().unwrap_or(run));
+    }
+    Ok((stats, evidence))
+}
+
+fn baselines_of(baselines: &mut Statement<'_>, run: i64) -> rusqlite::Result<Vec<i64>> {
+    baselines.query_map([run], |row| row.get(0))?.collect()
+}
+
+/// Whether unfinished `run` may still be recording: its recorder holds the lock until it finishes, and the OS
+/// drops it when siftr dies. A run recorded before that lock existed counts as live for a day.
+fn recording(home: &Path, run: RunId, started_ms: i64, now: i64) -> bool {
+    let lock = home.join("runs").join(run.to_string()).join(RECORDING_LOCK);
+    match File::open(lock) {
+        Ok(file) => file.try_lock().is_err(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            now.saturating_sub(started_ms) < LIVE_MS
+        }
+        Err(_) => true,
+    }
 }
 
 struct CaptureDir {

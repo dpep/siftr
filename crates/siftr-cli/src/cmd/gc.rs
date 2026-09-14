@@ -128,7 +128,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             )?,
             (false, true) => writeln!(
                 w,
-                "database {}, {} of it free; gc vacuums it once a quarter is free",
+                "database {}, {} of it free; gc vacuums it once 25% of it is free",
                 bytes(before),
                 bytes(free)
             )?,

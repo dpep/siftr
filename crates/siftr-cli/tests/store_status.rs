@@ -71,7 +71,9 @@ fn status_reads_without_creating_and_gc_prunes_what_it_reports() {
         "status is read-only"
     );
 
-    for _ in 0..5 {
+    // r14's baseline is r4–r13, and r4 was judged against r1–r3: past SIFTR_KEEP_EVIDENCE=2, only r1 and r2
+    // point nowhere a reminder or explain still reads.
+    for _ in 0..14 {
         sandbox.ingest();
     }
     let status = sandbox.json(&["status", "-j"], &[], 0);
@@ -79,14 +81,14 @@ fn status_reads_without_creating_and_gc_prunes_what_it_reports() {
         status["database"]["schema"],
         status["database"]["supported_schema"]
     );
-    assert_eq!(status["captures"]["runs"], 5);
+    assert_eq!(status["captures"]["runs"], 14);
     assert_eq!(status["retention"]["evidence"]["source"], "default");
-    assert_eq!(status["commands"][0]["runs"], 5);
+    assert_eq!(status["commands"][0]["runs"], 14);
     assert_eq!(status["problems"], serde_json::json!([]));
 
     let two = [("SIFTR_KEEP_EVIDENCE", "2")];
     let status = sandbox.json(&["status", "-j"], &two, 0);
-    assert_eq!(status["pending"]["evidence"], 3);
+    assert_eq!(status["pending"]["evidence"], 2);
     assert_eq!(status["retention"]["evidence"]["source"], "env");
 
     let dry = sandbox.json(&["gc", "--dry-run", "-j"], &two, 0);
@@ -104,17 +106,17 @@ fn status_reads_without_creating_and_gc_prunes_what_it_reports() {
         .collect();
     assert_eq!(
         steps,
-        ["r1", "r2", "r3"].map(|run| (run, "evidence", "SIFTR_KEEP_EVIDENCE=2"))
+        ["r1", "r2"].map(|run| (run, "evidence", "SIFTR_KEEP_EVIDENCE=2"))
     );
     assert!(sandbox.captured("r1"), "a dry run removes nothing");
 
     let gc = sandbox.json(&["gc", "-j"], &two, 0);
     assert_eq!(gc["steps"], dry["steps"]);
     assert!(gc["capture_bytes"].as_u64().unwrap() > 0);
-    assert!(!sandbox.captured("r3") && sandbox.captured("r4"));
+    assert!(!sandbox.captured("r2") && sandbox.captured("r3"));
     let status = sandbox.json(&["status", "-j"], &two, 0);
     assert_eq!(status["pending"]["evidence"], 0);
-    assert_eq!(status["commands"][0]["with_evidence"], 2);
+    assert_eq!(status["commands"][0]["with_evidence"], 12);
 
     let bad = sandbox.json(&["status", "-j"], &[("SIFTR_KEEP_RUNS", "lots")], 1);
     assert_eq!(

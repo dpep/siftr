@@ -2,9 +2,12 @@
 
 use std::fs::File;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 use rusqlite::{Connection, TransactionBehavior};
+
+use crate::{BUSY_WAIT, StoreBusy, lock_within};
 
 /// Append a migration to change the schema; never edit one that has shipped.
 const MIGRATIONS: &[&str] = &[
@@ -181,6 +184,15 @@ WHERE e.run_id = aggregates.run_id AND e.behavior_id = aggregates.behavior_id AN
 ALTER TABLE runs ADD COLUMN evidence_pruned_by TEXT;
 ALTER TABLE runs ADD COLUMN stats_pruned_by TEXT;
 ",
+    r"
+-- Until e6904cb (2026-09-13T18:22:43-07:00), a child killed by a signal siftr never saw (kill -9, the OOM killer)
+-- was recorded as a plain exit 128+signal, so its truncated run joined baselines and hid what disappeared. A run
+-- started before then can't be from a build with the fix; after it, such a code is the command's own. `ingest`
+-- has no child.
+UPDATE runs SET interrupted = exit_code - 128
+WHERE interrupted IS NULL AND wall_ms IS NOT NULL AND exit_code BETWEEN 129 AND 159
+  AND started_at_ms < 1789348963000 AND command NOT LIKE 'siftr ingest%';
+",
 ];
 
 /// The schema version this siftr reads and writes.
@@ -195,10 +207,12 @@ pub(crate) fn migrate(conn: &mut Connection, lock: &Path) -> Result<()> {
         return Ok(());
     }
     // Switching to WAL needs an exclusive lock, and SQLite fails the switch at once, without the busy
-    // timeout, when another connection is escalating too. So first opens and upgrades take turns.
+    // timeout, when another connection is escalating too. So first opens and upgrades take turns, but wait
+    // only so long: a holder that never lets go (suspended mid-migration, a stale lock) mustn't stall a run.
     let file = File::create(lock).with_context(|| format!("creating {}", lock.display()))?;
-    file.lock()
-        .with_context(|| format!("locking {}", lock.display()))?;
+    if !take_turn(conn, &file, lock)? {
+        return Ok(());
+    }
     conn.execute_batch("PRAGMA journal_mode = WAL")?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version = checked_version(&tx)?;
@@ -208,6 +222,27 @@ pub(crate) fn migrate(conn: &mut Connection, lock: &Path) -> Result<()> {
     }
     tx.commit()?;
     Ok(())
+}
+
+/// Waits about `BUSY_WAIT` at most to hold the migration lock. `false` when whoever holds it brought the database
+/// current meanwhile: then there's nothing to wait for, and queueing behind every other opener would be slow.
+fn take_turn(conn: &Connection, file: &File, lock: &Path) -> Result<bool> {
+    let deadline = Instant::now() + BUSY_WAIT;
+    loop {
+        let locked = lock_within(file, Duration::from_millis(20))
+            .with_context(|| format!("locking {}", lock.display()))?;
+        if locked {
+            return Ok(true);
+        }
+        if is_current(conn)? {
+            return Ok(false);
+        }
+        if Instant::now() >= deadline {
+            let home = lock.parent().unwrap_or(lock).to_owned();
+            let held = "migration lock";
+            return Err(StoreBusy { home, held }.into());
+        }
+    }
 }
 
 /// Read-only, so concurrent opens of a migrated database never contend.
@@ -242,6 +277,43 @@ mod tests {
         conn.pragma_update(None, "user_version", version as i64)
             .unwrap();
         conn
+    }
+
+    #[test]
+    fn runs_an_old_build_recorded_as_killed_by_a_signal_leave_baselines() {
+        let home = tempfile::tempdir().unwrap();
+        let mut conn = at_version(home.path(), 6);
+        // e6904cb, the fix, was committed at 1789348963000.
+        let (before, after) = (
+            1_789_348_963_000_i64 - 60_000,
+            1_789_348_963_000_i64 + 60_000,
+        );
+        let runs: [(&str, i64, Option<i32>); 6] = [
+            ("sh step.sh", before, Some(137)),
+            ("sh step.sh", before, Some(0)),
+            ("sh step.sh", after, Some(137)),
+            ("siftr ingest --dir scenario", before, Some(137)),
+            ("sh step.sh", before, Some(255)),
+            ("sh step.sh", before, None),
+        ];
+        for (command, started, exit) in runs {
+            conn.execute(
+                "INSERT INTO runs (project, context, command, cwd, started_at_ms, wall_ms, exit_code, lines)
+                 VALUES ('p', ?1, ?1, '/', ?2, CASE WHEN ?3 IS NULL THEN NULL ELSE 1 END, ?3, 1)",
+                rusqlite::params![command, started, exit],
+            )
+            .unwrap();
+        }
+        migrate(&mut conn, &home.path().join("siftr.lock")).unwrap();
+
+        let interrupted: Vec<Option<i32>> = conn
+            .prepare("SELECT interrupted FROM runs ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(interrupted, [Some(9), None, None, None, None, None]);
     }
 
     #[test]

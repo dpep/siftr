@@ -9,11 +9,16 @@ mod retention;
 mod schema;
 mod write;
 
+use std::cell::RefCell;
+use std::fmt;
+use std::fs::{File, TryLockError};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context as _, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, ErrorCode};
 use siftr_core::behavior::Behavior;
 use siftr_core::context::Context;
 use siftr_core::signal::Signal;
@@ -22,6 +27,7 @@ pub use capture::Capture;
 pub use feedback::{Feedback, FeedbackKind, Interface};
 pub use ids::{InvalidId, RunId, SignalId};
 pub use read::Order;
+pub(crate) use retention::RECORDING_LOCK;
 pub use retention::{
     Captures, ContextRuns, Database, Inspection, Pruned, Pruning, Retention, Setting, Source, Step,
     Tier,
@@ -33,6 +39,76 @@ pub struct Store {
     conn: Connection,
     home: PathBuf,
     retention: Retention,
+    /// The recording lock of each run this store began and hasn't finished.
+    recording: RefCell<Vec<(RunId, File)>>,
+}
+
+/// How long the store waits on another siftr: for its migration lock, or SQLite's write lock while opening and
+/// beginning a run. Past it a run goes unrecorded, not late. The holders measured, a run's finish and a prune
+/// batch, hold the write lock under 1.5s.
+pub const BUSY_WAIT: Duration = Duration::from_secs(2);
+
+/// Another siftr held the store for longer than [`BUSY_WAIT`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoreBusy {
+    pub home: PathBuf,
+    /// `migration lock` or `write lock`.
+    pub held: &'static str,
+}
+
+impl fmt::Display for StoreBusy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} is busy: another siftr held its {} for over {}s",
+            self.home.display(),
+            self.held,
+            BUSY_WAIT.as_secs()
+        )
+    }
+}
+
+impl std::error::Error for StoreBusy {}
+
+/// Whether `error` is another siftr holding the store.
+pub(crate) fn is_busy(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<StoreBusy>().is_some()
+            || cause
+                .downcast_ref::<rusqlite::Error>()
+                .and_then(rusqlite::Error::sqlite_error_code)
+                == Some(ErrorCode::DatabaseBusy)
+    })
+}
+
+/// SQLite's busy error, which its busy timeout ended, as a [`StoreBusy`]; anything else unchanged.
+pub(crate) fn busy(home: &Path, error: anyhow::Error) -> anyhow::Error {
+    match is_busy(&error) && error.downcast_ref::<StoreBusy>().is_none() {
+        true => StoreBusy {
+            home: home.to_owned(),
+            held: "write lock",
+        }
+        .into(),
+        false => error,
+    }
+}
+
+/// Locks `file` exclusively, waiting at most `wait`; `false` when another process still holds it.
+pub(crate) fn lock_within(file: &File, wait: Duration) -> io::Result<bool> {
+    let started = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(true),
+            Err(TryLockError::WouldBlock) if started.elapsed() < wait => {
+                // Holders are usually brief (a first open racing another): std has no timed lock, so poll, and
+                // only slowly once the holder has proved slow.
+                let slow = started.elapsed() > Duration::from_millis(100);
+                thread::sleep(Duration::from_millis(if slow { 20 } else { 1 }));
+            }
+            Err(TryLockError::WouldBlock) => return Ok(false),
+            Err(TryLockError::Error(error)) => return Err(error),
+        }
+    }
 }
 
 impl Store {
@@ -43,12 +119,15 @@ impl Store {
         let db = home.join("siftr.db");
         let mut conn =
             Connection::open(&db).with_context(|| format!("opening {}", db.display()))?;
+        conn.busy_timeout(BUSY_WAIT)?;
         schema::migrate(&mut conn, &home.join("siftr.lock"))
+            .map_err(|error| busy(home, error))
             .with_context(|| format!("migrating {}", db.display()))?;
         Ok(Store {
             conn,
             home: home.to_owned(),
             retention: Retention::from_env(),
+            recording: RefCell::default(),
         })
     }
 
