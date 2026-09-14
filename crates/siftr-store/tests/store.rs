@@ -238,6 +238,53 @@ fn scopes_measures_and_grouped_signals_read_back_as_detected() {
 }
 
 #[test]
+fn an_interrupted_run_keeps_its_evidence_but_never_joins_a_baseline() {
+    let home = tempfile::tempdir().unwrap();
+    let mut store = Store::open(home.path()).unwrap();
+    let suite = Context::named("/project", "rspec");
+    let (r1, _) = record(&mut store, &suite, "a\nb\n", true);
+    let (r2, _) = record(&mut store, &suite, "a\nb\n", true);
+    let interrupted = store
+        .begin_run(&NewRun {
+            context: &suite,
+            command: "rspec",
+            cwd: "/project",
+            started_at: SystemTime::now(),
+        })
+        .unwrap();
+    let partial = analyze("a\n");
+    let end = RunEnd {
+        wall: Duration::from_millis(40),
+        exit_code: Some(130),
+        lines: partial.observations,
+    };
+    store
+        .finish_interrupted_run(interrupted, end, &partial, 2)
+        .unwrap();
+    let (r4, _) = record(&mut store, &suite, "a\nb\n", true);
+
+    let stored = store.run(interrupted).unwrap().expect("recorded");
+    assert_eq!(
+        (stored.interrupted, stored.end.map(|e| e.exit_code)),
+        (Some(2), Some(Some(130)))
+    );
+    assert!(
+        store.signals(interrupted).unwrap().is_empty(),
+        "a partial run claims no changes"
+    );
+    assert_eq!(
+        store
+            .behaviors(interrupted, Order::Count, 10)
+            .unwrap()
+            .len(),
+        1,
+        "its evidence is kept"
+    );
+    assert_eq!(store.baseline_of(r4).unwrap(), [r2, r1]);
+    assert_eq!(store.run(r4).unwrap().unwrap().interrupted, None);
+}
+
+#[test]
 fn capture_keeps_raw_bytes_per_stream() {
     let home = tempfile::tempdir().unwrap();
     let store = Store::open(home.path()).unwrap();

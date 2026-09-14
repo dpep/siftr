@@ -53,6 +53,11 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         writeln!(w, "runs in {project}")?;
         for (run, (changes, _)) in runs.iter().zip(&counts) {
             let status = match run.end {
+                Some(end) if run.interrupted.is_some() => format!(
+                    "interrupted (signal {}) {:>8} lines",
+                    run.interrupted.unwrap_or_default(),
+                    end.lines
+                ),
                 Some(end) => {
                     let exit = end
                         .exit_code

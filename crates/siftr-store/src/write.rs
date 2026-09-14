@@ -37,13 +37,41 @@ impl Store {
     }
 
     pub fn finish_run(&mut self, run: RunId, finished: &Finished<'_>) -> Result<()> {
+        self.finish(run, finished, None)
+    }
+
+    /// Records what an interrupted run saw, as evidence only: no baseline, no signals, and it never
+    /// joins a later run's baseline, where its missing tail would read as mass DISAPPEARED.
+    pub fn finish_interrupted_run(
+        &mut self,
+        run: RunId,
+        end: RunEnd,
+        analysis: &Analysis,
+        signal: i32,
+    ) -> Result<()> {
+        let finished = Finished {
+            end,
+            analysis,
+            baseline_runs: &[],
+            signals: &[],
+        };
+        self.finish(run, &finished, Some(signal))
+    }
+
+    fn finish(
+        &mut self,
+        run: RunId,
+        finished: &Finished<'_>,
+        interrupted: Option<i32>,
+    ) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute(
-            "UPDATE runs SET wall_ms = ?1, exit_code = ?2, lines = ?3 WHERE id = ?4",
+            "UPDATE runs SET wall_ms = ?1, exit_code = ?2, lines = ?3, interrupted = ?4 WHERE id = ?5",
             params![
                 micros(finished.end.wall) / 1000,
                 finished.end.exit_code,
                 int(finished.end.lines),
+                interrupted,
                 run.0
             ],
         )?;

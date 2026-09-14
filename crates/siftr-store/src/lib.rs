@@ -63,6 +63,8 @@ pub struct RunRecord {
     pub end: Option<RunEnd>,
     /// Events of behaviors past the per-run cap, counted into the overflow behavior.
     pub overflow_events: u64,
+    /// The signal that interrupted the run. Interrupted runs keep their evidence but never join a baseline.
+    pub interrupted: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

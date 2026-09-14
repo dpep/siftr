@@ -140,6 +140,10 @@ CREATE TABLE signals (
 );
 CREATE INDEX signals_by_run ON signals (run_id, group_rank);
 ",
+    r"
+-- The signal that interrupted the run. A partial run would read as mass DISAPPEARED, so it never joins a baseline.
+ALTER TABLE runs ADD COLUMN interrupted INTEGER;
+",
 ];
 
 pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {

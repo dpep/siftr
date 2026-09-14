@@ -31,7 +31,7 @@ pub enum Order {
 /// The overflow behavior's id is a fixed hex hash, so it is safe to inline.
 fn run_columns() -> String {
     format!(
-        "id, project, context, command, cwd, started_at_ms, wall_ms, exit_code, lines,
+        "id, project, context, command, cwd, started_at_ms, wall_ms, exit_code, lines, interrupted,
          (SELECT count FROM aggregates o WHERE o.run_id = runs.id AND o.behavior_id = '{}')",
         overflow_behavior().id
     )
@@ -93,7 +93,7 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Up to `limit` finished runs of `context` before `before`, newest first, with their stats.
+    /// Up to `limit` finished, uninterrupted runs of `context` before `before`, newest first, with their stats.
     pub fn baseline_runs(
         &self,
         context: &Context,
@@ -102,7 +102,7 @@ impl Store {
     ) -> Result<Vec<(RunId, RunStats)>> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM runs WHERE project = ?1 AND context = ?2 AND id < ?3 AND wall_ms IS NOT NULL
-             ORDER BY id DESC LIMIT ?4",
+             AND interrupted IS NULL ORDER BY id DESC LIMIT ?4",
         )?;
         let ids = stmt
             .query_map(
@@ -413,7 +413,8 @@ fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         cwd: row.get(4)?,
         started_at: UNIX_EPOCH + Duration::from_millis(row.get::<_, i64>(5)?.unsigned_abs()),
         end,
-        overflow_events: row.get::<_, Option<i64>>(9)?.unwrap_or(0).unsigned_abs(),
+        interrupted: row.get(9)?,
+        overflow_events: row.get::<_, Option<i64>>(10)?.unwrap_or(0).unsigned_abs(),
     })
 }
 

@@ -3,7 +3,8 @@
 //! JSON shapes (every number is already rounded where it was built):
 //!
 //! - run: `id`, `project`, `context`, `command`, `cwd`, `started_at_ms`, `finished`, `wall_ms`,
-//!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap).
+//!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap), `interrupted`
+//!   (the signal number, or null; interrupted runs are never compared or used as a baseline).
 //! - behavior: `id` (16 hex), `kind`, `template`.
 //! - signal: `id`, `run`, `kind` (error|new|disappeared|frequency|latency), `confidence` (number in
 //!   [0, 1)), `measure` (count|queries|duration_ms|failed), `current`, `baseline` {`runs`,
@@ -123,7 +124,12 @@ impl Changes<'_> {
             groups.iter().partition(|g| g.setup);
         let run = self.run.id;
         let n = self.baseline_runs.len();
-        if n == 0 {
+        if let Some(signal) = self.run.interrupted {
+            writeln!(
+                w,
+                "{run}: interrupted by signal {signal}; kept as evidence, not compared, never a baseline"
+            )?;
+        } else if n == 0 {
             let lines = self.run.end.map_or(0, |end| end.lines);
             writeln!(
                 w,
@@ -328,6 +334,7 @@ pub fn run_json(run: &RunRecord) -> Value {
         "exit_code": run.end.and_then(|end| end.exit_code),
         "lines": run.end.map(|end| end.lines),
         "overflow_events": run.overflow_events,
+        "interrupted": run.interrupted,
     })
 }
 
