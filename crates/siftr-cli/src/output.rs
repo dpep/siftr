@@ -13,17 +13,19 @@
 //!   before the first example, in one, between two, after the last), `setup` (phase is setup), `current`,
 //!   `baseline`} or null, `tier` (1 error … 5 outside examples), `group` (rank), `headline`, `evidence_lines`,
 //!   `behavior`.
-//! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `baseline_runs`, `changes`
-//!   (code-level groups), `groups` [{`rank`, `setup` (changed outside every example), `headline` (signal id),
-//!   `signals` (ids)}], `signals` (rank order), `open_signals` (signals of earlier runs in `baseline_runs` still
-//!   open at this run and not raised again by it, oldest first, one per behavior and measure; dismissed changes
-//!   are left out).
+//! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `baseline_runs`, `skipped_runs` [{`run`,
+//!   `reason` (no_test_summary|errors_outside_examples|stopped|subset)}] (recent runs of the context left out of
+//!   the baseline because they didn't run what this run did, most recent first), `changes` (code-level groups),
+//!   `groups` [{`rank`, `setup` (changed outside every example), `headline` (signal id), `signals` (ids)}],
+//!   `signals` (rank order), `open_signals` (signals of earlier runs in `baseline_runs` still open at this run
+//!   and not raised again by it, oldest first, one per behavior and measure; dismissed changes are left out).
 //! - feedback (`ack -j`, `dismiss -j`): `kind` (surfaced|investigated|evidence_requested|dismissed|acked),
 //!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
 //!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
 //!   behavior was named, as by `evidence`), `note`.
 //! - signal outcomes (`history --signals`), newest run first: `signal`, `outcome` (open|resolved|recurred, or
-//!   unknown when today's rules no longer reproduce the signal on its own run), `resolved_in` and `recurred_in`
+//!   unknown), `unknown_reason` (null, or why: today's rules no longer reproduce the signal on its own run, or
+//!   retention pruned its baseline runs, naming the setting), `resolved_in` and `recurred_in`
 //!   (run ids or null), `later_runs` (finished runs of the context judged against the signal's own baseline),
 //!   `investigated` (an explain, evidence or ack on its behavior before it resolved), `dismissed`, `feedback`
 //!   (on its behavior, from its run until the run it resolved in, oldest first).
@@ -41,6 +43,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use serde_json::{Value, json};
 use siftr_core::aggregate::{DurationSummary, Exemplar, MAX_BEHAVIORS, Phase, Stats};
+use siftr_core::baseline::Ineligible;
 use siftr_core::behavior::Behavior;
 use siftr_core::num::round_sig;
 use siftr_core::signal::{MIN_BASELINE_RUNS, Signal, SignalKind};
@@ -164,6 +167,40 @@ const fn outside_words(phase: Phase) -> &'static str {
     }
 }
 
+/// Why a recent run wasn't compared, in words whose counts agree with their nouns.
+fn ineligible_words(why: Ineligible) -> String {
+    match why {
+        Ineligible::NoTestSummary => "no test summary".to_owned(),
+        Ineligible::ErrorsOutsideExamples { errors, compared } => {
+            format!(
+                "{} outside examples, {compared} now",
+                plural(errors, "error")
+            )
+        }
+        Ineligible::Stopped { ran, loaded } => format!("stopped after {ran} of {loaded} examples"),
+        Ineligible::Subset { ran, compared } => {
+            format!("ran {}, {compared} now", plural(ran, "example"))
+        }
+    }
+}
+
+/// `r4: no test summary`; runs left out for the same reason share one: `r1 r2: no test summary; r4: …`.
+fn skipped_label(skipped: &[(RunId, Ineligible)]) -> String {
+    let mut reasons: Vec<(String, Vec<RunId>)> = Vec::new();
+    for &(run, why) in skipped {
+        let reason = ineligible_words(why);
+        match reasons.iter_mut().find(|(known, _)| *known == reason) {
+            Some((_, runs)) => runs.push(run),
+            None => reasons.push((reason, vec![run])),
+        }
+    }
+    reasons
+        .iter()
+        .map(|(reason, runs)| format!("{}: {reason}", runs_label(runs)))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// Groups shown in full; the rest are counted.
 const SHOWN_GROUPS: usize = 3;
 
@@ -220,6 +257,8 @@ pub struct Changes<'a> {
     pub run: &'a RunRecord,
     pub behaviors: u64,
     pub baseline_runs: &'a [RunId],
+    /// Recent runs left out of the baseline, and why, most recent first.
+    pub skipped_runs: &'a [(RunId, Ineligible)],
     pub signals: &'a [StoredSignal],
     /// Earlier signals the baseline has absorbed without their change going away.
     pub open_signals: &'a [StoredSignal],
@@ -232,6 +271,10 @@ impl Changes<'_> {
             "run": run_json(self.run),
             "behaviors": self.behaviors,
             "baseline_runs": ids(self.baseline_runs),
+            "skipped_runs": self.skipped_runs.iter().map(|(run, why)| json!({
+                "run": run.to_string(),
+                "reason": why.as_str(),
+            })).collect::<Vec<_>>(),
             "changes": groups.iter().filter(|g| !g.setup).count(),
             "groups": groups.iter().map(|g| json!({
                 "rank": g.rank,
@@ -250,6 +293,7 @@ impl Changes<'_> {
             "run": null,
             "behaviors": 0,
             "baseline_runs": [],
+            "skipped_runs": [],
             "changes": 0,
             "groups": [],
             "signals": [],
@@ -268,6 +312,12 @@ impl Changes<'_> {
                 w,
                 "{run}: interrupted by signal {signal}; kept as evidence, not compared, never a baseline"
             )?;
+        } else if n == 0 && !self.skipped_runs.is_empty() {
+            writeln!(
+                w,
+                "{run}: no comparable earlier runs (skipped {})",
+                skipped_label(self.skipped_runs)
+            )?;
         } else if n == 0 {
             let lines = self.run.end.map_or(0, |end| end.lines);
             writeln!(
@@ -277,9 +327,13 @@ impl Changes<'_> {
                 plural(self.behaviors, "behavior")
             )?;
         } else {
+            let skipped = match self.skipped_runs {
+                [] => String::new(),
+                skipped => format!("; skipped {}", skipped_label(skipped)),
+            };
             write!(
                 w,
-                "{run} vs {} ({}): {}",
+                "{run} vs {} ({}{skipped}): {}",
                 plural(n, "baseline run"),
                 runs_label(self.baseline_runs),
                 plural(code.len() as u64, "change")
@@ -753,5 +807,25 @@ mod tests {
             ErrorCode::NotFound
         );
         assert_eq!(code_of(&anyhow::anyhow!("disk full")), ErrorCode::Failed);
+    }
+
+    #[test]
+    fn skipped_runs_share_a_reason_and_agree_with_their_nouns() {
+        let run = |r: &str| r.parse::<RunId>().unwrap();
+        let skipped = [
+            (run("r4"), Ineligible::NoTestSummary),
+            (
+                run("r3"),
+                Ineligible::ErrorsOutsideExamples {
+                    errors: 1,
+                    compared: 0,
+                },
+            ),
+            (run("r2"), Ineligible::NoTestSummary),
+        ];
+        assert_eq!(
+            skipped_label(&skipped),
+            "r2 r4: no test summary; r3: 1 error outside examples, 0 now"
+        );
     }
 }

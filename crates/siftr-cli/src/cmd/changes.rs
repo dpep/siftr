@@ -7,7 +7,7 @@ use anyhow::Result;
 use siftr_core::context::Context;
 use siftr_store::RunId;
 
-use super::{Globals, found, no_runs, record_shown, resolve_run, still_open};
+use super::{Globals, found, no_runs, record_shown, resolve_run, skipped_runs, still_open};
 use crate::output::{self, Changes};
 use crate::project;
 
@@ -42,11 +42,13 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     };
     let signals = store.signals(run.id)?;
     let baseline_runs = store.baseline_of(run.id)?;
+    let skipped = skipped_runs(&store, &run)?;
     let open = still_open(globals, &run, &signals);
     let changes = Changes {
         run: &run,
         behaviors: store.behavior_count(run.id)?,
         baseline_runs: &baseline_runs,
+        skipped_runs: &skipped,
         signals: &signals,
         open_signals: &open,
     };

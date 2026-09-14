@@ -86,6 +86,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         run: &recorded.run,
         behaviors: recorded.behaviors,
         baseline_runs: &recorded.baseline_runs,
+        skipped_runs: &recorded.skipped_runs,
         signals: &recorded.signals,
         open_signals: &open,
     };

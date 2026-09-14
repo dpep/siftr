@@ -344,6 +344,7 @@ fn report(recorded: &Recorded, open: &[siftr_store::StoredSignal], json: bool) {
         run: &recorded.run,
         behaviors: recorded.behaviors,
         baseline_runs: &recorded.baseline_runs,
+        skipped_runs: &recorded.skipped_runs,
         signals: &recorded.signals,
         open_signals: open,
     };

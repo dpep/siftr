@@ -97,6 +97,24 @@ pub fn resolve_run(store: &Store, id: Option<RunId>) -> Result<Option<RunRecord>
     }
 }
 
+/// The recent runs `run`'s baseline left out, and why. The store keeps only the runs that were compared, so this
+/// judges the candidates again as recording did; a run pruned since then no longer shows.
+pub fn skipped_runs(
+    store: &Store,
+    run: &RunRecord,
+) -> Result<Vec<(RunId, siftr_core::baseline::Ineligible)>> {
+    if run.interrupted.is_some() || run.end.is_none() {
+        return Ok(Vec::new());
+    }
+    let recent = store.baseline_runs(&run.context, run.id, siftr_core::baseline::MAX_RUNS)?;
+    let current = store.run_stats(run.id)?;
+    let baseline = siftr_core::baseline::Baseline::from_runs(
+        &current,
+        recent.iter().map(|(id, stats)| (*id, stats)),
+    );
+    Ok(baseline.skipped().to_vec())
+}
+
 /// No run to show: under `-j` the command's `empty` document, else a hint on stderr.
 pub fn no_runs(globals: &Globals, empty: impl FnOnce() -> Value) -> Result<ExitCode> {
     if globals.json {

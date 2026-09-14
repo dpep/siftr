@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context as _, Result};
 use siftr_core::analyze::{Analysis, Analyzer};
-use siftr_core::baseline::{Baseline, MAX_RUNS};
+use siftr_core::baseline::{Baseline, Ineligible, MAX_RUNS};
 use siftr_core::context::Context;
 use siftr_core::observation::{LineSplitter, Stream};
 use siftr_core::signal::detect;
@@ -27,6 +27,8 @@ pub struct Recorded {
     pub run: RunRecord,
     pub behaviors: u64,
     pub baseline_runs: Vec<RunId>,
+    /// Recent runs of the context left out of the baseline, and why, most recent first.
+    pub skipped_runs: Vec<(RunId, Ineligible)>,
     pub signals: Vec<StoredSignal>,
 }
 
@@ -88,6 +90,7 @@ impl Recording {
         let baseline = Baseline::from_runs(&current, recent.iter().map(|(id, stats)| (*id, stats)));
         let signals = detect(&current, &baseline);
         let baseline_runs: Vec<RunId> = baseline.keys().copied().collect();
+        let skipped_runs = baseline.skipped().to_vec();
         let end = RunEnd {
             wall,
             exit_code,
@@ -106,6 +109,7 @@ impl Recording {
             run: store.run(run)?.context("the finished run is missing")?,
             behaviors: analysis.aggregates.len() as u64,
             baseline_runs,
+            skipped_runs,
             signals: store.signals(run)?,
         })
     }
@@ -137,6 +141,7 @@ impl Recording {
             run: store.run(run)?.context("the finished run is missing")?,
             behaviors: analysis.aggregates.len() as u64,
             baseline_runs: Vec::new(),
+            skipped_runs: Vec::new(),
             signals: Vec::new(),
         })
     }
