@@ -157,3 +157,31 @@ fn a_background_process_holding_the_output_does_not_hold_siftr() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("still holds its output"), "{stderr}");
 }
+
+#[test]
+fn a_chatty_orphan_does_not_hold_the_drain_open_by_staying_noisy() {
+    let home = tempfile::tempdir().unwrap();
+    let started = Instant::now();
+    // Ticks every .5s for 10s: well under ORPHAN_GRACE apart, so silence alone would never catch it.
+    let output = siftr(
+        &home,
+        &[
+            "run",
+            "-q",
+            "--",
+            "sh",
+            "-c",
+            "(for i in $(seq 20); do echo tick; sleep .5; done) & echo bye",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("still holds its output"), "{stderr}");
+}

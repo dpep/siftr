@@ -180,24 +180,26 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
                 if let Some(recording) = &mut recording {
                     recording.chunk(&stream, &chunk);
                 }
-                quiet_since = Instant::now();
             }
             Ok(Event::Exited(exited)) => {
                 status = Some(exited);
                 quiet_since = Instant::now();
             }
             Err(RecvTimeoutError::Disconnected) => break,
-            Err(RecvTimeoutError::Timeout) => {
-                // A relay still writing to our output (a paused pager) is progress, not an orphan.
-                if !relays.iter().all(Relay::waiting_for_input) {
-                    quiet_since = Instant::now();
-                } else if quiet_since.elapsed() >= ORPHAN_GRACE {
-                    output::warn(
-                        "the command exited but a background process it started still holds its output; \
-                         siftr stopped capturing it",
-                    );
-                    break;
-                }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+        // Once the child has exited, bound the drain by wall clock, not by silence: a chatty background
+        // process it started (or the OOM killer's next victim) must not hold siftr open by staying noisy.
+        // A relay still blocked writing to our own output (a paused pager) is progress, not an orphan.
+        if status.is_some() {
+            if !relays.iter().all(Relay::waiting_for_input) {
+                quiet_since = Instant::now();
+            } else if quiet_since.elapsed() >= ORPHAN_GRACE {
+                output::warn(
+                    "the command exited but a background process it started still holds its output; \
+                     siftr stopped capturing it",
+                );
+                break;
             }
         }
     }
