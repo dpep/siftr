@@ -125,3 +125,17 @@ cargo fmt --all --check
   are fine as local benchmark inputs but must never be committed, excerpted into
   fixtures, or quoted in docs.
 - Parallel agents share one working tree: `git add`/commit only your own paths.
+- `--format` in `SPEC_OPTS` *replaces* the user's `.rspec` formatters (last
+  source wins; only `--require`/`-I` accumulate). Inject data with `--require`
+  of a reporter *listener* (not a formatter — that also empties stdout),
+  appended to any existing `SPEC_OPTS`. See `docs/findings/capture.md`.
+- Rails writes SQL/request logs to `log/test.log`, not stdout; a run's slice is
+  the bytes appended between start and end offsets. Deprecation warnings in the
+  test env go to stderr, not the log. Rotation/truncation are detectable, not
+  always recoverable — say so rather than silently mis-attributing.
+- RSpec (and most tools) colour only when stdout is a TTY, so capturing through
+  a pipe changes what the user sees. `siftr run` gives the child a PTY for
+  stdout when siftr's own stdout is a terminal, keeps stderr a pipe (the
+  stream split is signal), and strips ANSI before analysis.
+- Test timing is noisy (the same demo example varied 9x across two baseline
+  runs): latency signals need an absolute floor as well as a ratio.
