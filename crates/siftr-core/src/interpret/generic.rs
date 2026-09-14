@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::{Claim, Event, Interpreter, Outcome};
 use crate::aggregate::Aggregator;
-use crate::behavior::Kind;
+use crate::behavior::{BehaviorId, Kind};
 use crate::normalize::{Normalizer, SlotKind, slot_value_f64};
 use crate::observation::Observation;
 
@@ -17,26 +17,36 @@ impl Interpreter for Generic {
         normalizer: &mut Normalizer,
         sink: &mut Aggregator,
     ) -> Claim {
-        let template = normalizer.normalize(obs.line);
-        let duration = template
-            .slots
-            .iter()
-            .find(|slot| slot.kind == SlotKind::Duration)
-            .and_then(|slot| slot_value_f64(obs.line, slot))
-            .and_then(|ms| Duration::try_from_secs_f64(ms / 1e3).ok());
-        let outcome = has_error_level(template.template).then_some(Outcome::Failure);
-        sink.record(&Event {
-            kind: Kind::Log,
-            template,
-            input: obs.line,
-            source: obs,
-            duration,
-            outcome,
-            scope: None,
-            measures: &[],
-        });
+        log(obs, None, normalizer, &mut |event| sink.record(event));
         Claim::Claimed
     }
+}
+
+/// Emits `obs` as a `log` event. Interpreters that claim a whole stream use it for the lines they don't recognize.
+pub(super) fn log(
+    obs: Observation<'_>,
+    scope: Option<BehaviorId>,
+    normalizer: &mut Normalizer,
+    emit: &mut impl FnMut(&Event<'_>),
+) {
+    let template = normalizer.normalize(obs.line);
+    let duration = template
+        .slots
+        .iter()
+        .find(|slot| slot.kind == SlotKind::Duration)
+        .and_then(|slot| slot_value_f64(obs.line, slot))
+        .and_then(|ms| Duration::try_from_secs_f64(ms / 1e3).ok());
+    let outcome = has_error_level(template.template).then_some(Outcome::Failure);
+    emit(&Event {
+        kind: Kind::Log,
+        template,
+        input: obs.line,
+        source: obs,
+        duration,
+        outcome,
+        scope,
+        measures: &[],
+    });
 }
 
 /// An uppercase `ERROR` or `FATAL` word near the start, where log formats put the level.

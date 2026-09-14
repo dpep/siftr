@@ -3,13 +3,17 @@
 //! Each interpreter lives in its own submodule and is registered in [`default_interpreters`].
 //! Numeric slot values (durations in ms, sizes in bytes) come from [`crate::normalize::slot_value_f64`].
 
+#[cfg(test)]
+mod fixtures;
 pub mod generic;
+mod rails;
+pub mod rspec;
 
 use std::time::Duration;
 
 use crate::aggregate::Aggregator;
 use crate::behavior::{BehaviorId, Kind};
-use crate::normalize::{Normalized, Normalizer};
+use crate::normalize::{Normalized, Normalizer, fnv1a64};
 use crate::observation::Observation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,5 +63,18 @@ pub trait Interpreter {
 
 /// The interpreter chain, most specific first. `generic` claims everything, so it stays last.
 pub fn default_interpreters() -> Vec<Box<dyn Interpreter>> {
-    vec![Box::new(generic::Generic)]
+    vec![
+        Box::new(rspec::Rspec::default()),
+        Box::new(generic::Generic),
+    ]
+}
+
+/// A template taken verbatim, with no slots. For names people wrote (example descriptions, class
+/// names, controller actions), a digit is identity: masking it would merge `page 1` with `page 2`.
+fn literal(template: &[u8]) -> Normalized<'_> {
+    Normalized {
+        template,
+        template_hash: fnv1a64(template),
+        slots: &[],
+    }
 }
