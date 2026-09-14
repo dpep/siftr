@@ -136,3 +136,45 @@ fn an_unfixed_regression_is_reminded_until_it_is_fixed_or_dismissed() {
         "a dismissed change isn't reminded"
     );
 }
+
+/// `siftr run -q` is what a coding agent reads, so its summary carries the reminder too.
+#[test]
+fn the_run_summary_reminds_of_an_unfixed_regression() {
+    let sandbox = Sandbox::new();
+    let queries = |n: usize| {
+        let log: String = (0..n)
+            .map(|i| format!("User Load SELECT * FROM users WHERE id = {i}\n"))
+            .collect();
+        std::fs::write(sandbox.project.path().join("app.log"), log).unwrap();
+    };
+    let suite = ["run", "-q", "--", "cat", "app.log"];
+    let suite_json = ["run", "-j", "--", "cat", "app.log"];
+
+    queries(5);
+    for _ in 0..3 {
+        sandbox.siftr(&suite);
+    }
+    queries(20);
+    assert_eq!(sandbox.json(&suite_json)["changes"], 1);
+
+    let again = sandbox.siftr(&suite);
+    let report = String::from_utf8(again.stderr).unwrap();
+    assert!(
+        report.starts_with("r5 vs 4 baseline runs (r1…r4): 0 changes\n"),
+        "{report}"
+    );
+    assert!(
+        report.contains("\n  still open: s1 (r4) FREQUENCY User Load"),
+        "{report}"
+    );
+    assert!(report.ends_with("next: siftr explain s1\n"), "{report}");
+
+    let third = sandbox.json(&suite_json);
+    assert_eq!(
+        open_ids(&third)
+            .first()
+            .map(|(id, run)| (id.as_str(), run.as_str())),
+        Some(("s1", "r4")),
+        "{third:#}"
+    );
+}

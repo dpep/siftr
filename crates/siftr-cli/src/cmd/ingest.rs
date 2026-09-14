@@ -10,7 +10,7 @@ use anyhow::{Context as _, Result, bail};
 use siftr_core::context::{Context, shell_join};
 use siftr_core::observation::Stream;
 
-use super::{Globals, record_surfaced};
+use super::{Globals, record_shown};
 use crate::output::{self, Changes};
 use crate::project;
 use crate::record::Recording;
@@ -90,7 +90,11 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         open_signals: &open,
     };
     output::emit(globals.json, || changes.json(), |w| changes.human(w))?;
-    record_surfaced(globals, "ingest", &recorded.signals);
+    let shown = output::surfaced(&recorded.signals, globals.json)
+        .into_iter()
+        .chain(output::reminded(&open, globals.json))
+        .collect();
+    record_shown(globals, "ingest", shown);
     Ok(ExitCode::SUCCESS)
 }
 

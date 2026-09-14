@@ -158,7 +158,11 @@ pub fn still_open(
     run: &RunRecord,
     signals: &[StoredSignal],
 ) -> Result<Vec<StoredSignal>> {
-    if run.interrupted.is_some() || run.end.is_none() {
+    // An incomplete run's one change is its incompleteness; what it didn't run can't say what is still open.
+    let incomplete = signals
+        .iter()
+        .any(|s| s.signal.kind == SignalKind::Incomplete);
+    if run.interrupted.is_some() || run.end.is_none() || incomplete {
         return Ok(Vec::new());
     }
     let mut seen: HashSet<Key> = signals.iter().map(|s| key(&s.signal)).collect();

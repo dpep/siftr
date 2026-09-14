@@ -45,11 +45,6 @@ pub fn record_feedback(store: &Store, feedback: &[Feedback]) {
     }
 }
 
-/// Records the signals a changes summary printed by `command` showed.
-pub fn record_surfaced(globals: &Globals, command: &str, signals: &[StoredSignal]) {
-    record_shown(globals, command, output::surfaced(signals, globals.json));
-}
-
 /// Records that `command` showed `signals`. Opens its own store: `run`'s is spent by then.
 pub fn record_shown(globals: &Globals, command: &str, signals: Vec<&StoredSignal>) {
     let feedback: Vec<Feedback> = signals

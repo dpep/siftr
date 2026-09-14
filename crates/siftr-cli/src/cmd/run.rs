@@ -241,15 +241,20 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
         match interrupted {
             // A partial run would read as behaviors disappearing, next to every baseline it joined.
             Some(signal) => match recording.finish_interrupted(Some(code), signal) {
-                Ok(recorded) => report(&recorded, globals.json),
+                Ok(recorded) => report(&recorded, &[], globals.json),
                 Err(error) => output::warn(format_args!(
                     "analysis failed; the command's result is unaffected: {error:#}"
                 )),
             },
             None => match recording.finish(Some(code)) {
                 Ok(recorded) => {
-                    report(&recorded, globals.json);
-                    super::record_surfaced(globals, "run", &recorded.signals);
+                    let open = super::still_open(globals, &recorded.run, &recorded.signals);
+                    report(&recorded, &open, globals.json);
+                    let shown = output::surfaced(&recorded.signals, globals.json)
+                        .into_iter()
+                        .chain(output::reminded(&open, globals.json))
+                        .collect();
+                    super::record_shown(globals, "run", shown);
                 }
                 Err(error) => output::warn(format_args!(
                     "analysis failed; the command's result is unaffected: {error:#}"
@@ -334,13 +339,13 @@ fn exit_as(status: ExitStatus, code: i32) -> ExitCode {
 }
 
 /// Human summary to stderr, which the command's own output doesn't use for data; JSON to stdout.
-fn report(recorded: &Recorded, json: bool) {
+fn report(recorded: &Recorded, open: &[siftr_store::StoredSignal], json: bool) {
     let changes = Changes {
         run: &recorded.run,
         behaviors: recorded.behaviors,
         baseline_runs: &recorded.baseline_runs,
         signals: &recorded.signals,
-        open_signals: &[],
+        open_signals: open,
     };
     let printed = if json {
         output::emit(true, || changes.json(), |_| Ok(()))
