@@ -20,6 +20,9 @@ Exit codes:
   ingest   0 recorded, 2 error
   queries  0 results, 1 nothing found, 2 error
   status   0 healthy, 1 something needs attention, 2 error
+  ack      0 recorded, 2 error
+  dismiss  0 recorded, 2 error
+  gc       0 done, 2 error
 
 Examples:
   siftr run -- bundle exec rspec
