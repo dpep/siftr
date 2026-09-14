@@ -193,6 +193,14 @@ UPDATE runs SET interrupted = exit_code - 128
 WHERE interrupted IS NULL AND wall_ms IS NOT NULL AND exit_code BETWEEN 129 AND 159
   AND started_at_ms < 1789348963000 AND command NOT LIKE 'siftr ingest%';
 ",
+    r"
+-- Migration 7's time cutoff missed the case it was for: an old binary keeps recording after the fix exists, and
+-- nothing says which build wrote a run. So every finished run that exited 128+signal leaves baselines. A command
+-- that exits so itself usually passes on a killed child, whose output is as partial.
+UPDATE runs SET interrupted = exit_code - 128
+WHERE interrupted IS NULL AND wall_ms IS NOT NULL AND exit_code BETWEEN 129 AND 159
+  AND command NOT LIKE 'siftr ingest%';
+",
 ];
 
 /// The schema version this siftr reads and writes.
@@ -282,25 +290,25 @@ mod tests {
     #[test]
     fn runs_an_old_build_recorded_as_killed_by_a_signal_leave_baselines() {
         let home = tempfile::tempdir().unwrap();
-        let mut conn = at_version(home.path(), 6);
-        // e6904cb, the fix, was committed at 1789348963000.
-        let (before, after) = (
-            1_789_348_963_000_i64 - 60_000,
-            1_789_348_963_000_i64 + 60_000,
-        );
-        let runs: [(&str, i64, Option<i32>); 6] = [
-            ("sh step.sh", before, Some(137)),
-            ("sh step.sh", before, Some(0)),
-            ("sh step.sh", after, Some(137)),
-            ("siftr ingest --dir scenario", before, Some(137)),
-            ("sh step.sh", before, Some(255)),
-            ("sh step.sh", before, None),
+        // Already past migration 7, whose time cutoff these runs slip past.
+        let mut conn = at_version(home.path(), 7);
+        // (command, exit code, interrupted as recorded); no exit code is a run that never finished. All recorded
+        // now: an old binary keeps recording after the fix exists, so when a run started can't tell them apart.
+        let runs: [(&str, Option<i32>, Option<i32>); 7] = [
+            ("sh step.sh", Some(137), None),
+            ("sh step.sh", Some(0), None),
+            ("sh step.sh", Some(130), Some(2)),
+            ("siftr ingest --dir scenario", Some(137), None),
+            ("sh step.sh", Some(255), None),
+            ("sh step.sh", Some(143), None),
+            ("sh step.sh", None, None),
         ];
-        for (command, started, exit) in runs {
+        for (command, exit, interrupted) in runs {
             conn.execute(
-                "INSERT INTO runs (project, context, command, cwd, started_at_ms, wall_ms, exit_code, lines)
-                 VALUES ('p', ?1, ?1, '/', ?2, CASE WHEN ?3 IS NULL THEN NULL ELSE 1 END, ?3, 1)",
-                rusqlite::params![command, started, exit],
+                "INSERT INTO runs (project, context, command, cwd, started_at_ms, wall_ms, exit_code, lines, interrupted)
+                 VALUES ('p', ?1, ?1, '/', CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+                         CASE WHEN ?2 IS NULL THEN NULL ELSE 1 END, ?2, 1, ?3)",
+                rusqlite::params![command, exit, interrupted],
             )
             .unwrap();
         }
@@ -313,7 +321,10 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
-        assert_eq!(interrupted, [Some(9), None, None, None, None, None]);
+        assert_eq!(
+            interrupted,
+            [Some(9), None, Some(2), None, None, Some(15), None]
+        );
     }
 
     #[test]
