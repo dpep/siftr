@@ -73,6 +73,16 @@ impl Recording {
         });
     }
 
+    /// Keeps the raw capture but leaves the run unfinished; unfinished runs never join a baseline.
+    pub fn abandon(self) -> RunId {
+        if let Some(capture) = self.capture
+            && let Err(error) = capture.finish()
+        {
+            output::warn(format_args!("raw capture incomplete: {error}"));
+        }
+        self.run
+    }
+
     pub fn finish(self, exit_code: Option<i32>) -> Result<Recorded> {
         let Recording {
             mut store,
