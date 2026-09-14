@@ -17,9 +17,11 @@
 //! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `baseline_runs`, `skipped_runs` [{`run`,
 //!   `reason` (no_test_summary|errors_outside_examples|stopped|subset)}] (recent runs of the context left out of
 //!   the baseline because they didn't run what this run did, most recent first), `changes` (code-level groups),
-//!   `groups` [{`rank`, `setup` (changed outside every example), `headline` (signal id), `signals` (ids)}],
-//!   `signals` (rank order), `open_signals` (signals of earlier runs in `baseline_runs` still open at this run
-//!   and not raised again by it, oldest first, one per behavior and measure; dismissed changes are left out).
+//!   `groups` [{`rank`, `setup` (changed outside every example), `headline` (signal id), `signals` (ids),
+//!   `disappeared_examples` (null, or {`file`, `examples`} when the group is DISAPPEARED examples of one spec
+//!   file collapsed together)}], `signals` (rank order), `open_signals` (signals of earlier runs in
+//!   `baseline_runs` still open at this run and not raised again by it, oldest first, one per behavior and
+//!   measure; dismissed changes are left out, and so is any change headed by DISAPPEARED).
 //! - feedback (`ack -j`, `dismiss -j`): `kind` (surfaced|investigated|evidence_requested|dismissed|acked),
 //!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
 //!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
@@ -55,9 +57,9 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use siftr_core::aggregate::{DurationSummary, Exemplar, MAX_BEHAVIORS, Phase, Stats};
 use siftr_core::baseline::Ineligible;
-use siftr_core::behavior::Behavior;
+use siftr_core::behavior::{Behavior, Kind};
 use siftr_core::num::round_sig;
-use siftr_core::signal::{MIN_BASELINE_RUNS, Signal, SignalKind};
+use siftr_core::signal::{MIN_BASELINE_RUNS, Signal, SignalKind, disappeared_examples};
 use siftr_store::{Feedback, RunId, RunRecord, StoredSignal};
 
 /// Never panics as `eprintln!` does on a closed stderr (`2>&1 | head`): siftr may still be recording.
@@ -310,6 +312,8 @@ impl Changes<'_> {
                 "setup": g.setup,
                 "headline": g.headline().id.to_string(),
                 "signals": g.members.iter().map(|s| s.id.to_string()).collect::<Vec<_>>(),
+                "disappeared_examples": disappeared_examples(g.members.iter().map(|s| (&s.signal, &s.behavior)))
+                    .map(|d| json!({"file": d.file, "examples": d.examples})),
             })).collect::<Vec<_>>(),
             "signals": self.signals.iter().map(signal_json).collect::<Vec<_>>(),
             "open_signals": self.open_signals.iter().map(signal_json).collect::<Vec<_>>(),
@@ -454,18 +458,38 @@ impl Changes<'_> {
 fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
     let head = group.headline();
     let s = &head.signal;
-    writeln!(
-        w,
-        "  {:<4} {:<11} conf {:.2}  {}  {}",
-        // Store ids implement Display without honoring width, so pad the rendered string.
-        head.id.to_string(),
-        label(s.kind),
-        s.confidence,
-        printable(&head.behavior.template, 80),
-        change(head),
-    )?;
+    let collapsed = disappeared_examples(group.members.iter().map(|m| (&m.signal, &m.behavior)));
+    match &collapsed {
+        Some(d) => writeln!(
+            w,
+            "  {:<4} {:<11} conf {:.2}  {} examples of {}  gone, in all {} baseline runs",
+            // Store ids implement Display without honoring width, so pad the rendered string.
+            head.id.to_string(),
+            label(s.kind),
+            s.confidence,
+            d.examples,
+            d.file,
+            s.baseline.runs,
+        )?,
+        None => writeln!(
+            w,
+            "  {:<4} {:<11} conf {:.2}  {}  {}",
+            head.id.to_string(),
+            label(s.kind),
+            s.confidence,
+            printable(&head.behavior.template, 80),
+            change(head),
+        )?,
+    }
+    // In a collapsed group, the other examples are what disappeared, not evidence for it: list only what was
+    // attributed to them (e.g. a query scoped to one), never another gone example.
     let supporting: Vec<String> = group.members[1..]
         .iter()
+        .filter(|m| {
+            collapsed.is_none()
+                || !(m.signal.kind == SignalKind::Disappeared
+                    && m.behavior.kind == Kind::TestExample)
+        })
         .map(|m| {
             format!(
                 "{} {}  {}",
