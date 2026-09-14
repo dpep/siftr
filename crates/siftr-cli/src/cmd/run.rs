@@ -231,7 +231,12 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
                 output::warn(format_args!("side channel lost: {error:#}"));
             }
         }
-        match interrupts.and_then(|interrupts| interrupts.received()) {
+        // Either siftr itself was interrupted (and may or may not have forwarded it), or the child died
+        // from a signal on its own (`kill -9`, the OOM killer) without siftr ever seeing one.
+        let interrupted = interrupts
+            .and_then(|interrupts| interrupts.received())
+            .or_else(|| status.signal());
+        match interrupted {
             // A partial run would read as behaviors disappearing, next to every baseline it joined.
             Some(signal) => match recording.finish_interrupted(Some(code), signal) {
                 Ok(recorded) => report(&recorded, globals.json),

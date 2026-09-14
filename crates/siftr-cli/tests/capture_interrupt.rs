@@ -98,3 +98,64 @@ fn an_interrupted_run_is_recorded_but_never_joins_a_later_baseline() {
         "the interrupted run's missing tail must not read as behaviors disappearing: {changes}"
     );
 }
+
+/// Same command as the baseline runs; only the env var decides whether it self-kills, so every run shares
+/// one context regardless of which path it takes.
+const KILLABLE_SCRIPT: &str =
+    r#"echo a; echo b; echo c; echo d; if [ -n "$SIFTR_TEST_KILL" ]; then kill -9 $$; fi; echo e"#;
+
+#[test]
+fn a_child_killed_by_a_signal_counts_as_interrupted_even_though_siftr_caught_nothing() {
+    let home = tempfile::tempdir().unwrap();
+
+    // Two clean baseline runs.
+    for _ in 0..2 {
+        let output = siftr(&home, &["run", "--", "sh", "-c", KILLABLE_SCRIPT])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    // A third run whose child kills itself: no signal ever reaches siftr, only the child dies from one.
+    // Only SIGINT/SIGTERM take siftr itself down the same way (`exit_as`); SIGKILL just becomes a plain
+    // exit code, 128 + signal, as a shell would report it.
+    let output = siftr(&home, &["run", "--", "sh", "-c", KILLABLE_SCRIPT])
+        .env("SIFTR_TEST_KILL", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(137), "{stderr}");
+    assert!(
+        stderr.contains("r3: interrupted by signal 9"),
+        "a signal-killed child counts as interrupted, not a completed run with 4 of 5 usual lines: {stderr}"
+    );
+
+    let history = siftr(&home, &["history", "-j"]).output().unwrap();
+    let runs: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
+    assert_eq!(runs[0]["interrupted"], 9, "{runs}");
+    assert_eq!(
+        runs[0]["exit_code"], 137,
+        "128 + signal, as a shell would report it: {runs}"
+    );
+
+    // A fourth, clean run: its baseline must be the two clean runs, not the one the child killed itself in.
+    let output = siftr(&home, &["run", "--", "sh", "-c", KILLABLE_SCRIPT])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let changes = siftr(&home, &["changes", "-j"]).output().unwrap();
+    let changes: serde_json::Value = serde_json::from_slice(&changes.stdout).unwrap();
+    let mut baseline_runs: Vec<&str> = changes["baseline_runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    baseline_runs.sort_unstable();
+    assert_eq!(
+        baseline_runs,
+        ["r1", "r2"],
+        "the killed run r3 is excluded: {changes}"
+    );
+}
