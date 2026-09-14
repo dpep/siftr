@@ -250,11 +250,27 @@ fn run_exit_codes_when_the_command_cannot_start() {
     let sandbox = Sandbox::new();
     let missing = sandbox.output(&["run", "--", "siftr-no-such-command"]);
     assert_eq!(code(&missing), 127, "{}", stderr(&missing));
+}
 
+/// 125 is reserved for failures that genuinely prevent spawning; a store that can't open must not be one
+/// of them, or every command run under a broken SIFTR_HOME would stop working (CLAUDE.md principle 6).
+#[test]
+fn run_still_runs_the_command_when_the_store_cannot_open() {
+    let sandbox = Sandbox::new();
     let not_a_dir = sandbox.project.path().join("file");
     std::fs::write(&not_a_dir, "").unwrap();
-    let bad_home = sandbox.output(&["--home", not_a_dir.to_str().unwrap(), "run", "--", "true"]);
-    assert_eq!(code(&bad_home), 125, "{}", stderr(&bad_home));
+    let output = sandbox.output(&["--home", not_a_dir.to_str().unwrap(), "run", "--", "true"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "the child still runs: {}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("not recording this run"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 /// Replays a captured rails_demo scenario through `siftr run`, keeping the command (and so the context) constant.

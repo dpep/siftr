@@ -185,3 +185,35 @@ fn a_chatty_orphan_does_not_hold_the_drain_open_by_staying_noisy() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("still holds its output"), "{stderr}");
 }
+
+#[test]
+fn a_store_that_cannot_open_does_not_stop_the_command() {
+    let home = tempfile::tempdir().unwrap();
+    // A database from a newer siftr than this one understands: `Store::open` fails to migrate it.
+    let db = home.path().join("siftr.db");
+    let set_version = Command::new("sqlite3")
+        .arg(&db)
+        .arg("PRAGMA user_version = 99;")
+        .status()
+        .unwrap();
+    assert!(set_version.success());
+
+    let output = siftr(&home, &["run", "--", "sh", "-c", "echo hi; exit 7"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "the child still runs and its own exit code passes through"
+    );
+    assert_eq!(output.stdout, b"hi\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("siftr: warning: not recording this run:"),
+        "{stderr}"
+    );
+    assert!(
+        !home.path().join("runs").exists(),
+        "nothing was recorded: {stderr}"
+    );
+}

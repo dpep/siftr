@@ -53,15 +53,13 @@ enum Event {
 }
 
 pub fn run(args: Args, globals: &Globals) -> ExitCode {
+    // A store or project-detection failure (an unmigrated SIFTR_HOME, an unwritable dir) must not stop the
+    // command itself from running: warn and fall through to an unrecorded, plain-passthrough run.
     let setup =
         || -> Result<(Store, Location)> { Ok((globals.open_store()?, project::current()?)) };
-    let (store, location) = match setup() {
-        Ok(setup) => setup,
-        Err(error) => {
-            output::error(&error, globals.json);
-            return ExitCode::from(125);
-        }
-    };
+    let setup = setup()
+        .inspect_err(|error| output::warn(format_args!("not recording this run: {error:#}")))
+        .ok();
     let argv: Vec<String> = args
         .command
         .iter()
@@ -138,11 +136,13 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
     let interrupts =
         signals.map(|signals| terminal::forward(signals, child.id(), foreground, resize));
 
-    let context = Context::for_command(location.project, &argv);
-    let command_line = context.name().to_owned();
-    let mut recording = Recording::begin(store, context, &command_line, &location.cwd)
-        .inspect_err(|error| output::warn(format_args!("not recording this run: {error:#}")))
-        .ok();
+    let mut recording = setup.and_then(|(store, location)| {
+        let context = Context::for_command(location.project, &argv);
+        let command_line = context.name().to_owned();
+        Recording::begin(store, context, &command_line, &location.cwd)
+            .inspect_err(|error| output::warn(format_args!("not recording this run: {error:#}")))
+            .ok()
+    });
 
     let (events, received) = mpsc::sync_channel(QUEUED_CHUNKS);
     let stdout: Box<dyn Read + Send> = match master {
