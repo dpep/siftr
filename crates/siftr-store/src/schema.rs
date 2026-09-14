@@ -1,7 +1,7 @@
 //! Schema migrations, tracked by SQLite's `user_version`.
 
 use anyhow::{Result, bail};
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 
 /// Append a migration to change the schema; never edit one that has shipped.
 const MIGRATIONS: &[&str] = &[
@@ -150,16 +150,25 @@ pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {
     conn.execute_batch(
         "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;",
     )?;
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let known = MIGRATIONS.len() as i64;
+    let version = user_version(conn)?;
+    if version == known {
+        return Ok(());
+    }
     if version > known {
         bail!("database schema version {version} is newer than this siftr understands ({known})");
     }
+    // Opens racing to migrate: the write lock queues the others, which then re-read the version and skip.
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let version = user_version(&tx)?;
     for (applied, migration) in (0..).zip(MIGRATIONS).skip(version.unsigned_abs() as usize) {
-        let tx = conn.transaction()?;
         tx.execute_batch(migration)?;
         tx.pragma_update(None, "user_version", applied + 1_i64)?;
-        tx.commit()?;
     }
+    tx.commit()?;
     Ok(())
+}
+
+fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
 }

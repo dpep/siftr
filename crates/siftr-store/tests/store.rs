@@ -307,3 +307,29 @@ fn capture_keeps_raw_bytes_per_stream() {
     let stderr = std::fs::read(store.capture_file(run, &Stream::Stderr)).unwrap();
     assert_eq!(stderr, b"err\n");
 }
+
+/// Two `siftr run`s started together on a fresh or older home must both open it: a failed open is a
+/// command that never ran.
+#[test]
+fn concurrent_opens_of_an_unmigrated_home_all_succeed() {
+    const OPENS: usize = 8;
+    for _ in 0..10 {
+        let home = tempfile::tempdir().unwrap();
+        let start = std::sync::Barrier::new(OPENS);
+        std::thread::scope(|scope| {
+            let opens: Vec<_> = (0..OPENS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        Store::open(home.path()).map(drop)
+                    })
+                })
+                .collect();
+            for open in opens {
+                if let Err(error) = open.join().unwrap() {
+                    panic!("{error:#}");
+                }
+            }
+        });
+    }
+}
