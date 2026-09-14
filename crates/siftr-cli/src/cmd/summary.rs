@@ -8,7 +8,9 @@ use serde_json::json;
 use siftr_store::{Order, RunId};
 
 use super::{Globals, found, no_runs, resolve_run};
-use crate::output::{self, behavior_json, duration, printable, run_json, stats_json};
+use crate::output::{
+    self, behavior_json, duration, exact, plural, printable, run_json, stats_json,
+};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -33,7 +35,10 @@ enum By {
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let store = globals.open_store()?;
     let Some(run) = resolve_run(&store, args.run)? else {
-        return Ok(no_runs());
+        return no_runs(
+            globals,
+            || json!({ "run": null, "behaviors_total": 0, "behaviors": [] }),
+        );
     };
     let order = match args.by {
         By::Count => Order::Count,
@@ -53,8 +58,11 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         let lines = run.end.map_or(0, |end| end.lines);
         writeln!(
             w,
-            "{}: {lines} lines, {total} behaviors, {}",
-            run.id, run.command
+            "{}: {}, {}, {}",
+            run.id,
+            plural(lines, "line"),
+            plural(total, "behavior"),
+            run.command
         )?;
         if run.overflow_events > 0 {
             writeln!(
@@ -73,8 +81,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             let time = |f: fn(&siftr_core::aggregate::DurationSummary) -> std::time::Duration| {
                 stats
                     .duration
-                    .as_ref()
-                    .map_or_else(|| "-".to_owned(), |d| duration(f(d)))
+                    .map_or_else(|| "-".to_owned(), |d| duration(f(&exact(d))))
             };
             writeln!(
                 w,

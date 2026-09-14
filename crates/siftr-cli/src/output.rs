@@ -9,11 +9,12 @@
 //! - signal: `id`, `run`, `kind` (error|new|disappeared|frequency|latency), `confidence` (number in
 //!   [0, 1)), `measure` (count|queries|duration_ms|failed), `current`, `baseline` {`runs`,
 //!   `present_in`, `median`, `min`, `max`, `failures`}, `exception`, `attribution` {`scope`
-//!   (behavior or null), `setup` (changed before the first example), `current`, `baseline`} or null,
+//!   (behavior or null), `setup` (changed outside every example), `current`, `baseline`} or null,
 //!   `tier` (1 error … 5 setup), `group` (rank), `headline`, `evidence_lines`, `behavior`.
 //! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `baseline_runs`, `changes`
 //!   (code-level groups), `groups` [{`rank`, `setup`, `headline` (signal id), `signals` (ids)}],
-//!   `signals` (rank order).
+//!   `signals` (rank order), `open_signals` (signals of earlier runs in `baseline_runs` still open at this run
+//!   and not raised again by it, oldest first, one per behavior and measure; dismissed changes are left out).
 //! - feedback (`ack -j`, `dismiss -j`): `kind` (surfaced|investigated|evidence_requested|dismissed|acked),
 //!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
 //!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
@@ -23,15 +24,20 @@
 //!   (run ids or null), `later_runs` (finished runs of the context judged against the signal's own baseline),
 //!   `investigated` (an explain, evidence or ack on its behavior before it resolved), `dismissed`, `feedback`
 //!   (on its behavior, from its run until the run it resolved in, oldest first).
+//! - nothing found (exit 1) is still the command's document: `changes` with `run` null and empty arrays,
+//!   `summary` with `run` null, `evidence` with `run` null, `history` an empty array.
+//! - error (exit 2; `run` keeps its own codes), on stdout: {`error`: {`code`, `message`}}. `code` is `usage`
+//!   (bad arguments, including an id of the wrong kind), `not_found` (a named run, signal, behavior or context
+//!   doesn't exist) or `failed` (anything else).
 
 use std::collections::BTreeMap;
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::io::{self, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use siftr_core::aggregate::{Exemplar, MAX_BEHAVIORS, Stats};
+use siftr_core::aggregate::{DurationSummary, Exemplar, MAX_BEHAVIORS, Stats};
 use siftr_core::behavior::Behavior;
 use siftr_core::num::round_sig;
 use siftr_core::signal::{MIN_BASELINE_RUNS, Signal, SignalKind};
@@ -41,11 +47,76 @@ pub fn warn(message: impl Display) {
     eprintln!("siftr: warning: {message}");
 }
 
+/// What kind of failure an error is, so a `-j` consumer can branch without reading the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCode {
+    Usage,
+    NotFound,
+    Failed,
+}
+
+impl ErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ErrorCode::Usage => "usage",
+            ErrorCode::NotFound => "not_found",
+            ErrorCode::Failed => "failed",
+        }
+    }
+}
+
+/// An error whose code is known where it is raised.
+#[derive(Debug)]
+struct Coded {
+    code: ErrorCode,
+    message: String,
+}
+
+impl Display for Coded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Coded {}
+
+pub fn usage(message: impl Into<String>) -> anyhow::Error {
+    Coded {
+        code: ErrorCode::Usage,
+        message: message.into(),
+    }
+    .into()
+}
+
+pub fn not_found(message: impl Into<String>) -> anyhow::Error {
+    Coded {
+        code: ErrorCode::NotFound,
+        message: message.into(),
+    }
+    .into()
+}
+
+fn code_of(error: &anyhow::Error) -> ErrorCode {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<Coded>())
+        .map_or(ErrorCode::Failed, |coded| coded.code)
+}
+
 pub fn error(error: &anyhow::Error, json: bool) {
+    report_error(code_of(error), &format!("{error:#}"), json);
+}
+
+/// Under `-j` the error is the document on stdout, so a consumer reading stdout always gets one.
+pub fn report_error(code: ErrorCode, message: &str, json: bool) {
     if json {
-        eprintln!("{}", json!({ "error": format!("{error:#}") }));
+        let document = json!({ "error": { "code": code.as_str(), "message": message } });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&document).unwrap_or_default()
+        );
     } else {
-        eprintln!("siftr: error: {error:#}");
+        eprintln!("siftr: error: {message}");
     }
 }
 
@@ -63,6 +134,11 @@ pub fn emit(
         as_human(&mut out)?;
     }
     Ok(())
+}
+
+/// `1 change`, `2 changes`.
+pub fn plural(n: u64, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
 /// Groups shown in full; the rest are counted.
@@ -101,12 +177,29 @@ pub fn groups(signals: &[StoredSignal]) -> Vec<Group<'_>> {
         .collect()
 }
 
+/// Open signals by the change they belonged to, their run's group, in the order given.
+fn open_groups(open: &[StoredSignal]) -> Vec<Vec<&StoredSignal>> {
+    let mut changes: Vec<Vec<&StoredSignal>> = Vec::new();
+    for s in open {
+        match changes
+            .iter_mut()
+            .find(|c| (c[0].run, c[0].signal.group) == (s.run, s.signal.group))
+        {
+            Some(change) => change.push(s),
+            None => changes.push(vec![s]),
+        }
+    }
+    changes
+}
+
 /// A run's signals against its baseline: the output of `run`, `ingest` and `changes`.
 pub struct Changes<'a> {
     pub run: &'a RunRecord,
     pub behaviors: u64,
     pub baseline_runs: &'a [RunId],
     pub signals: &'a [StoredSignal],
+    /// Earlier signals the baseline has absorbed without their change going away.
+    pub open_signals: &'a [StoredSignal],
 }
 
 impl Changes<'_> {
@@ -124,6 +217,20 @@ impl Changes<'_> {
                 "signals": g.members.iter().map(|s| s.id.to_string()).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
             "signals": self.signals.iter().map(signal_json).collect::<Vec<_>>(),
+            "open_signals": self.open_signals.iter().map(signal_json).collect::<Vec<_>>(),
+        })
+    }
+
+    /// The document when there is no run to show.
+    pub fn empty_json() -> Value {
+        json!({
+            "run": null,
+            "behaviors": 0,
+            "baseline_runs": [],
+            "changes": 0,
+            "groups": [],
+            "signals": [],
+            "open_signals": [],
         })
     }
 
@@ -132,7 +239,7 @@ impl Changes<'_> {
         let (setup, code): (Vec<&Group<'_>>, Vec<&Group<'_>>) =
             groups.iter().partition(|g| g.setup);
         let run = self.run.id;
-        let n = self.baseline_runs.len();
+        let n = self.baseline_runs.len() as u64;
         if let Some(signal) = self.run.interrupted {
             writeln!(
                 w,
@@ -142,23 +249,22 @@ impl Changes<'_> {
             let lines = self.run.end.map_or(0, |end| end.lines);
             writeln!(
                 w,
-                "{run}: {lines} lines, {} behaviors; no earlier runs of this context to compare with",
-                self.behaviors
+                "{run}: {}, {}; no earlier runs of this context to compare with",
+                plural(lines, "line"),
+                plural(self.behaviors, "behavior")
             )?;
         } else {
-            let plural =
-                |k: usize, word: &str| format!("{k} {word}{}", if k == 1 { "" } else { "s" });
             write!(
                 w,
                 "{run} vs {} ({}): {}",
                 plural(n, "baseline run"),
                 runs_label(self.baseline_runs),
-                plural(code.len(), "change")
+                plural(code.len() as u64, "change")
             )?;
-            if n < MIN_BASELINE_RUNS as usize {
+            if n < u64::from(MIN_BASELINE_RUNS) {
                 write!(
                     w,
-                    "; only ERROR can fire until there are {MIN_BASELINE_RUNS}"
+                    "; only ERROR can fire until there are {MIN_BASELINE_RUNS} baseline runs"
                 )?;
             }
             writeln!(w)?;
@@ -169,17 +275,16 @@ impl Changes<'_> {
         if code.len() > SHOWN_GROUPS {
             writeln!(
                 w,
-                "  … {} more changes, ranked lower: siftr changes {run} -j",
-                code.len() - SHOWN_GROUPS
+                "  … {}, ranked lower: siftr changes {run} -j",
+                plural((code.len() - SHOWN_GROUPS) as u64, "more change")
             )?;
         }
         for group in setup {
-            let head = group.headline();
             writeln!(
                 w,
-                "  environment changed before the first example: {} signals, not the code under test ({})",
-                group.members.len(),
-                head.id
+                "  environment changed before the first example: {}, not the code under test ({})",
+                plural(group.members.len() as u64, "signal"),
+                group.headline().id
             )?;
         }
         if self.run.overflow_events > 0 {
@@ -189,8 +294,38 @@ impl Changes<'_> {
                 self.run.overflow_events
             )?;
         }
-        match code.first().or(groups.first().as_ref()) {
-            Some(group) => writeln!(w, "next: siftr explain {}", group.headline().id),
+        let open = open_groups(self.open_signals);
+        for change in open.iter().take(SHOWN_GROUPS) {
+            let head = change[0];
+            let supporting = match change.len() {
+                1 => String::new(),
+                k => format!(" (+{} supporting)", k - 1),
+            };
+            writeln!(
+                w,
+                "  still open: {} ({}) {} {}  {}{supporting} · siftr explain {}",
+                head.id,
+                head.run,
+                label(head.signal.kind),
+                printable(&head.behavior.template, 60),
+                self::change(head),
+                head.id
+            )?;
+        }
+        if open.len() > SHOWN_GROUPS {
+            writeln!(
+                w,
+                "  … {} more still open: siftr history --signals",
+                open.len() - SHOWN_GROUPS
+            )?;
+        }
+        let next = code
+            .first()
+            .or(groups.first().as_ref())
+            .map(|g| g.headline().id)
+            .or(open.first().map(|change| change[0].id));
+        match next {
+            Some(signal) => writeln!(w, "next: siftr explain {signal}"),
             None => writeln!(w, "next: siftr summary {run}"),
         }
     }
@@ -201,7 +336,7 @@ fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
     let s = &head.signal;
     writeln!(
         w,
-        "  {:<4} {:<11} conf {:<4}  {}  {}",
+        "  {:<4} {:<11} conf {:.2}  {}  {}",
         // Store ids implement Display without honoring width, so pad the rendered string.
         head.id.to_string(),
         label(s.kind),
@@ -227,8 +362,7 @@ fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
         writeln!(w, "       in: {}", printable(&scope.template, 100))?;
     }
     let lines: u64 = group.members.iter().map(|m| m.exemplars).sum();
-    let plural = if lines == 1 { "" } else { "s" };
-    writeln!(w, "       evidence: {lines} line{plural}")
+    writeln!(w, "       evidence: {}", plural(lines, "line"))
 }
 
 /// The baseline runs, oldest to newest.
@@ -258,12 +392,6 @@ pub fn change(stored: &StoredSignal) -> String {
             format!("{} {} → {}{range}", s.measure, at(b.median), s.current)
         }
         SignalKind::Latency => format!("{}ms → {}ms", at(b.median), s.current),
-        SignalKind::Incomplete => format!(
-            "{} {} now, {} in baseline runs",
-            s.measure,
-            s.current,
-            at(b.median)
-        ),
         SignalKind::New => format!(
             "new: {} now, in none of {} baseline runs",
             s.current, b.runs
@@ -305,7 +433,7 @@ pub fn change(stored: &StoredSignal) -> String {
 pub fn rule(s: &Signal) -> String {
     let b = &s.baseline;
     let n = b.runs;
-    let c = s.confidence;
+    let c = format!("{:.2}", s.confidence);
     match s.kind {
         SignalKind::Frequency if b.min == b.max => format!(
             "identical in all {n} baseline runs, so any change counts; confidence (n+1)/(n+2) = {c}"
@@ -324,9 +452,6 @@ pub fn rule(s: &Signal) -> String {
         ),
         SignalKind::Error => format!(
             "failed now; no baseline failure had the same exception; confidence 1 - (failures+1)/(n+2) = {c}"
-        ),
-        SignalKind::Incomplete => format!(
-            "didn't run what all {n} baseline runs did, so what it lacks isn't signalled; confidence (n+1)/(n+2) = {c}"
         ),
     }
 }
@@ -364,11 +489,26 @@ pub fn behavior_json(behavior: &Behavior) -> Value {
     })
 }
 
+/// A single occurrence's percentiles are its own duration: the histogram's rounded estimate would disagree with
+/// the total printed beside it.
+pub fn exact(d: DurationSummary) -> DurationSummary {
+    if d.count == 1 {
+        DurationSummary {
+            p50: d.total,
+            p95: d.total,
+            max: d.total,
+            ..d
+        }
+    } else {
+        d
+    }
+}
+
 pub fn stats_json(stats: &Stats) -> Value {
     json!({
         "count": stats.count,
         "errors": stats.errors,
-        "duration": stats.duration.map(|d| json!({
+        "duration": stats.duration.map(exact).map(|d| json!({
             "count": d.count,
             "total_us": micros(d.total),
             "p50_us": micros(d.p50),
@@ -415,6 +555,29 @@ pub fn exemplar_json(exemplar: &Exemplar) -> Value {
     json!({ "stream": exemplar.stream.to_string(), "seq": exemplar.seq, "line": exemplar.line })
 }
 
+/// `Class: message` when the exemplar is a failed example's listener event, whose raw line is JSON.
+pub fn exception(exemplar: &Exemplar) -> Option<String> {
+    if exemplar.stream.to_string() != crate::sidechannel::rspec_events().to_string() {
+        return None;
+    }
+    let event: Value = serde_json::from_str(&exemplar.line).ok()?;
+    let exception = event.get("exception")?;
+    let class = exception.get("class")?.as_str()?;
+    // Matcher messages span lines ("\nexpected: 1\n     got: 2"); one line reads better beside the raw event.
+    let message = exception
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(if message.is_empty() {
+        class.to_owned()
+    } else {
+        format!("{class}: {message}")
+    })
+}
+
 /// The signals a changes output shows: all of them as JSON; for a person, only what [`Changes::human`] prints.
 pub fn surfaced(signals: &[StoredSignal], json: bool) -> Vec<&StoredSignal> {
     if json {
@@ -427,6 +590,18 @@ pub fn surfaced(signals: &[StoredSignal], json: bool) -> Vec<&StoredSignal> {
         .take(SHOWN_GROUPS)
         .flat_map(|g| g.members)
         .chain(setup.into_iter().map(|g| g.members[0]))
+        .collect()
+}
+
+/// The open signals a changes output shows: all of them as JSON; for a person, the one each printed line names.
+pub fn reminded(open: &[StoredSignal], json: bool) -> Vec<&StoredSignal> {
+    if json {
+        return open.iter().collect();
+    }
+    open_groups(open)
+        .into_iter()
+        .take(SHOWN_GROUPS)
+        .map(|change| change[0])
         .collect()
 }
 
@@ -533,5 +708,14 @@ mod tests {
             .to_vec();
         assert_eq!(runs_label(&runs), "r7…r11");
         assert_eq!(runs_label(&runs[..2]), "r10 r11");
+    }
+
+    #[test]
+    fn an_error_keeps_the_code_it_was_raised_with_through_added_context() {
+        assert_eq!(
+            code_of(&not_found("no run r9").context("reading")),
+            ErrorCode::NotFound
+        );
+        assert_eq!(code_of(&anyhow::anyhow!("disk full")), ErrorCode::Failed);
     }
 }

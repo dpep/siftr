@@ -81,11 +81,13 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     }
     let recorded = recording.finish(exit_code)?;
 
+    let open = super::still_open(globals, &recorded.run, &recorded.signals);
     let changes = Changes {
         run: &recorded.run,
         behaviors: recorded.behaviors,
         baseline_runs: &recorded.baseline_runs,
         signals: &recorded.signals,
+        open_signals: &open,
     };
     output::emit(globals.json, || changes.json(), |w| changes.human(w))?;
     record_surfaced(globals, "ingest", &recorded.signals);

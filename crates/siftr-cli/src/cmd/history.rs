@@ -14,7 +14,9 @@ use siftr_core::signal::{Signal, SignalKind, detect};
 use siftr_store::{Feedback, FeedbackKind, RunId, RunRecord, Store, StoredSignal};
 
 use super::{Globals, found};
-use crate::output::{self, age, feedback_json, groups, label, printable, run_json, signal_json};
+use crate::output::{
+    self, age, feedback_json, groups, label, plural, printable, run_json, signal_json,
+};
 use crate::project;
 
 #[derive(clap::Args)]
@@ -65,7 +67,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     };
     output::emit(globals.json, as_json, |w| {
         writeln!(w, "runs in {project}")?;
-        for (run, (changes, _)) in runs.iter().zip(&counts) {
+        for (run, &(changes, _)) in runs.iter().zip(&counts) {
             let status = match run.end {
                 Some(end) if run.interrupted.is_some() => format!(
                     "interrupted (signal {}) {:>8} lines",
@@ -76,7 +78,11 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                     let exit = end
                         .exit_code
                         .map_or_else(|| "-".to_owned(), |code| code.to_string());
-                    format!("exit {exit:<3} {:>8} lines  {changes} changes", end.lines)
+                    format!(
+                        "exit {exit:<3} {:>8} lines  {:<10}",
+                        end.lines,
+                        plural(changes as u64, "change")
+                    )
                 }
                 None => "unfinished".to_owned(),
             };
@@ -101,7 +107,7 @@ fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitC
     for run in runs {
         let signals = store.signals(run.id)?;
         if !signals.is_empty() {
-            let outcomes = outcomes(store, run, &signals)?;
+            let outcomes = outcomes(store, run, &signals, None)?;
             rows.extend(signals.into_iter().zip(outcomes));
         }
     }
@@ -140,6 +146,50 @@ fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitC
         }
     })?;
     Ok(found(!rows.is_empty()))
+}
+
+/// Signals of the runs `run` was judged against that are still open at `run` — every later run of the context
+/// through `run` still shows the change against the signal's own baseline — and that `run` didn't raise again.
+/// The rolling baseline absorbs a change that stays, so without these an unfixed regression reads as no change.
+/// Bounded by that window: once the signal's run ages out of the baseline, the change is what siftr calls normal.
+/// Oldest first, one per behavior and measure; a change with any dismissed signal is left out.
+pub fn still_open(
+    store: &Store,
+    run: &RunRecord,
+    signals: &[StoredSignal],
+) -> Result<Vec<StoredSignal>> {
+    if run.interrupted.is_some() || run.end.is_none() {
+        return Ok(Vec::new());
+    }
+    let mut seen: HashSet<Key> = signals.iter().map(|s| key(&s.signal)).collect();
+    let mut earlier = store.baseline_of(run.id)?;
+    earlier.sort();
+    let mut open = Vec::new();
+    for id in earlier {
+        let signals = store.signals(id)?;
+        if signals.is_empty() {
+            continue;
+        }
+        let Some(earlier) = store.run(id)? else {
+            continue;
+        };
+        let outcomes = outcomes(store, &earlier, &signals, Some(run.id))?;
+        let dismissed: HashSet<u32> = signals
+            .iter()
+            .zip(&outcomes)
+            .filter(|(_, outcome)| outcome.dismissed())
+            .map(|(stored, _)| stored.signal.group)
+            .collect();
+        for (stored, outcome) in signals.into_iter().zip(outcomes) {
+            if outcome.status() == "open"
+                && !dismissed.contains(&stored.signal.group)
+                && seen.insert(key(&stored.signal))
+            {
+                open.push(stored);
+            }
+        }
+    }
+    Ok(open)
 }
 
 /// What became of a signal, judged by re-running its own rule against the baseline it was judged against, on
@@ -193,8 +243,7 @@ impl Outcome {
             }
             (true, Some(resolved), None) => format!("resolved in {resolved} {how}"),
             (true, None, _) => {
-                let plural = if self.later_runs == 1 { "" } else { "s" };
-                format!("open after {} later run{plural}", self.later_runs)
+                format!("open after {}", plural(self.later_runs as u64, "later run"))
             }
         };
         if self.dismissed() {
@@ -211,7 +260,13 @@ fn key(signal: &Signal) -> Key {
     (signal.kind, signal.behavior, signal.measure.clone())
 }
 
-fn outcomes(store: &Store, run: &RunRecord, signals: &[StoredSignal]) -> Result<Vec<Outcome>> {
+/// Judged on the later runs of `run`'s context, up to and including `until` when given.
+fn outcomes(
+    store: &Store,
+    run: &RunRecord,
+    signals: &[StoredSignal],
+    until: Option<RunId>,
+) -> Result<Vec<Outcome>> {
     let baseline_stats = store
         .baseline_of(run.id)?
         .into_iter()
@@ -226,7 +281,11 @@ fn outcomes(store: &Store, run: &RunRecord, signals: &[StoredSignal]) -> Result<
             .collect())
     };
     let own = fires(run.id)?;
-    let later = store.runs_after(&run.context, run.id)?;
+    let later: Vec<RunRecord> = store
+        .runs_after(&run.context, run.id)?
+        .into_iter()
+        .filter(|later| until.is_none_or(|until| later.id <= until))
+        .collect();
     let later_fires = later
         .iter()
         .map(|later| fires(later.id))

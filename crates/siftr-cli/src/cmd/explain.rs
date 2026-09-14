@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use serde_json::{Value, json};
 use siftr_core::aggregate::RunStats;
 use siftr_core::signal::{self, measure};
@@ -10,7 +10,8 @@ use siftr_store::{Feedback, FeedbackKind, RunId, SignalId};
 
 use super::{Globals, record_feedback};
 use crate::output::{
-    self, behavior_json, change, exemplar_json, groups, label, printable, rule, signal_json,
+    self, behavior_json, change, exception, exemplar_json, groups, label, printable, rule,
+    signal_json,
 };
 
 #[derive(clap::Args)]
@@ -23,9 +24,12 @@ const EXEMPLARS: usize = 5;
 
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let store = globals.open_store()?;
-    let stored = store
-        .signal(args.signal)?
-        .with_context(|| format!("no signal {}", args.signal))?;
+    let stored = store.signal(args.signal)?.ok_or_else(|| {
+        output::not_found(format!(
+            "no signal {}; siftr history --signals lists recent signals",
+            args.signal
+        ))
+    })?;
     let behavior = &stored.behavior;
     let s = &stored.signal;
     let mut runs: Vec<(RunId, RunStats)> = vec![(stored.run, store.run_stats(stored.run)?)];
@@ -151,6 +155,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             None => writeln!(w, "evidence  none kept")?,
         }
         for exemplar in &exemplars {
+            if let Some(exception) = exception(exemplar) {
+                writeln!(w, "          {}", printable(&exception, 160))?;
+            }
             let at = format!("{}:{}", exemplar.stream, exemplar.seq);
             writeln!(w, "          {at:<20} {}", printable(&exemplar.line, 160))?;
         }

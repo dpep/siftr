@@ -3,7 +3,7 @@
 
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use siftr_store::{Feedback, FeedbackKind, SignalId};
 
 use super::Globals;
@@ -22,9 +22,12 @@ pub struct Args {
 /// Recording is this command's whole job, so unlike feedback recorded in passing, a failure is an error.
 pub fn run(kind: FeedbackKind, command: &str, args: Args, globals: &Globals) -> Result<ExitCode> {
     let store = globals.open_store()?;
-    let stored = store
-        .signal(args.signal)?
-        .with_context(|| format!("no signal {}", args.signal))?;
+    let stored = store.signal(args.signal)?.ok_or_else(|| {
+        output::not_found(format!(
+            "no signal {}; siftr history --signals lists recent signals",
+            args.signal
+        ))
+    })?;
     let feedback = Feedback {
         note: args.note,
         ..Feedback::on_signal(kind, command, globals.interface(), &stored)

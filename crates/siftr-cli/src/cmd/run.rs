@@ -340,6 +340,7 @@ fn report(recorded: &Recorded, json: bool) {
         behaviors: recorded.behaviors,
         baseline_runs: &recorded.baseline_runs,
         signals: &recorded.signals,
+        open_signals: &[],
     };
     let printed = if json {
         output::emit(true, || changes.json(), |_| Ok(()))

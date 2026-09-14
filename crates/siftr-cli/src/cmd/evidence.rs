@@ -3,12 +3,13 @@
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::Result;
 use serde_json::json;
+use siftr_core::aggregate::Stats;
 use siftr_store::{Feedback, FeedbackKind, RunId};
 
 use super::{Globals, found, record_feedback};
-use crate::output::{self, behavior_json, exemplar_json, printable, stats_json};
+use crate::output::{self, behavior_json, exception, exemplar_json, plural, printable, stats_json};
 use crate::project;
 
 #[derive(clap::Args)]
@@ -26,20 +27,41 @@ pub struct Args {
 }
 
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
+    check_id(&args.behavior)?;
     let store = globals.open_store()?;
-    let behavior = store
-        .resolve_behavior(&args.behavior)?
-        .with_context(|| format!("no behavior matches {}", args.behavior))?;
+    let behavior = store.resolve_behavior(&args.behavior)?.ok_or_else(|| {
+        output::not_found(format!(
+            "no behavior matches {}; siftr summary lists a run's behaviors",
+            args.behavior
+        ))
+    })?;
     let run = match args.run {
-        Some(run) if store.run(run)?.is_none() => bail!("no run {run}"),
+        Some(run) if store.run(run)?.is_none() => {
+            return Err(output::not_found(format!(
+                "no run {run}; siftr history lists this project's runs"
+            )));
+        }
         Some(run) => run,
         None => match store.latest_run_with(&project::current()?.project, behavior.id)? {
             Some(run) => run,
             None => {
-                eprintln!(
-                    "siftr: behavior {} has not occurred in this project",
-                    behavior.id.short()
-                );
+                if globals.json {
+                    let empty = || {
+                        json!({
+                            "behavior": behavior_json(&behavior),
+                            "run": null,
+                            "stats": stats_json(&Stats::default()),
+                            "exemplars": [],
+                            "captures": {},
+                        })
+                    };
+                    output::emit(true, empty, |_| Ok(()))?;
+                } else {
+                    eprintln!(
+                        "siftr: behavior {} has not occurred in this project",
+                        behavior.id.short()
+                    );
+                }
                 return Ok(ExitCode::FAILURE);
             }
         },
@@ -79,12 +101,15 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         )?;
         writeln!(
             w,
-            "{run}: {} occurrences, {} errors; {} lines kept",
-            stats.count,
-            stats.errors,
-            exemplars.len()
+            "{run}: {}, {}; {} kept",
+            plural(stats.count, "occurrence"),
+            plural(stats.errors, "error"),
+            plural(exemplars.len() as u64, "line")
         )?;
         for exemplar in &exemplars {
+            if let Some(exception) = exception(exemplar) {
+                writeln!(w, "  {}", printable(&exception, 200))?;
+            }
             let at = format!("{}:{}", exemplar.stream, exemplar.seq);
             writeln!(w, "  {at:<12} {}", printable(&exemplar.line, 200))?;
         }
@@ -104,4 +129,22 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         )],
     );
     Ok(found(!exemplars.is_empty()))
+}
+
+/// Behavior ids are hex. A signal id is the likeliest thing to land here, so that error names the command taking one.
+fn check_id(id: &str) -> Result<()> {
+    let signal = id
+        .strip_prefix('s')
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    if signal {
+        return Err(output::usage(format!(
+            "{id} is a signal id, and evidence takes a behavior id; siftr explain {id} shows the signal's behavior and evidence"
+        )));
+    }
+    if !((4..=16).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return Err(output::usage(format!(
+            "invalid behavior id {id:?} (expected 4 to 16 hex digits, as siftr summary shows)"
+        )));
+    }
+    Ok(())
 }

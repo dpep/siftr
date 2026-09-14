@@ -7,6 +7,7 @@ mod project;
 mod record;
 mod sidechannel;
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -37,7 +38,7 @@ struct Cli {
     #[arg(long, env = "SIFTR_HOME", global = true, value_name = "DIR")]
     home: Option<PathBuf>,
 
-    /// Print JSON to stdout
+    /// Print JSON to stdout, errors and empty results included
     #[arg(short = 'j', long, global = true)]
     json: bool,
 
@@ -68,7 +69,15 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        // Help and --version aren't errors; an argument error under -j is still one JSON document.
+        Err(error) if error.use_stderr() && json_requested(std::env::args_os().skip(1)) => {
+            output::report_error(output::ErrorCode::Usage, &clap_message(&error), true);
+            return ExitCode::from(2);
+        }
+        Err(error) => error.exit(),
+    };
     let globals = cmd::Globals {
         home: cli.home,
         json: cli.json,
@@ -91,4 +100,50 @@ fn main() -> ExitCode {
         output::error(&error, globals.json);
         ExitCode::from(2)
     })
+}
+
+/// Whether the arguments ask for JSON, read before clap parses them so an argument error can honor it.
+/// Stops at `--`: what follows belongs to the command `run` wraps.
+fn json_requested(args: impl IntoIterator<Item = OsString>) -> bool {
+    args.into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .take_while(|arg| arg != "--")
+        .any(|arg| {
+            arg == "--json"
+                || arg.strip_prefix('-').is_some_and(|flags| {
+                    flags.bytes().all(|b| b.is_ascii_alphabetic()) && flags.contains('j')
+                })
+        })
+}
+
+/// clap's message, one line, without its `error:` prefix and usage footer.
+fn clap_message(error: &clap::Error) -> String {
+    let text = error.to_string();
+    let head = text.split("\n\n").next().unwrap_or_default();
+    let head = head.strip_prefix("error: ").unwrap_or(head);
+    head.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_is_requested_by_a_flag_before_the_wrapped_command() {
+        let cases: [(&[&str], bool); 6] = [
+            (&["-j", "changes", "bogus"], true),
+            (&["changes", "--json"], true),
+            (&["run", "-qj", "--", "rspec"], true),
+            (&["run", "--", "sh", "-j"], false),
+            (&["summary", "-n5"], false),
+            (&["ack", "s1", "-m", "jq"], false),
+        ];
+        for (args, expected) in cases {
+            assert_eq!(
+                json_requested(args.iter().map(OsString::from)),
+                expected,
+                "{args:?}"
+            );
+        }
+    }
 }

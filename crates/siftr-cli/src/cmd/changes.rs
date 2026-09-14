@@ -1,12 +1,13 @@
-//! `siftr changes [RUN]`: a run's behavioral changes against its baseline, grouped and ranked.
+//! `siftr changes [RUN]`: a run's behavioral changes against its baseline, grouped and ranked, and the earlier
+//! changes still open at that run.
 
 use std::process::ExitCode;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use siftr_core::context::Context;
 use siftr_store::RunId;
 
-use super::{Globals, found, no_runs, record_surfaced, resolve_run};
+use super::{Globals, found, no_runs, record_shown, resolve_run, still_open};
 use crate::output::{self, Changes};
 use crate::project;
 
@@ -27,23 +28,34 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             let context = Context::named(project::current()?.project, name.as_str());
             match store.latest_run_of(&context)? {
                 Some(run) => Some(run),
-                None => bail!("no finished runs of context {name:?} in this project"),
+                None => {
+                    return Err(output::not_found(format!(
+                        "no finished runs of context {name:?} in this project; siftr history lists them"
+                    )));
+                }
             }
         }
         None => resolve_run(&store, args.run)?,
     };
     let Some(run) = run else {
-        return Ok(no_runs());
+        return no_runs(globals, Changes::empty_json);
     };
     let signals = store.signals(run.id)?;
     let baseline_runs = store.baseline_of(run.id)?;
+    let open = still_open(globals, &run, &signals);
     let changes = Changes {
         run: &run,
         behaviors: store.behavior_count(run.id)?,
         baseline_runs: &baseline_runs,
         signals: &signals,
+        open_signals: &open,
     };
     output::emit(globals.json, || changes.json(), |w| changes.human(w))?;
-    record_surfaced(globals, "changes", &signals);
-    Ok(found(!signals.is_empty()))
+    let shown = output::surfaced(&signals, globals.json)
+        .into_iter()
+        .chain(output::reminded(&open, globals.json))
+        .collect();
+    record_shown(globals, "changes", shown);
+    // A change still open is something to look at, even when this run raised nothing new.
+    Ok(found(!signals.is_empty() || !open.is_empty()))
 }
