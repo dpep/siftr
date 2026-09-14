@@ -123,10 +123,16 @@ logging to stderr, flag > env > XDG for paths).
 Before every commit:
 
 ```
-cargo test --workspace
+cargo test --workspace --no-fail-fast
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
+
+`--no-fail-fast` matters: without it cargo stops at the first failing test
+binary, so one known failure hides whether every later crate's tests pass.
+Prove a test fails before its fix in a throwaway `git worktree add --detach`
+with its own `CARGO_TARGET_DIR` — never `git stash` in a tree other agents
+share.
 
 ## Traps
 
