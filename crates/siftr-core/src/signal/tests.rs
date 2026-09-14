@@ -557,3 +557,24 @@ fn an_incomplete_run_keeps_what_ran_and_names_what_did_not() {
         "no DISAPPEARED for d, which didn't run, nor for stderr, which a partial run can lack"
     );
 }
+
+/// A spec file that raises after its examples are defined, or a suite hook that raises: every example ran, so the
+/// run is complete, and the new error outside examples is its change, ranked as an error.
+#[test]
+fn a_new_error_outside_examples_that_skipped_nothing_is_the_change() {
+    let example = b(Kind::TestExample, "./spec/a_spec.rb # a passes").seq(1);
+    let clean = run(&[summary(1.0, 1.0, 0.0), example.clone()]);
+    let hook = b(
+        Kind::Exception,
+        "An error occurred in an `after(:suite)` hook: RuntimeError: boom",
+    )
+    .seq(2)
+    .failed();
+    let raised = run(&[summary(1.0, 1.0, 1.0), example, hook]);
+    let runs = vec![clean; 3];
+    assert_eq!(
+        rows(&raised, &runs),
+        [row(1, true, SignalKind::New, "count", 1.0, 0.8)]
+    );
+    assert_eq!(detect(&raised, &baseline(&raised, &runs))[0].tier, 1);
+}

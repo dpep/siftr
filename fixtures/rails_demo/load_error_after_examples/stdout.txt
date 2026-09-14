@@ -1,0 +1,20 @@
+
+While loading ./spec/requests/users_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.
+Failure/Error: raise SyntaxError
+
+SyntaxError:
+  [1mcompile error ([1;4mSyntaxError[m[1m)[m
+# ./spec/requests/users_spec.rb:25:in '<top (required)>'
+.*........
+
+Pending: (Failures listed here are expected and do not affect your suite's status)
+
+  1) Comment is hidden when flagged
+     # moderation is not built yet
+     Failure/Error: expect(Comment.new).to respond_to(:hidden?)
+       expected #<Comment id: nil, body: nil, created_at: nil, post_id: nil, updated_at: nil> to respond to :hidden?
+     # ./spec/models/comment_spec.rb:10:in 'block (2 levels) in <top (required)>'
+
+Finished in 0.4048 seconds (files took 1.63 seconds to load)
+10 examples, 0 failures, 1 pending, 1 error occurred outside of examples
+

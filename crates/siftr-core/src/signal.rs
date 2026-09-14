@@ -265,13 +265,15 @@ enum Class {
     Stderr,
     /// Other lines: stdout, or a side channel no interpreter recognized.
     Output,
+    /// An error the test reporter saw outside every example: a spec file that failed to load, a hook that raised.
+    OutsideExamples,
 }
 
 fn tier(kind: SignalKind, class: Class) -> u8 {
     use Class::*;
     use SignalKind::*;
     match (kind, class) {
-        (Error | Incomplete, _) => 1,
+        (Error | Incomplete, _) | (New, OutsideExamples) => 1,
         (Frequency, Request) | (New, Stderr) | (Latency, Example) => 2,
         (Frequency, _) => 3,
         _ => 4,
@@ -412,6 +414,8 @@ impl<'a> Comparison<'a> {
             Kind::DbQuery => Some(Class::Sql),
             Kind::TestSummary => None,
             Kind::Log | Kind::Exception if id == overflow_behavior().id => None,
+            // Seen on the reporter's own event stream, so the rule below would drop it; RSpec exits 1 on it.
+            Kind::Exception if error_outside_examples(b) => Some(Class::OutsideExamples),
             Kind::Log | Kind::Exception => match &b.first {
                 Some((Stream::Stderr, _)) => Some(Class::Stderr),
                 _ if self.reporter => None,
@@ -476,7 +480,7 @@ impl<'a> Comparison<'a> {
                 self.frequency(id, class, measure::QUERIES, found);
                 self.frequency(id, class, measure::COUNT, found);
             }
-            Class::Sql | Class::Stderr | Class::Output => {
+            Class::Sql | Class::Stderr | Class::Output | Class::OutsideExamples => {
                 self.frequency(id, class, measure::COUNT, found);
             }
         }
@@ -762,6 +766,8 @@ impl<'a> Comparison<'a> {
                 }
             }
         }
+        // The error that left the run incomplete is named once, as that.
+        found.retain(|f| !evidence.iter().any(|&(id, ..)| id == f.signal.behavior));
         for (behavior, name, current, baseline) in evidence {
             found.push(Found {
                 signal: Signal {

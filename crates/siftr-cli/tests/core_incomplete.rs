@@ -82,6 +82,51 @@ fn a_spec_file_that_failed_to_load_is_the_one_change() {
     );
 }
 
+/// Errors outside examples that skip no example: `raise SyntaxError` after `users_spec.rb`'s describe block, and an
+/// `after(:suite)` hook that raises. Every example ran, so the run is complete and the new error is its change;
+/// the next clean run has nothing new and nothing still open.
+#[test]
+fn a_new_error_outside_examples_that_skipped_nothing_is_the_change() {
+    for (scenario, template) in [
+        (
+            "load_error_after_examples",
+            "./spec/requests/users_spec.rb failed to load: SyntaxError: compile error",
+        ),
+        (
+            "after_suite_error",
+            "An error occurred in an `after(:suite)` hook: RuntimeError: after suite boom",
+        ),
+    ] {
+        let (home, project) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        for clean in ["baseline", "baseline_2", "baseline_documentation"] {
+            ingest(home.path(), project.path(), clean);
+        }
+        let raised = ingest(home.path(), project.path(), scenario);
+        let headlines: Vec<(&str, &str, bool)> = raised["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["kind"].as_str().unwrap(),
+                    s["behavior"]["template"].as_str().unwrap(),
+                    s["headline"].as_bool().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(headlines, [("new", template, true)], "{scenario}");
+        assert_eq!(raised["run"]["complete"], true, "{scenario}");
+
+        let restored = ingest(home.path(), project.path(), "baseline");
+        assert_eq!(restored["signals"], serde_json::json!([]), "{scenario}");
+        assert_eq!(
+            restored["open_signals"],
+            serde_json::json!([]),
+            "{scenario}"
+        );
+    }
+}
+
 #[test]
 fn a_fail_fast_stop_is_a_change_beside_the_failure_that_stopped_it() {
     assert_eq!(
