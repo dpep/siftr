@@ -5,6 +5,7 @@ mod capture;
 mod feedback;
 mod ids;
 mod read;
+mod retention;
 mod schema;
 mod write;
 
@@ -21,16 +22,21 @@ pub use capture::Capture;
 pub use feedback::{Feedback, FeedbackKind, Interface};
 pub use ids::{InvalidId, RunId, SignalId};
 pub use read::Order;
+pub use retention::{
+    Captures, ContextRuns, Database, Inspection, Pruned, Pruning, Retention, Setting, Source, Step,
+    Tier,
+};
 pub use write::Finished;
 
 /// The one store. A trait arrives with a second backend, not before.
 pub struct Store {
     conn: Connection,
     home: PathBuf,
+    retention: Retention,
 }
 
 impl Store {
-    /// Opens (creating if needed) the store rooted at `home`.
+    /// Opens (creating if needed) the store rooted at `home`, with retention from the environment.
     pub fn open(home: &Path) -> Result<Self> {
         std::fs::create_dir_all(home)
             .with_context(|| format!("creating data dir {}", home.display()))?;
@@ -42,6 +48,7 @@ impl Store {
         Ok(Store {
             conn,
             home: home.to_owned(),
+            retention: Retention::from_env(),
         })
     }
 

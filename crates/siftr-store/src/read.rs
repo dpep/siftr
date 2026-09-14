@@ -18,7 +18,7 @@ use siftr_core::observation::Stream;
 use siftr_core::signal::{Attribution, BaselineNumbers, Signal};
 
 use crate::write::int;
-use crate::{RunEnd, RunId, RunRecord, SignalId, Store, StoredSignal};
+use crate::{RunEnd, RunId, RunRecord, SignalId, Store, StoredSignal, Tier};
 
 /// How to rank a run's behaviors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +117,7 @@ impl Store {
     ) -> Result<Vec<(RunId, RunStats)>> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM runs WHERE project = ?1 AND context = ?2 AND id < ?3 AND wall_ms IS NOT NULL
-             AND interrupted IS NULL ORDER BY id DESC LIMIT ?4",
+             AND interrupted IS NULL AND stats_pruned_by IS NULL ORDER BY id DESC LIMIT ?4",
         )?;
         let ids = stmt
             .query_map(
@@ -137,6 +137,7 @@ impl Store {
 
     /// Everything the signal rules read about `run`.
     pub fn run_stats(&self, run: RunId) -> Result<RunStats> {
+        self.require(run, Tier::Stats)?;
         let mut measures: HashMap<BehaviorId, Vec<Measure>> = HashMap::new();
         let mut stmt = self.conn.prepare(
             "SELECT behavior_id, name, count, sum, min, max FROM aggregate_measures WHERE run_id = ?1 ORDER BY behavior_id, name",
@@ -252,6 +253,7 @@ impl Store {
     }
 
     pub fn behavior_count(&self, run: RunId) -> Result<u64> {
+        self.require(run, Tier::Stats)?;
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM aggregates WHERE run_id = ?1",
             [run.0],
@@ -266,6 +268,7 @@ impl Store {
         order: Order,
         limit: usize,
     ) -> Result<Vec<(Behavior, Stats)>> {
+        self.require(run, Tier::Stats)?;
         let order_by = match order {
             Order::Count => "a.count DESC",
             Order::Time => "COALESCE(a.duration_total_us, 0) DESC, a.count DESC",
@@ -302,6 +305,9 @@ impl Store {
 
     /// `behavior`'s stats in each of `runs`, zero where it didn't occur.
     pub fn stats_in(&self, behavior: BehaviorId, runs: &[RunId]) -> Result<Vec<(RunId, Stats)>> {
+        for &run in runs {
+            self.require(run, Tier::Stats)?;
+        }
         let sql = format!(
             "SELECT {STATS_COLUMNS} FROM aggregates a WHERE a.run_id = ?1 AND a.behavior_id = ?2"
         );
@@ -338,6 +344,7 @@ impl Store {
         behavior: BehaviorId,
         limit: usize,
     ) -> Result<Vec<Exemplar>> {
+        self.require(run, Tier::Evidence)?;
         let mut stmt = self.conn.prepare(
             "SELECT stream, seq, line FROM exemplars WHERE run_id = ?1 AND behavior_id = ?2 ORDER BY position LIMIT ?3",
         )?;

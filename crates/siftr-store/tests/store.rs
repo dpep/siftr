@@ -330,3 +330,121 @@ fn concurrent_opens_of_an_unmigrated_home_all_succeed() {
         });
     }
 }
+
+/// Stats for 21 runs of each command, evidence for 2, commands idle for 30 days forgotten.
+fn smallest_retention() -> siftr_store::Retention {
+    siftr_store::Retention::from_vars(|name| match name {
+        "SIFTR_KEEP_RUNS" => Some("21".to_owned()),
+        "SIFTR_KEEP_EVIDENCE" => Some("2".to_owned()),
+        _ => None,
+    })
+}
+
+fn pruned(error: anyhow::Error) -> siftr_store::Pruned {
+    error
+        .downcast::<siftr_store::Pruned>()
+        .expect("a Pruned error")
+}
+
+#[test]
+fn retention_keeps_what_the_latest_run_reads_and_runs_still_recording() {
+    let home = tempfile::tempdir().unwrap();
+    let mut store = Store::open(home.path()).unwrap();
+    store.set_retention(smallest_retention());
+    let suite = Context::named("/project", "rspec");
+    let usable: Vec<RunId> = (0..21)
+        .map(|_| record(&mut store, &suite, "a\n", true).0)
+        .collect();
+    // Interrupted runs count toward the limits, but never cost the latest run its baselines.
+    for _ in 0..5 {
+        let run = store
+            .begin_run(&NewRun {
+                context: &suite,
+                command: "rspec",
+                cwd: "/project",
+                started_at: SystemTime::now(),
+            })
+            .unwrap();
+        let end = RunEnd {
+            wall: Duration::from_millis(1),
+            exit_code: Some(130),
+            lines: 1,
+        };
+        store
+            .finish_interrupted_run(run, end, &analyze("a\n"), 2)
+            .unwrap();
+    }
+    let (recording, _) = record(&mut store, &suite, "a\n", false);
+    // A command last run 40 days ago, whose runs finish now.
+    let idle = Context::named("/project", "rake");
+    let long_ago = store
+        .begin_run(&NewRun {
+            context: &idle,
+            command: "rake",
+            cwd: "/project",
+            started_at: SystemTime::now() - Duration::from_secs(40 * 24 * 60 * 60),
+        })
+        .unwrap();
+    store.capture(long_ago).unwrap().finish().unwrap();
+    assert!(
+        store
+            .capture_file(long_ago, &Stream::Stdout)
+            .parent()
+            .unwrap()
+            .exists()
+    );
+    let analysis = analyze("b\n");
+    let end = RunEnd {
+        wall: Duration::from_millis(1),
+        exit_code: Some(0),
+        lines: 1,
+    };
+    let finished = Finished {
+        end,
+        analysis: &analysis,
+        baseline_runs: &[],
+        signals: &[],
+    };
+    store.finish_run(long_ago, &finished).unwrap();
+
+    assert!(
+        store.prune_plan().unwrap().is_empty(),
+        "each finish pruned what was due"
+    );
+    for &run in &usable {
+        store
+            .run_stats(run)
+            .expect("all 21 usable runs keep their stats");
+    }
+    store
+        .run_stats(recording)
+        .expect("a run still recording is untouched");
+    let (newest, older) = usable.split_last().unwrap();
+    store
+        .exemplars(*newest, BehaviorId::of(Kind::Log, b"a"), 1)
+        .unwrap();
+    store
+        .exemplars(older[older.len() - 1], BehaviorId::of(Kind::Log, b"a"), 1)
+        .unwrap();
+    let oldest = pruned(
+        store
+            .exemplars(usable[0], BehaviorId::of(Kind::Log, b"a"), 1)
+            .unwrap_err(),
+    );
+    assert_eq!(
+        (oldest.tier, oldest.by.as_str()),
+        (siftr_store::Tier::Evidence, "SIFTR_KEEP_EVIDENCE=2")
+    );
+    let forgotten = pruned(store.run_stats(long_ago).unwrap_err());
+    assert_eq!(
+        (forgotten.tier, forgotten.by.as_str()),
+        (siftr_store::Tier::Stats, "SIFTR_KEEP_DAYS=30")
+    );
+    assert!(
+        !store
+            .capture_file(long_ago, &Stream::Stdout)
+            .parent()
+            .unwrap()
+            .exists()
+    );
+}

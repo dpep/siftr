@@ -11,7 +11,7 @@ use siftr_core::baseline::Baseline;
 use siftr_core::behavior::BehaviorId;
 use siftr_core::context::Context;
 use siftr_core::signal::{Signal, SignalKind, detect};
-use siftr_store::{Feedback, FeedbackKind, RunId, RunRecord, Store, StoredSignal};
+use siftr_store::{Feedback, FeedbackKind, Pruned, RunId, RunRecord, Store, StoredSignal};
 
 use super::{Globals, found};
 use crate::output::{
@@ -118,6 +118,7 @@ fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitC
                 json!({
                     "signal": signal_json(stored),
                     "outcome": outcome.status(),
+                    "unknown_reason": outcome.unknown_reason(),
                     "resolved_in": outcome.resolved_in.map(|run| run.to_string()),
                     "recurred_in": outcome.recurred_in.map(|run| run.to_string()),
                     "later_runs": outcome.later_runs,
@@ -202,6 +203,8 @@ pub fn still_open(
 struct Outcome {
     /// Whether today's rules still produce the signal on its own run; if not, later runs can't be judged.
     reproducible: bool,
+    /// The setting that pruned runs the judgement needs; then there is no judgement.
+    pruned: Option<String>,
     later_runs: usize,
     resolved_in: Option<RunId>,
     recurred_in: Option<RunId>,
@@ -210,6 +213,26 @@ struct Outcome {
 }
 
 impl Outcome {
+    fn pruned(pruned: &Pruned) -> Self {
+        Outcome {
+            reproducible: false,
+            pruned: Some(pruned.setting().to_owned()),
+            later_runs: 0,
+            resolved_in: None,
+            recurred_in: None,
+            feedback: Vec::new(),
+        }
+    }
+
+    /// Why the outcome is unknown, when it is.
+    fn unknown_reason(&self) -> Option<String> {
+        match (&self.pruned, self.reproducible) {
+            (Some(setting), _) => Some(format!("baseline runs pruned ({setting})")),
+            (None, false) => Some("today's rules don't reproduce it on its own run".to_owned()),
+            (None, true) => None,
+        }
+    }
+
     fn status(&self) -> &'static str {
         match (self.reproducible, self.resolved_in, self.recurred_in) {
             (false, _, _) => "unknown",
@@ -241,7 +264,7 @@ impl Outcome {
             "without investigation"
         };
         let mut text = match (self.reproducible, self.resolved_in, self.recurred_in) {
-            (false, _, _) => "unknown: today's rules don't reproduce it on its own run".to_owned(),
+            (false, _, _) => format!("unknown: {}", self.unknown_reason().unwrap_or_default()),
             (true, Some(resolved), Some(again)) => {
                 format!("recurred in {again}, after resolving in {resolved} {how}")
             }
@@ -264,8 +287,24 @@ fn key(signal: &Signal) -> Key {
     (signal.kind, signal.behavior, signal.measure.clone())
 }
 
-/// Judged on the later runs of `run`'s context, up to and including `until` when given.
+/// Judged on the later runs of `run`'s context, up to and including `until` when given. Unknown, never a
+/// verdict from partial data, when retention pruned a run the judgement reads.
 fn outcomes(
+    store: &Store,
+    run: &RunRecord,
+    signals: &[StoredSignal],
+    until: Option<RunId>,
+) -> Result<Vec<Outcome>> {
+    match judge(store, run, signals, until) {
+        Err(error) => match error.downcast_ref::<Pruned>() {
+            Some(pruned) => Ok(signals.iter().map(|_| Outcome::pruned(pruned)).collect()),
+            None => Err(error),
+        },
+        judged => judged,
+    }
+}
+
+fn judge(
     store: &Store,
     run: &RunRecord,
     signals: &[StoredSignal],
@@ -315,6 +354,7 @@ fn outcomes(
                 .collect();
             Ok(Outcome {
                 reproducible: own.contains(&key),
+                pruned: None,
                 later_runs: later.len(),
                 resolved_in: resolved.map(|at| later[at].id),
                 recurred_in: recurred.map(|at| later[at].id),

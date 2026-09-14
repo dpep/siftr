@@ -175,7 +175,18 @@ UPDATE aggregates SET first_stream = e.stream, first_seq = e.seq
 FROM exemplars e
 WHERE e.run_id = aggregates.run_id AND e.behavior_id = aggregates.behavior_id AND e.position = 0;
 ",
+    r"
+-- Retention: the setting that pruned a run's evidence (exemplars, raw capture) or its stats (aggregates and
+-- everything under them), like SIFTR_KEEP_RUNS=100. The run, its signals, baselines and feedback stay.
+ALTER TABLE runs ADD COLUMN evidence_pruned_by TEXT;
+ALTER TABLE runs ADD COLUMN stats_pruned_by TEXT;
+",
 ];
+
+/// The schema version this siftr reads and writes.
+pub(crate) fn supported() -> i64 {
+    MIGRATIONS.len() as i64
+}
 
 /// Brings the database at `conn` to WAL and the latest schema. `lock` serializes processes doing so.
 pub(crate) fn migrate(conn: &mut Connection, lock: &Path) -> Result<()> {

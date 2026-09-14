@@ -190,6 +190,7 @@ impl Store {
             }
         }
         tx.commit()?;
+        self.prune_after_finish();
         Ok(())
     }
 }
