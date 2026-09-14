@@ -1,0 +1,8 @@
+
+running 3 tests
+test source::tests::detects_kinds ... ok
+test source::tests::strips_tracking_and_trailing_slash ... ok
+test source::tests::youtube_forms_canonicalize_equal ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

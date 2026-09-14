@@ -1,0 +1,211 @@
+  [1m[36mActiveRecord::InternalMetadata Load (0.1ms)[0m  [1m[34mSELECT * FROM "ar_internal_metadata" WHERE "ar_internal_metadata"."key" = ? ORDER BY "ar_internal_metadata"."key" ASC LIMIT 1[0m  [[nil, "schema_sha1"]]
+  [1m[36mActiveRecord::SchemaMigration Load (0.0ms)[0m  [1m[34mSELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Create (0.2ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "name", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-09-14 00:03:48.903902"], ["email", "[FILTERED]"], ["name", "Ada"], ["updated_at", "2026-09-14 00:03:48.903902"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Create (0.1ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "name", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-09-14 00:03:48.913275"], ["email", "[FILTERED]"], ["name", "Ada"], ["updated_at", "2026-09-14 00:03:48.913275"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.1ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Create (0.2ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "name", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-09-14 00:03:49.226490"], ["email", "[FILTERED]"], ["name", "Ada"], ["updated_at", "2026-09-14 00:03:49.226490"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.227441"], ["title", "Hello"], ["updated_at", "2026-09-14 00:03:49.227441"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mPost Count (0.0ms)[0m  [1m[34mSELECT COUNT(*) FROM "posts"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Load (0.1ms)[0m  [1m[34mSELECT "posts".* FROM "posts" WHERE "posts"."user_id" = ?[0m  [["user_id", 1]]
+  [1m[36mComment Load (0.0ms)[0m  [1m[34mSELECT "comments".* FROM "comments" WHERE "comments"."post_id" = ?[0m  [["post_id", 1]]
+  [1m[36mPost Destroy (0.0ms)[0m  [1m[31mDELETE FROM "posts" WHERE "posts"."id" = ?[0m  [["id", 1]]
+  [1m[36mUser Destroy (0.0ms)[0m  [1m[31mDELETE FROM "users" WHERE "users"."id" = ?[0m  [["id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mPost Count (0.0ms)[0m  [1m[34mSELECT COUNT(*) FROM "posts"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Create (0.1ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "name", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-09-14 00:03:49.231017"], ["email", "[FILTERED]"], ["name", "Ada"], ["updated_at", "2026-09-14 00:03:49.231017"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.231570"], ["title", "Post 0"], ["updated_at", "2026-09-14 00:03:49.231570"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 0.0"], ["created_at", "2026-09-14 00:03:49.232090"], ["post_id", 1], ["updated_at", "2026-09-14 00:03:49.232090"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 0.1"], ["created_at", "2026-09-14 00:03:49.232530"], ["post_id", 1], ["updated_at", "2026-09-14 00:03:49.232530"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.232937"], ["title", "Post 1"], ["updated_at", "2026-09-14 00:03:49.232937"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 1.0"], ["created_at", "2026-09-14 00:03:49.233380"], ["post_id", 2], ["updated_at", "2026-09-14 00:03:49.233380"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 1.1"], ["created_at", "2026-09-14 00:03:49.233779"], ["post_id", 2], ["updated_at", "2026-09-14 00:03:49.233779"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.234169"], ["title", "Post 2"], ["updated_at", "2026-09-14 00:03:49.234169"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 2.0"], ["created_at", "2026-09-14 00:03:49.234606"], ["post_id", 3], ["updated_at", "2026-09-14 00:03:49.234606"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 2.1"], ["created_at", "2026-09-14 00:03:49.234973"], ["post_id", 3], ["updated_at", "2026-09-14 00:03:49.234973"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.235352"], ["title", "Post 3"], ["updated_at", "2026-09-14 00:03:49.235352"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 3.0"], ["created_at", "2026-09-14 00:03:49.235794"], ["post_id", 4], ["updated_at", "2026-09-14 00:03:49.235794"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 3.1"], ["created_at", "2026-09-14 00:03:49.236171"], ["post_id", 4], ["updated_at", "2026-09-14 00:03:49.236171"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.236543"], ["title", "Post 4"], ["updated_at", "2026-09-14 00:03:49.236543"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 4.0"], ["created_at", "2026-09-14 00:03:49.236965"], ["post_id", 5], ["updated_at", "2026-09-14 00:03:49.236965"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 4.1"], ["created_at", "2026-09-14 00:03:49.237328"], ["post_id", 5], ["updated_at", "2026-09-14 00:03:49.237328"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.237712"], ["title", "Post 5"], ["updated_at", "2026-09-14 00:03:49.237712"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 5.0"], ["created_at", "2026-09-14 00:03:49.238137"], ["post_id", 6], ["updated_at", "2026-09-14 00:03:49.238137"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 5.1"], ["created_at", "2026-09-14 00:03:49.238518"], ["post_id", 6], ["updated_at", "2026-09-14 00:03:49.238518"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.238888"], ["title", "Post 6"], ["updated_at", "2026-09-14 00:03:49.238888"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 6.0"], ["created_at", "2026-09-14 00:03:49.239313"], ["post_id", 7], ["updated_at", "2026-09-14 00:03:49.239313"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 6.1"], ["created_at", "2026-09-14 00:03:49.239695"], ["post_id", 7], ["updated_at", "2026-09-14 00:03:49.239695"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.240065"], ["title", "Post 7"], ["updated_at", "2026-09-14 00:03:49.240065"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 7.0"], ["created_at", "2026-09-14 00:03:49.240497"], ["post_id", 8], ["updated_at", "2026-09-14 00:03:49.240497"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 7.1"], ["created_at", "2026-09-14 00:03:49.240857"], ["post_id", 8], ["updated_at", "2026-09-14 00:03:49.240857"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Started GET "/users" for 127.0.0.1 at 2026-09-13 17:03:49 -0700
+Processing by UsersController#index as HTML
+  Rendering layout layouts/application.html.erb
+  Rendering users/index.html.erb within layouts/application
+  [1m[36mUser Load (0.1ms)[0m  [1m[34mSELECT "users".* FROM "users" ORDER BY "users"."name" ASC[0m
+  Rendered users/index.html.erb within layouts/application (Duration: 0.7ms | GC: 0.0ms)
+  Rendered layout layouts/application.html.erb (Duration: 0.8ms | GC: 0.0ms)
+Completed 200 OK in 13ms (Views: 2.4ms | ActiveRecord: 0.1ms (1 query, 0 cached) | GC: 0.0ms)
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Create (0.1ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "name", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-09-14 00:03:49.264801"], ["email", "[FILTERED]"], ["name", "Ada"], ["updated_at", "2026-09-14 00:03:49.264801"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.265469"], ["title", "Post 0"], ["updated_at", "2026-09-14 00:03:49.265469"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 0.0"], ["created_at", "2026-09-14 00:03:49.265960"], ["post_id", 1], ["updated_at", "2026-09-14 00:03:49.265960"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 0.1"], ["created_at", "2026-09-14 00:03:49.266347"], ["post_id", 1], ["updated_at", "2026-09-14 00:03:49.266347"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.266720"], ["title", "Post 1"], ["updated_at", "2026-09-14 00:03:49.266720"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 1.0"], ["created_at", "2026-09-14 00:03:49.267155"], ["post_id", 2], ["updated_at", "2026-09-14 00:03:49.267155"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 1.1"], ["created_at", "2026-09-14 00:03:49.267535"], ["post_id", 2], ["updated_at", "2026-09-14 00:03:49.267535"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.267901"], ["title", "Post 2"], ["updated_at", "2026-09-14 00:03:49.267901"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 2.0"], ["created_at", "2026-09-14 00:03:49.268327"], ["post_id", 3], ["updated_at", "2026-09-14 00:03:49.268327"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 2.1"], ["created_at", "2026-09-14 00:03:49.268676"], ["post_id", 3], ["updated_at", "2026-09-14 00:03:49.268676"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.269036"], ["title", "Post 3"], ["updated_at", "2026-09-14 00:03:49.269036"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 3.0"], ["created_at", "2026-09-14 00:03:49.269446"], ["post_id", 4], ["updated_at", "2026-09-14 00:03:49.269446"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 3.1"], ["created_at", "2026-09-14 00:03:49.269807"], ["post_id", 4], ["updated_at", "2026-09-14 00:03:49.269807"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.270170"], ["title", "Post 4"], ["updated_at", "2026-09-14 00:03:49.270170"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 4.0"], ["created_at", "2026-09-14 00:03:49.270574"], ["post_id", 5], ["updated_at", "2026-09-14 00:03:49.270574"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 4.1"], ["created_at", "2026-09-14 00:03:49.270920"], ["post_id", 5], ["updated_at", "2026-09-14 00:03:49.270920"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.271275"], ["title", "Post 5"], ["updated_at", "2026-09-14 00:03:49.271275"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 5.0"], ["created_at", "2026-09-14 00:03:49.271676"], ["post_id", 6], ["updated_at", "2026-09-14 00:03:49.271676"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 5.1"], ["created_at", "2026-09-14 00:03:49.272044"], ["post_id", 6], ["updated_at", "2026-09-14 00:03:49.272044"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.272398"], ["title", "Post 6"], ["updated_at", "2026-09-14 00:03:49.272398"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 6.0"], ["created_at", "2026-09-14 00:03:49.272811"], ["post_id", 7], ["updated_at", "2026-09-14 00:03:49.272811"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 6.1"], ["created_at", "2026-09-14 00:03:49.273153"], ["post_id", 7], ["updated_at", "2026-09-14 00:03:49.273153"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mPost Create (0.1ms)[0m  [1m[32mINSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?) RETURNING "id"[0m  [["body", nil], ["created_at", "2026-09-14 00:03:49.273510"], ["title", "Post 7"], ["updated_at", "2026-09-14 00:03:49.273510"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 7.0"], ["created_at", "2026-09-14 00:03:49.273937"], ["post_id", 8], ["updated_at", "2026-09-14 00:03:49.273937"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mComment Create (0.1ms)[0m  [1m[32mINSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["body", "Comment 7.1"], ["created_at", "2026-09-14 00:03:49.274283"], ["post_id", 8], ["updated_at", "2026-09-14 00:03:49.274283"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Started GET "/users/1" for 127.0.0.1 at 2026-09-13 17:03:49 -0700
+Processing by UsersController#show as HTML
+  Parameters: {"id" => "1"}
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  Rendering layout layouts/application.html.erb
+  Rendering users/show.html.erb within layouts/application
+  [1m[36mPost Load (0.0ms)[0m  [1m[34mSELECT "posts".* FROM "posts" WHERE "posts"."user_id" = ?[0m  [["user_id", 1]]
+  [1m[36mComment Load (0.1ms)[0m  [1m[34mSELECT "comments".* FROM "comments" WHERE "comments"."post_id" IN (?, ?, ?, ?, ?, ?, ?, ?)[0m  [["post_id", 1], ["post_id", 2], ["post_id", 3], ["post_id", 4], ["post_id", 5], ["post_id", 6], ["post_id", 7], ["post_id", 8]]
+  Rendered users/show.html.erb within layouts/application (Duration: 3.0ms | GC: 0.0ms)
+  Rendered layout layouts/application.html.erb (Duration: 3.1ms | GC: 0.0ms)
+Completed 200 OK in 4ms (Views: 3.2ms | ActiveRecord: 0.1ms (3 queries, 0 cached) | GC: 0.0ms)
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m

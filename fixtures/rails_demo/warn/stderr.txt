@@ -1,0 +1,2 @@
+DEPRECATION WARNING: User#display_name is deprecated; use #name (called from block (2 levels) in <top (required)> at ~/src/siftr/dogfood/rails_demo/spec/models/user_spec.rb:13)
+DEPRECATION WARNING: User#display_name is deprecated; use #name (called from _app_views_users_show_html_erb__484173706772255391_5232 at ~/src/siftr/dogfood/rails_demo/app/views/users/show.html.erb:1)

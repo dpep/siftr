@@ -1,0 +1,30 @@
+
+Comment
+  requires a body
+  is hidden when flagged (PENDING: moderation is not built yet)
+
+Post
+  requires a title
+  summarizes the body
+
+User
+  requires a name
+  requires an email
+  has a display name
+  destroys posts with the user
+
+Users
+  lists users
+  shows a user with posts and comments
+
+Pending: (Failures listed here are expected and do not affect your suite's status)
+
+  1) Comment is hidden when flagged
+     # moderation is not built yet
+     Failure/Error: expect(Comment.new).to respond_to(:hidden?)
+       expected #<Comment id: nil, body: nil, created_at: nil, post_id: nil, updated_at: nil> to respond to :hidden?
+     # ./spec/models/comment_spec.rb:10:in 'block (2 levels) in <top (required)>'
+
+Finished in 0.09995 seconds (files took 0.92082 seconds to load)
+10 examples, 0 failures, 1 pending
+

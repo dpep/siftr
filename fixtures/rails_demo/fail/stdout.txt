@@ -1,0 +1,24 @@
+.*...F....
+
+Pending: (Failures listed here are expected and do not affect your suite's status)
+
+  1) Comment is hidden when flagged
+     # moderation is not built yet
+     Failure/Error: expect(Comment.new).to respond_to(:hidden?)
+       expected #<Comment id: nil, body: nil, created_at: nil, post_id: nil, updated_at: nil> to respond to :hidden?
+     # ./spec/models/comment_spec.rb:10:in 'block (2 levels) in <top (required)>'
+
+Failures:
+
+  1) User requires an email
+     Failure/Error: expect(User.new(name: "Ada")).not_to be_valid
+       expected #<User id: nil, created_at: nil, email: nil, name: "Ada", updated_at: nil> not to be valid
+     # ./spec/models/user_spec.rb:9:in 'block (2 levels) in <top (required)>'
+
+Finished in 0.07492 seconds (files took 0.86708 seconds to load)
+10 examples, 1 failure, 1 pending
+
+Failed examples:
+
+rspec ./spec/models/user_spec.rb:8 # User requires an email
+
