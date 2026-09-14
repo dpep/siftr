@@ -6,22 +6,24 @@
 //!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap), `interrupted`
 //!   (the signal number, or null; interrupted runs are never compared or used as a baseline).
 //! - behavior: `id` (16 hex), `kind`, `template`.
-//! - signal: `id`, `run`, `kind` (error|new|disappeared|frequency|latency), `confidence` (number in
-//!   [0, 1)), `measure` (count|queries|duration_ms|failed), `current`, `baseline` {`runs`,
-//!   `present_in`, `median`, `min`, `max`, `failures`}, `exception`, `attribution` {`scope`
-//!   (behavior or null), `setup` (changed outside every example), `current`, `baseline`} or null,
-//!   `tier` (1 error … 5 setup), `group` (rank), `headline`, `evidence_lines`, `behavior`.
+//! - signal: `id`, `run`, `kind` (error|new|disappeared|frequency|latency|incomplete), `confidence` (number in
+//!   [0, 1)), `measure` (count|queries|duration_ms|failed|examples|errors_outside_of_examples), `current`,
+//!   `baseline` {`runs`, `present_in`, `median`, `min`, `max`, `failures`}, `exception`, `attribution`
+//!   {`scope` (the example's behavior, or null outside examples), `phase` (setup|example|between|teardown:
+//!   before the first example, in one, between two, after the last), `setup` (phase is setup), `current`,
+//!   `baseline`} or null, `tier` (1 error … 5 outside examples), `group` (rank), `headline`, `evidence_lines`,
+//!   `behavior`.
 //! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `baseline_runs`, `changes`
-//!   (code-level groups), `groups` [{`rank`, `setup`, `headline` (signal id), `signals` (ids)}],
-//!   `signals` (rank order), `open_signals` (signals of earlier runs in `baseline_runs` still open at this run
-//!   and not raised again by it, oldest first, one per behavior and measure; dismissed changes are left out).
+//!   (code-level groups), `groups` [{`rank`, `setup` (changed outside every example), `headline` (signal id),
+//!   `signals` (ids)}], `signals` (rank order), `open_signals` (signals of earlier runs in `baseline_runs` still
+//!   open at this run and not raised again by it, oldest first, one per behavior and measure; dismissed changes
+//!   are left out).
 //! - feedback (`ack -j`, `dismiss -j`): `kind` (surfaced|investigated|evidence_requested|dismissed|acked),
 //!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
 //!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
 //!   behavior was named, as by `evidence`), `note`.
 //! - signal outcomes (`history --signals`), newest run first: `signal`, `outcome` (open|resolved|recurred, or
-//!   unknown), `unknown_reason` (null, or why: today's rules no longer reproduce the signal on its own run, or
-//!   retention pruned its baseline runs, naming the setting), `resolved_in` and `recurred_in`
+//!   unknown when today's rules no longer reproduce the signal on its own run), `resolved_in` and `recurred_in`
 //!   (run ids or null), `later_runs` (finished runs of the context judged against the signal's own baseline),
 //!   `investigated` (an explain, evidence or ack on its behavior before it resolved), `dismissed`, `feedback`
 //!   (on its behavior, from its run until the run it resolved in, oldest first).
@@ -38,7 +40,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use siftr_core::aggregate::{DurationSummary, Exemplar, MAX_BEHAVIORS, Stats};
+use siftr_core::aggregate::{DurationSummary, Exemplar, MAX_BEHAVIORS, Phase, Stats};
 use siftr_core::behavior::Behavior;
 use siftr_core::num::round_sig;
 use siftr_core::signal::{MIN_BASELINE_RUNS, Signal, SignalKind};
@@ -142,13 +144,33 @@ pub fn plural(n: u64, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
+/// A phase as JSON names it.
+pub const fn phase_str(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Setup => "setup",
+        Phase::Example(_) => "example",
+        Phase::Between => "between",
+        Phase::Teardown => "teardown",
+    }
+}
+
+/// Where a change outside every example happened, in words.
+const fn outside_words(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Setup => "before the first example",
+        Phase::Example(_) => "in an example",
+        Phase::Between => "between examples",
+        Phase::Teardown => "after the last example",
+    }
+}
+
 /// Groups shown in full; the rest are counted.
 const SHOWN_GROUPS: usize = 3;
 
 /// Signals that share a group, headline first.
 pub struct Group<'a> {
     pub rank: u32,
-    /// Changed before the first example: the environment, not the code.
+    /// Changed outside every example: the environment or suite hooks, not the code under test.
     pub setup: bool,
     pub members: Vec<&'a StoredSignal>,
 }
@@ -281,11 +303,14 @@ impl Changes<'_> {
             )?;
         }
         for group in setup {
+            let head = group.headline();
+            let phase = head.signal.attribution.map_or(Phase::Setup, |a| a.scope);
             writeln!(
                 w,
-                "  environment changed before the first example: {}, not the code under test ({})",
+                "  changed {}: {}, the environment or suite hooks rather than the code under test ({})",
+                outside_words(phase),
                 plural(group.members.len() as u64, "signal"),
-                group.headline().id
+                head.id
             )?;
         }
         if self.run.overflow_events > 0 {
@@ -425,7 +450,7 @@ pub fn change(stored: &StoredSignal) -> String {
     };
     if let Some(a) = s.attribution {
         if a.scope.outside_examples() {
-            text.push_str(" (before the first example)");
+            text.push_str(&format!(" ({})", outside_words(a.scope)));
         } else if (a.current, Some(a.baseline)) != (s.current, b.median) {
             text.push_str(&format!(
                 " ({} → {} in this example)",
@@ -549,7 +574,8 @@ pub fn signal_json(stored: &StoredSignal) -> Value {
         "exception": s.exception,
         "attribution": s.attribution.map(|a| json!({
             "scope": stored.scope.as_ref().map(behavior_json),
-            "setup": a.scope.outside_examples(),
+            "phase": phase_str(a.scope),
+            "setup": a.scope == Phase::Setup,
             "current": a.current,
             "baseline": a.baseline,
         })),

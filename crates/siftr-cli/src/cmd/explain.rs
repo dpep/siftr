@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use siftr_core::aggregate::RunStats;
+use siftr_core::aggregate::{Phase, RunStats};
 use siftr_core::signal::{self, measure};
 use siftr_store::{Feedback, FeedbackKind, RunId, SignalId};
 
@@ -108,7 +108,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         let role = if s.headline { "headline" } else { "supporting" };
         writeln!(
             w,
-            "{}  {}  conf {}  in {}, group {} {role}",
+            "{}  {}  conf {:.2}  in {}, group {} {role}",
             stored.id,
             label(s.kind),
             s.confidence,
@@ -136,17 +136,21 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             format!("{}  |  baseline {}", cell(now), baseline.join("  "))
         };
         writeln!(w, "{:<9} {}", s.measure, show(&per_run))?;
-        if let Some(rows) = &per_scope {
+        if let (Some(rows), Some(phase)) = (&per_scope, scope) {
             let rows: Vec<(RunId, Option<f64>)> =
                 rows.iter().map(|(r, v)| (*r, Some(*v))).collect();
-            match &stored.scope {
-                Some(scope) => writeln!(
+            // The phases outside examples have reserved ids no behavior has, so `stored.scope` can't tell them apart.
+            match (phase, &stored.scope) {
+                (Phase::Example(_), Some(example)) => writeln!(
                     w,
                     "scope     {}  {}",
-                    scope.id.short(),
-                    printable(&scope.template, 140)
+                    example.id.short(),
+                    printable(&example.template, 140)
                 )?,
-                None => writeln!(w, "scope     before the first example (setup)")?,
+                (Phase::Example(id), None) => writeln!(w, "scope     {}", id.short())?,
+                (Phase::Setup, _) => writeln!(w, "scope     before the first example (setup)")?,
+                (Phase::Between, _) => writeln!(w, "scope     between examples")?,
+                (Phase::Teardown, _) => writeln!(w, "scope     after the last example (teardown)")?,
             }
             writeln!(w, "          {}", show(&rows))?;
         }

@@ -104,3 +104,63 @@ fn a_failure_after_one_clean_run_reads_right() {
         (&d["total_us"], &d["total_us"])
     );
 }
+
+/// A query an `after(:suite)` hook ran is named for where it happened: after the last example, not setup.
+#[test]
+fn a_change_after_the_last_example_reads_as_teardown() {
+    let sandbox = Sandbox {
+        home: tempfile::tempdir().unwrap(),
+        project: tempfile::tempdir().unwrap(),
+    };
+    for scenario in ["baseline", "baseline_2", "baseline_documentation"] {
+        sandbox.ingest(scenario);
+    }
+
+    // The clean run again, with one more log line between the last example's end and the summary.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rails_demo/baseline");
+    let after = tempfile::tempdir().unwrap();
+    let mut log = std::fs::read(fixture.join("test.log")).unwrap();
+    let ended = log.len();
+    log.extend_from_slice(b"  Cleanup Load (0.1ms)  SELECT \"jobs\".* FROM \"jobs\"\n");
+    std::fs::write(after.path().join("test.log"), &log).unwrap();
+    let events: String = std::fs::read_to_string(fixture.join("rspec.ndjson"))
+        .unwrap()
+        .lines()
+        .map(|line| match line.starts_with(r#"{"event":"summary""#) {
+            true => line.replace(
+                &format!(r#""log_offset":{ended}}}"#),
+                &format!(r#""log_offset":{}}}"#, log.len()),
+            ),
+            false => line.to_owned(),
+        } + "\n")
+        .collect();
+    assert!(events.contains(&format!(r#""log_offset":{}}}"#, log.len())));
+    std::fs::write(after.path().join("rspec.ndjson"), events).unwrap();
+    for name in ["stdout.txt", "stderr.txt", "exit_code.txt"] {
+        std::fs::copy(fixture.join(name), after.path().join(name)).unwrap();
+    }
+    let dir = after.path().to_str().unwrap();
+    sandbox.text(&["ingest", "--context", "rails_demo", "--dir", dir]);
+
+    let changes: Value = serde_json::from_slice(&sandbox.siftr(&["changes", "-j"]).stdout).unwrap();
+    let signal = &changes["signals"][0];
+    assert_eq!(
+        (
+            signal["kind"].as_str(),
+            signal["attribution"]["phase"].as_str(),
+            signal["attribution"]["setup"].as_bool()
+        ),
+        (Some("new"), Some("teardown"), Some(false)),
+        "{changes:#}"
+    );
+    let explain = sandbox.text(&["explain", "s1"]);
+    assert!(
+        explain.starts_with("s1  NEW  conf 0.80  in r4, group 1 headline\n"),
+        "{explain}"
+    );
+    assert!(explain.contains(" (after the last example)\n"), "{explain}");
+    assert!(
+        explain.contains("\nscope     after the last example (teardown)\n"),
+        "{explain}"
+    );
+}
