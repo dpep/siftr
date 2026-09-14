@@ -33,6 +33,10 @@
 //! - exemplar (`explain`, `evidence`): `stream`, `seq` (line number in the run's capture of that stream), `line`
 //!   (the kept line, cut at 1024 bytes), `exception` ({`class`, `message`}, the message whole, read from the
 //!   capture, when the line is a test listener event that carries one; else null).
+//! - explain (`explain -j`): `signal`, `rule`, `runs` [{`run`, `value`}], `scope` (behavior or null), `scope_runs`,
+//!   `evidence` {`run` (this run, or for a disappearance the latest baseline run that had the behavior; null when none
+//!   did), `pruned` (null, or the retention setting that pruned that run's lines, e.g. `SIFTR_KEEP_EVIDENCE`),
+//!   `exemplars`}, `group` (signal ids).
 //! - nothing found (exit 1) is still the command's document: `changes` with `run` null and empty arrays,
 //!   `summary` with `run` null, `evidence` with `run` null, `history` an empty array.
 //! - not recorded (`run -j` when the store was unusable or busy, or analysis failed; the exit code is still the
