@@ -97,7 +97,8 @@ fn signal_lines(w: &mut dyn Write, stored: &StoredSignal) -> io::Result<()> {
     writeln!(
         w,
         "  {:<4} {:<11} conf {:<4}  {}  {}  {}",
-        stored.id,
+        // Store ids implement Display without honoring width, so pad the rendered string.
+        stored.id.to_string(),
         label(signal.kind),
         signal.confidence,
         stored.behavior.id.short(),
