@@ -91,6 +91,12 @@ iriq later.
   `PositionStats::observe` allocates per observation and its `SegmentType` is
   URL-specific. Its `SegmentClassifier` misfires on bare log words (`ms` →
   locale), so never apply it to them.
+- **No evidence-based template merging in the normalizer.** On a real 556k-line
+  Rails log, 131 one-word-apart template families passed the enum rule and
+  they were exactly the merges that destroy behaviors (`BEGIN`/`COMMIT`/
+  `ROLLBACK`, `ASC`/`DESC`, same query on different columns); merging would
+  also make behavior ids unstable across runs. Grouping, if ever, is a
+  query-time view over stable ids.
 - **launder**, **pattern_engine**: not dependencies. launder's regex cascade
   measured ~10x the CPU of a single-pass byte scanner while masking less.
 
