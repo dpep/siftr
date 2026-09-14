@@ -18,6 +18,11 @@
 //!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
 //!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
 //!   behavior was named, as by `evidence`), `note`.
+//! - signal outcomes (`history --signals`), newest run first: `signal`, `outcome` (open|resolved|recurred, or
+//!   unknown when today's rules no longer reproduce the signal on its own run), `resolved_in` and `recurred_in`
+//!   (run ids or null), `later_runs` (finished runs of the context judged against the signal's own baseline),
+//!   `investigated` (an explain, evidence or ack on its behavior before it resolved), `dismissed`, `feedback`
+//!   (on its behavior, from its run until the run it resolved in, oldest first).
 
 use std::collections::BTreeMap;
 use std::fmt::Display;

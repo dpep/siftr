@@ -1,13 +1,20 @@
-//! `siftr history`: runs recorded in this project, newest first.
+//! `siftr history`: runs recorded in this project, newest first. `--signals`: their signals instead, each
+//! with what became of it.
 
+use std::collections::HashSet;
 use std::process::ExitCode;
 
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Value, json};
+use siftr_core::aggregate::RunStats;
+use siftr_core::baseline::Baseline;
+use siftr_core::behavior::BehaviorId;
 use siftr_core::context::Context;
+use siftr_core::signal::{Signal, SignalKind, detect};
+use siftr_store::{Feedback, FeedbackKind, RunId, RunRecord, Store, StoredSignal};
 
 use super::{Globals, found};
-use crate::output::{self, age, groups, printable, run_json};
+use crate::output::{self, age, feedback_json, groups, label, printable, run_json, signal_json};
 use crate::project;
 
 #[derive(clap::Args)]
@@ -19,6 +26,10 @@ pub struct Args {
     /// Only runs of this context (the command, or an `ingest --context` name)
     #[arg(long, value_name = "NAME")]
     context: Option<String>,
+
+    /// These runs' signals instead, each with what became of it: open, resolved, or recurred
+    #[arg(long)]
+    signals: bool,
 }
 
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
@@ -30,6 +41,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         }
         None => store.runs(&project, args.limit)?,
     };
+    if args.signals {
+        return signals(&store, &runs, globals);
+    }
     // (code-level changes, signals) per run.
     let counts = runs
         .iter()
@@ -80,4 +94,168 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         }
     })?;
     Ok(found(!runs.is_empty()))
+}
+
+fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitCode> {
+    let mut rows: Vec<(StoredSignal, Outcome)> = Vec::new();
+    for run in runs {
+        let signals = store.signals(run.id)?;
+        if !signals.is_empty() {
+            let outcomes = outcomes(store, run, &signals)?;
+            rows.extend(signals.into_iter().zip(outcomes));
+        }
+    }
+
+    let as_json = || -> Value {
+        rows.iter()
+            .map(|(stored, outcome)| {
+                json!({
+                    "signal": signal_json(stored),
+                    "outcome": outcome.status(),
+                    "resolved_in": outcome.resolved_in.map(|run| run.to_string()),
+                    "recurred_in": outcome.recurred_in.map(|run| run.to_string()),
+                    "later_runs": outcome.later_runs,
+                    "investigated": outcome.investigated(),
+                    "dismissed": outcome.dismissed(),
+                    "feedback": outcome.feedback.iter().map(feedback_json).collect::<Vec<_>>(),
+                })
+            })
+            .collect()
+    };
+    output::emit(globals.json, as_json, |w| {
+        for (stored, outcome) in &rows {
+            writeln!(
+                w,
+                "  {:<4} {:<4} {:<11} {}  {}",
+                stored.id.to_string(),
+                stored.run.to_string(),
+                label(stored.signal.kind),
+                printable(&stored.behavior.template, 60),
+                outcome.describe()
+            )?;
+        }
+        match rows.iter().find(|(_, outcome)| outcome.status() == "open") {
+            Some((stored, _)) => writeln!(w, "next: siftr explain {}", stored.id),
+            None => writeln!(w, "next: siftr history"),
+        }
+    })?;
+    Ok(found(!rows.is_empty()))
+}
+
+/// What became of a signal, judged by re-running its own rule against the baseline it was judged against, on
+/// each later run of its context. The live baseline can't say: it absorbs a change that stays, so the signal
+/// stops firing whether or not anything was fixed.
+struct Outcome {
+    /// Whether today's rules still produce the signal on its own run; if not, later runs can't be judged.
+    reproducible: bool,
+    later_runs: usize,
+    resolved_in: Option<RunId>,
+    recurred_in: Option<RunId>,
+    /// Feedback on the signal's behavior from its run until the run it resolved in.
+    feedback: Vec<Feedback>,
+}
+
+impl Outcome {
+    fn status(&self) -> &'static str {
+        match (self.reproducible, self.resolved_in, self.recurred_in) {
+            (false, _, _) => "unknown",
+            (true, _, Some(_)) => "recurred",
+            (true, Some(_), None) => "resolved",
+            (true, None, None) => "open",
+        }
+    }
+
+    fn investigated(&self) -> bool {
+        self.feedback.iter().any(|f| {
+            matches!(
+                f.kind,
+                FeedbackKind::Investigated | FeedbackKind::EvidenceRequested | FeedbackKind::Acked
+            )
+        })
+    }
+
+    fn dismissed(&self) -> bool {
+        self.feedback
+            .iter()
+            .any(|f| f.kind == FeedbackKind::Dismissed)
+    }
+
+    fn describe(&self) -> String {
+        let how = if self.investigated() {
+            "after investigation"
+        } else {
+            "without investigation"
+        };
+        let mut text = match (self.reproducible, self.resolved_in, self.recurred_in) {
+            (false, _, _) => "unknown: today's rules don't reproduce it on its own run".to_owned(),
+            (true, Some(resolved), Some(again)) => {
+                format!("recurred in {again}, after resolving in {resolved} {how}")
+            }
+            (true, Some(resolved), None) => format!("resolved in {resolved} {how}"),
+            (true, None, _) => {
+                let plural = if self.later_runs == 1 { "" } else { "s" };
+                format!("open after {} later run{plural}", self.later_runs)
+            }
+        };
+        if self.dismissed() {
+            text.push_str("; dismissed");
+        }
+        text
+    }
+}
+
+/// What makes signals in different runs the same change; their ids are per run.
+type Key = (SignalKind, BehaviorId, String);
+
+fn key(signal: &Signal) -> Key {
+    (signal.kind, signal.behavior, signal.measure.clone())
+}
+
+fn outcomes(store: &Store, run: &RunRecord, signals: &[StoredSignal]) -> Result<Vec<Outcome>> {
+    let baseline_stats = store
+        .baseline_of(run.id)?
+        .into_iter()
+        .map(|id| store.run_stats(id))
+        .collect::<Result<Vec<RunStats>>>()?;
+    let baseline = Baseline::from_runs(&baseline_stats);
+    let fires = |id: RunId| -> Result<HashSet<Key>> {
+        Ok(detect(&store.run_stats(id)?, &baseline)
+            .iter()
+            .map(key)
+            .collect())
+    };
+    let own = fires(run.id)?;
+    let later = store.runs_after(&run.context, run.id)?;
+    let later_fires = later
+        .iter()
+        .map(|later| fires(later.id))
+        .collect::<Result<Vec<_>>>()?;
+
+    signals
+        .iter()
+        .map(|stored| {
+            let key = key(&stored.signal);
+            let still: Vec<bool> = later_fires
+                .iter()
+                .map(|fired| fired.contains(&key))
+                .collect();
+            let resolved = still.iter().position(|&fires| !fires);
+            let recurred =
+                resolved.and_then(|at| still[at..].iter().position(|&fires| fires).map(|n| at + n));
+            // Millisecond timestamps: feedback in the resolving run's first millisecond counts as before it.
+            let until = resolved.map(|at| later[at].started_at);
+            let feedback = store
+                .feedback_on(stored.behavior.id, run.started_at)?
+                .into_iter()
+                .filter(|f| until.is_none_or(|until| f.at <= until))
+                .collect();
+            Ok(Outcome {
+                reproducible: own.contains(&key),
+                later_runs: later.len(),
+                resolved_in: resolved.map(|at| later[at].id),
+                recurred_in: recurred.map(|at| later[at].id),
+                feedback,
+            })
+        })
+        .collect()
 }

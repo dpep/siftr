@@ -93,6 +93,21 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Finished, uninterrupted runs of `context` after `after`, oldest first: where a signal of `after` can resolve.
+    pub fn runs_after(&self, context: &Context, after: RunId) -> Result<Vec<RunRecord>> {
+        let sql = format!(
+            "SELECT {} FROM runs WHERE project = ?1 AND context = ?2 AND id > ?3 AND wall_ms IS NOT NULL
+             AND interrupted IS NULL ORDER BY id",
+            run_columns()
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            params![context.project(), context.name(), after.0],
+            run_record,
+        )?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Up to `limit` finished, uninterrupted runs of `context` before `before`, newest first, with their stats.
     pub fn baseline_runs(
         &self,
