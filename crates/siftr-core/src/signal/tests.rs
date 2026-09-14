@@ -218,6 +218,58 @@ fn an_n_plus_one_is_one_group_headed_by_the_request() {
     );
 }
 
+/// A deleted spec file is one change ranked below a real regression, headed by its examples even though the SQL
+/// attributed to them moved at a lower tier; a single lost example stays its own change.
+#[test]
+fn examples_that_disappeared_from_one_file_are_one_group_below_a_regression() {
+    use SignalKind::*;
+    let kept = b(Kind::TestExample, "./spec/a_spec.rb # a keeps").seq(1);
+    let one = b(Kind::TestExample, "./spec/b_spec.rb # b one").seq(2);
+    let two = b(Kind::TestExample, "./spec/b_spec.rb # b two").seq(3);
+    let lone = b(Kind::TestExample, "./spec/c_spec.rb # c lone").seq(4);
+    let warning = b(Kind::Log, "DEPRECATION: old api").stderr();
+    let sql = b(Kind::DbQuery, "Post Load");
+    let baseline_run = run(&[
+        kept.clone(),
+        one,
+        two.clone(),
+        lone,
+        warning.clone(),
+        sql.clone()
+            .count(2)
+            .within(&kept, 1, None)
+            .within(&two, 1, None),
+    ]);
+    let current = run(&[kept.clone(), warning.count(3), sql.within(&kept, 1, None)]);
+    let runs = vec![baseline_run.clone(); 3];
+    let signals = detect(&current, &baseline(&current, &runs));
+
+    let behavior = |s: &Signal| {
+        &baseline_run
+            .get(s.behavior)
+            .expect("in the baseline")
+            .behavior
+    };
+    let summary: Vec<_> = signals
+        .chunk_by(|a, b| a.group == b.group)
+        .map(|members| {
+            let gone = disappeared_examples(members.iter().map(|s| (s, behavior(s))));
+            (
+                members[0].kind,
+                members.len(),
+                gone.map(|g| (g.file, g.examples)),
+            )
+        })
+        .collect();
+    assert_eq!(summary.len(), 3, "{summary:?}");
+    assert_eq!(summary[0], (Frequency, 1, None), "the regression first");
+    assert!(
+        summary.contains(&(Disappeared, 3, Some(("./spec/b_spec.rb", 2)))),
+        "{summary:?}"
+    );
+    assert!(summary.contains(&(Disappeared, 1, None)), "{summary:?}");
+}
+
 #[test]
 fn a_clean_run_has_no_signals() {
     let show = b(Kind::TestExample, "shows").seq(1).ms(15.0);

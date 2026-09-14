@@ -164,7 +164,8 @@ fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitC
 /// through `run` still shows the change against the signal's own baseline — and that `run` didn't raise again.
 /// The rolling baseline absorbs a change that stays, so without these an unfixed regression reads as no change.
 /// Bounded by that window: once the signal's run ages out of the baseline, the change is what siftr calls normal.
-/// Oldest first, one per behavior and measure; a change with any dismissed signal is left out.
+/// Oldest first, one per behavior and measure; a change with any dismissed signal is left out, and so is one headed
+/// by DISAPPEARED: a disappearance that stays is the new normal, not a regression left in place.
 pub fn still_open(
     store: &Store,
     run: &RunRecord,
@@ -182,7 +183,13 @@ pub fn still_open(
     earlier.sort();
     let mut open = Vec::new();
     for id in earlier {
-        let signals = store.signals(id)?;
+        let mut signals = store.signals(id)?;
+        let normal: HashSet<u32> = signals
+            .iter()
+            .filter(|s| s.signal.headline && s.signal.kind == SignalKind::Disappeared)
+            .map(|s| s.signal.group)
+            .collect();
+        signals.retain(|s| !normal.contains(&s.signal.group));
         if signals.is_empty() {
             continue;
         }

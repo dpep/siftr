@@ -148,6 +148,47 @@ fn a_suite_that_shrank_is_complete_and_its_regression_shows() {
     assert!(!open.contains(&"incomplete"), "{open:?}");
 }
 
+/// hunt2 #5 (s3), what a reader sees: the deleted file's 16 examples are one change ranked below the warning,
+/// and later runs remind only of the warning.
+#[test]
+fn a_deleted_spec_file_is_one_change_and_never_a_reminder() {
+    let home = Home::new();
+    let shrunk = home.runs(&["a20_warn1", "a20_warn1", "a20_warn1", "a4_warn3"]);
+    let signals = shrunk["signals"].as_array().unwrap();
+    let groups: Vec<(&str, &str, usize)> = shrunk["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| {
+            let head = signals.iter().find(|s| s["id"] == g["headline"]).unwrap();
+            (
+                head["kind"].as_str().unwrap(),
+                head["behavior"]["template"].as_str().unwrap(),
+                g["signals"].as_array().unwrap().len(),
+            )
+        })
+        .collect();
+    assert_eq!(groups.len(), 2, "{groups:?}");
+    assert_eq!(groups[0], ("frequency", WARNING, 1));
+    assert_eq!(
+        (groups[1].0, groups[1].2),
+        ("disappeared", 16),
+        "{groups:?}"
+    );
+    assert!(groups[1].1.starts_with("./spec/b_spec.rb # "), "{groups:?}");
+
+    for later in ["r5", "r6"] {
+        let changes = home.runs(&["a4_warn3"]);
+        let open: Vec<&str> = changes["open_signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(open, ["frequency"], "{later}");
+    }
+}
+
 /// `(outcome, resolved_in, recurred_in)` of the ERROR on a1 raised in r4.
 fn failure_outcome(home: &Home) -> (String, Value, Value) {
     let history = home.siftr(&["history", "--signals", "-j"]);

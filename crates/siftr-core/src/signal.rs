@@ -13,7 +13,7 @@ use std::str::FromStr;
 
 use crate::aggregate::{BehaviorStats, Phase, RunStats, overflow_behavior};
 use crate::baseline::{Baseline, Ineligible};
-use crate::behavior::{BehaviorId, Kind};
+use crate::behavior::{Behavior, BehaviorId, Kind};
 use crate::interpret::rspec::{EVENTS_STREAM, summary};
 use crate::num::{median, round_sig};
 use crate::observation::Stream;
@@ -191,6 +191,7 @@ pub fn detect<K>(current: &RunStats, baseline: &Baseline<'_, K>) -> Vec<Signal> 
                 || !comparison.within_examples(f.signal.behavior, unrun)
         });
     }
+    comparison.collapse(&mut found);
     rank(found)
 }
 
@@ -284,6 +285,8 @@ enum Key {
     Incomplete,
     /// An example, or one phase outside them.
     Scope(Phase),
+    /// Examples of one spec file that disappeared together, with what was attributed to them.
+    File(String),
     /// Stderr has no per-example attribution: the same message from different call sites groups by prefix.
     Prefix(String),
     Behavior(BehaviorId),
@@ -291,6 +294,43 @@ enum Key {
 
 /// How many characters of a stderr template decide its group.
 const PREFIX_CHARS: usize = 60;
+
+/// DISAPPEARED examples of one spec file group together from this many; a single one stays its own change.
+const COLLAPSE_EXAMPLES: usize = 2;
+
+/// The spec file of a `test.example` template, `<spec file> # <full description>`.
+fn spec_file(template: &str) -> Option<&str> {
+    template.split_once(" # ").map(|(file, _)| file)
+}
+
+/// A group made of examples of one spec file that disappeared together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisappearedExamples<'a> {
+    pub file: &'a str,
+    /// Members that are those examples; any others were attributed to them.
+    pub examples: usize,
+}
+
+/// Whether a group's members, headline first and each with its behavior, are examples of one spec file that
+/// disappeared together, as [`detect`] groups them.
+pub fn disappeared_examples<'a>(
+    members: impl IntoIterator<Item = (&'a Signal, &'a Behavior)>,
+) -> Option<DisappearedExamples<'a>> {
+    let gone = |(s, b): &(&Signal, &Behavior)| {
+        s.kind == SignalKind::Disappeared && b.kind == Kind::TestExample
+    };
+    let mut members = members.into_iter();
+    let (_, head) = members.next().filter(gone)?;
+    let file = spec_file(&head.template)?;
+    let mut examples = 1;
+    for (_, behavior) in members.filter(gone) {
+        if spec_file(&behavior.template) != Some(file) {
+            return None;
+        }
+        examples += 1;
+    }
+    (examples >= COLLAPSE_EXAMPLES).then_some(DisappearedExamples { file, examples })
+}
 
 struct Comparison<'a> {
     current: &'a RunStats,
@@ -304,6 +344,8 @@ struct Comparison<'a> {
 struct Found {
     signal: Signal,
     key: Key,
+    /// A DISAPPEARED example: what else is attributed to it moved because it went, so it heads its group.
+    gone: bool,
 }
 
 impl<'a> Comparison<'a> {
@@ -327,6 +369,36 @@ impl<'a> Comparison<'a> {
 
     fn n(&self) -> usize {
         self.runs.len()
+    }
+
+    fn template(&self, id: BehaviorId) -> &str {
+        self.current
+            .get(id)
+            .or_else(|| self.runs.iter().find_map(|run| run.get(id)))
+            .map_or("", |b| b.behavior.template.as_str())
+    }
+
+    /// DISAPPEARED examples of one spec file, and what is attributed to them, become one group: deleting or renaming
+    /// a file is one change, not one per example.
+    fn collapse(&self, found: &mut [Found]) {
+        let mut files: BTreeMap<&str, Vec<BehaviorId>> = BTreeMap::new();
+        for f in found.iter().filter(|f| f.gone) {
+            if let Some(file) = spec_file(self.template(f.signal.behavior)) {
+                files.entry(file).or_default().push(f.signal.behavior);
+            }
+        }
+        let file_of: HashMap<BehaviorId, &str> = files
+            .into_iter()
+            .filter(|(_, examples)| examples.len() >= COLLAPSE_EXAMPLES)
+            .flat_map(|(file, examples)| examples.into_iter().map(move |e| (e, file)))
+            .collect();
+        for f in found {
+            if let Key::Scope(Phase::Example(example)) = f.key
+                && let Some(file) = file_of.get(&example)
+            {
+                f.key = Key::File((*file).to_owned());
+            }
+        }
     }
 
     fn class(&self, id: BehaviorId) -> Option<Class> {
@@ -706,6 +778,7 @@ impl<'a> Comparison<'a> {
                     headline: false,
                 },
                 key: Key::Incomplete,
+                gone: false,
             });
         }
     }
@@ -744,22 +817,16 @@ impl<'a> Comparison<'a> {
                         }
                         (Key::Scope(*owner), Some(attribution))
                     }
-                    _ if class == Class::Stderr => {
-                        let template = self
-                            .current
-                            .get(id)
-                            .or_else(|| self.runs.iter().find_map(|run| run.get(id)))
-                            .map_or("", |b| b.behavior.template.as_str());
-                        (
-                            Key::Prefix(template.chars().take(PREFIX_CHARS).collect()),
-                            None,
-                        )
-                    }
+                    _ if class == Class::Stderr => (
+                        Key::Prefix(self.template(id).chars().take(PREFIX_CHARS).collect()),
+                        None,
+                    ),
                     _ => (Key::Behavior(id), None),
                 }
             }
         };
         found.push(Found {
+            gone: class == Class::Example && kind == SignalKind::Disappeared,
             signal: Signal {
                 kind,
                 behavior: id,
@@ -834,24 +901,28 @@ fn precedence(a: &Signal, b: &Signal) -> Ordering {
 }
 
 fn rank(found: Vec<Found>) -> Vec<Signal> {
-    let mut groups: BTreeMap<Key, Vec<Signal>> = BTreeMap::new();
-    for Found { signal, key } in found {
-        groups.entry(key).or_default().push(signal);
+    let mut groups: BTreeMap<Key, Vec<(bool, Signal)>> = BTreeMap::new();
+    for Found { signal, key, gone } in found {
+        groups.entry(key).or_default().push((gone, signal));
     }
-    let mut groups: Vec<Vec<Signal>> = groups.into_values().collect();
+    let mut groups: Vec<Vec<(bool, Signal)>> = groups.into_values().collect();
     for members in &mut groups {
-        members.sort_by(precedence);
+        members
+            .sort_by(|(a_gone, a), (b_gone, b)| b_gone.cmp(a_gone).then_with(|| precedence(a, b)));
     }
-    groups.sort_by(|a, b| precedence(&a[0], &b[0]));
+    groups.sort_by(|a, b| precedence(&a[0].1, &b[0].1));
     groups
         .into_iter()
         .zip(1..)
         .flat_map(|(members, rank)| {
-            members.into_iter().enumerate().map(move |(i, mut signal)| {
-                signal.group = rank;
-                signal.headline = i == 0;
-                signal
-            })
+            members
+                .into_iter()
+                .enumerate()
+                .map(move |(i, (_, mut signal))| {
+                    signal.group = rank;
+                    signal.headline = i == 0;
+                    signal
+                })
         })
         .collect()
 }
