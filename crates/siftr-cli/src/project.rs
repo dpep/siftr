@@ -32,20 +32,19 @@ const MANIFESTS: &[&str] = &[
     "composer.json",
 ];
 
-/// Inside a git repository, the nearest ancestor holding a manifest, else the repository root: two apps in one
+/// The nearest ancestor holding a manifest, looking no higher than the git repository's root: two apps in one
 /// repo (or a Cargo workspace and its member) run the same command to different effect, so they must not share a
-/// baseline. Outside one, `cwd` itself — a stray `~/package.json` must not merge every directory under it.
+/// baseline. Otherwise `cwd` itself. Not the repository root: with no manifest to say where a suite begins,
+/// `a/` and `b/` would share one, and a false NEW costs more than a fresh baseline in a subdirectory. Not above
+/// it either: a stray `~/package.json` must not merge every directory under it.
 fn root_of(cwd: &Path) -> &Path {
-    let mut manifest = None;
-    for dir in cwd.ancestors() {
-        if manifest.is_none() && MANIFESTS.iter().any(|name| dir.join(name).is_file()) {
-            manifest = Some(dir);
-        }
-        if dir.join(".git").exists() {
-            return manifest.unwrap_or(dir);
-        }
-    }
-    cwd
+    let Some(repo) = cwd.ancestors().position(|dir| dir.join(".git").exists()) else {
+        return cwd;
+    };
+    cwd.ancestors()
+        .take(repo + 1)
+        .find(|dir| MANIFESTS.iter().any(|name| dir.join(name).is_file()))
+        .unwrap_or(cwd)
 }
 
 #[cfg(test)]
@@ -66,7 +65,11 @@ mod tests {
         );
 
         std::fs::create_dir(repo.join(".git")).unwrap();
-        assert_eq!(root_of(&spec), repo, "no manifest: the repository root");
+        assert_eq!(
+            root_of(&spec),
+            spec,
+            "no manifest in the repository: still the directory itself, not the repository root"
+        );
 
         std::fs::write(repo.join("Cargo.toml"), "").unwrap();
         std::fs::write(repo.join("apps/web/Gemfile"), "").unwrap();
