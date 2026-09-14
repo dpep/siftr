@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Regenerates fixtures/rails_demo/<scenario>/ from real runs of this app, using
+# the capture design in docs/findings/capture.md.
+set -euo pipefail
+
+APP=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$APP/../.." && pwd)
+LISTENER=$ROOT/docs/findings/siftr_rspec_listener.rb
+OUT=$ROOT/fixtures/rails_demo
+LOG=$APP/log/test.log
+
+# capture <scenario> [VAR=value ...] -- extra env for the run
+capture() {
+  local name=$1; shift
+  local dir=$OUT/$name
+  rm -rf "$dir"; mkdir -p "$dir"
+  touch "$LOG"
+  local start; start=$(wc -c < "$LOG" | tr -d ' ')
+
+  local code=0
+  (cd "$APP" && env "$@" SIFTR_RSPEC_EVENTS="$dir/rspec.ndjson" SIFTR_RSPEC_LOG="$LOG" \
+    SPEC_OPTS="${USER_SPEC_OPTS:-} --require $LISTENER" \
+    bundle exec rspec > "$dir/stdout.txt" 2> "$dir/stderr.txt") || code=$?
+  echo "$code" > "$dir/exit_code.txt"
+
+  tail -c +$((start + 1)) "$LOG" > "$dir/test.log"
+  # log_offset is absolute in the live log; rebase so it indexes the fixture's test.log.
+  ruby -rjson -i -ne 'h = JSON.parse($_); h["log_offset"] -= '"$start"' if h["log_offset"]; puts JSON.generate(h)' "$dir/rspec.ndjson"
+  echo "$name: exit=$code $(wc -c < "$dir/test.log" | tr -d ' ') log bytes"
+}
+
+cd "$APP"
+RAILS_ENV=test bin/rails db:prepare > /dev/null
+
+capture baseline
+capture baseline_2
+USER_SPEC_OPTS="--format documentation" capture baseline_documentation
+capture n_plus_one SIFTR_DEMO_N_PLUS_ONE=1
+capture slow SIFTR_DEMO_SLOW=1
+capture warn SIFTR_DEMO_WARN=1
+capture fail SIFTR_DEMO_FAIL=1
