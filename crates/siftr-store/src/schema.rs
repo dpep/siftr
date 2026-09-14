@@ -1,6 +1,9 @@
 //! Schema migrations, tracked by SQLite's `user_version`.
 
-use anyhow::{Result, bail};
+use std::fs::File;
+use std::path::Path;
+
+use anyhow::{Context as _, Result, bail};
 use rusqlite::{Connection, TransactionBehavior};
 
 /// Append a migration to change the schema; never edit one that has shipped.
@@ -166,27 +169,41 @@ CREATE INDEX feedback_by_behavior ON feedback (behavior_id, at_ms);
 ",
 ];
 
-pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {
-    conn.execute_batch(
-        "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;",
-    )?;
-    let known = MIGRATIONS.len() as i64;
-    let version = user_version(conn)?;
-    if version == known {
+/// Brings the database at `conn` to WAL and the latest schema. `lock` serializes processes doing so.
+pub(crate) fn migrate(conn: &mut Connection, lock: &Path) -> Result<()> {
+    conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
+    if is_current(conn)? {
         return Ok(());
     }
-    if version > known {
-        bail!("database schema version {version} is newer than this siftr understands ({known})");
-    }
-    // Opens racing to migrate: the write lock queues the others, which then re-read the version and skip.
+    // Switching to WAL needs an exclusive lock, and SQLite fails the switch at once, without the busy
+    // timeout, when another connection is escalating too. So first opens and upgrades take turns.
+    let file = File::create(lock).with_context(|| format!("creating {}", lock.display()))?;
+    file.lock()
+        .with_context(|| format!("locking {}", lock.display()))?;
+    conn.execute_batch("PRAGMA journal_mode = WAL")?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let version = user_version(&tx)?;
+    let version = checked_version(&tx)?;
     for (applied, migration) in (0..).zip(MIGRATIONS).skip(version.unsigned_abs() as usize) {
         tx.execute_batch(migration)?;
         tx.pragma_update(None, "user_version", applied + 1_i64)?;
     }
     tx.commit()?;
     Ok(())
+}
+
+/// Read-only, so concurrent opens of a migrated database never contend.
+fn is_current(conn: &Connection) -> Result<bool> {
+    let version = checked_version(conn)?;
+    let mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+    Ok(version == MIGRATIONS.len() as i64 && mode.eq_ignore_ascii_case("wal"))
+}
+
+fn checked_version(conn: &Connection) -> Result<i64> {
+    let (version, known) = (user_version(conn)?, MIGRATIONS.len() as i64);
+    if version > known {
+        bail!("database schema version {version} is newer than this siftr understands ({known})");
+    }
+    Ok(version)
 }
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {

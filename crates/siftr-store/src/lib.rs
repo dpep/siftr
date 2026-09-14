@@ -37,7 +37,8 @@ impl Store {
         let db = home.join("siftr.db");
         let mut conn =
             Connection::open(&db).with_context(|| format!("opening {}", db.display()))?;
-        schema::migrate(&mut conn).with_context(|| format!("migrating {}", db.display()))?;
+        schema::migrate(&mut conn, &home.join("siftr.lock"))
+            .with_context(|| format!("migrating {}", db.display()))?;
         Ok(Store {
             conn,
             home: home.to_owned(),
