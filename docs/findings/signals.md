@@ -6,6 +6,8 @@ Answered from measured run-to-run noise on two real suites, 2026-09-13, Ruby
 were building and testing). That is a pessimistic machine, and also the one a
 coding agent actually runs on.
 
+The rules have since been extended: see §7 for what changed and what verified it.
+
 Reproduce: `noise/collect.sh <raw_dir>` (interleaves demo baseline, toggles and
 iriq runs so load drift hits all scenarios alike), `noise/extract.rb <raw_dir>`
 (reduces to `noise/data/`), `noise/analyze.rb [noise|sweep|backtest|inject]`.
@@ -227,3 +229,105 @@ Latency values are in ms. "n/a" means no signal.
 | 28 | ERROR | failed F ×1, passed ×4 | failed E | ERROR 0.71 |
 | 29 | ERROR | none | failed E | n/a (no baseline) |
 | 30 | grouping | show request queries [3 ×5], example queries [28 ×5], sql `post_id = ?` [1 ×5] | 10, 35, 9 | 1 group, headline FREQUENCY request 3→10 exact 0.86, 2 supporting (example queries, sql template) |
+
+## 7. Revisions since the backtest (2026-09-13)
+
+§2's thresholds and confidence formulas stand. What changed is everything
+around them, once real suites broke two assumptions the backtest never tested:
+every run ran the whole suite, and one group per example suits every change.
+Sections 1–6 are left as measured. Code: `crates/siftr-core/src/baseline.rs`,
+`crates/siftr-core/src/signal.rs`, `crates/siftr-cli/src/cmd/history.rs`.
+
+**Baseline eligibility, v2** (3586139, replacing 2ac34c9). §3 only ever used
+clean runs as a baseline. v1 dropped a recent run by counts: no test summary,
+more errors outside examples than now, fewer examples run than loaded, or under
+half of the examples loaded now. Suites that change shape defeated it. A suite
+that grew past 2x lost its history, one that shrank read as a focus run, a red
+`--fail-fast` suite skipped every run, and fixing a spec file that never loaded
+skipped all earlier runs. Each hid a regression landing in that run.
+
+v2 judges by which examples ran. A recent run with no test summary is skipped.
+Any other recent run is skipped only when both hold:
+
+- its own counts say it may have skipped existing examples: errors outside
+  examples, fewer run than loaded, fewer loaded than defined, or no defined
+  count (recorded by an older siftr);
+- it lacks an example this run ran that another recent run also ran.
+
+`defined` is the listener's count of examples in the files that loaded, before
+filters. It is what separates a focus run (loaded < defined) from a deleted spec
+file (fewer examples, none filtered). When every baseline run skipped existing
+examples, as in a red `--fail-fast` suite, NEW on an example none of them ran is
+dropped. Skipped runs are reported with a reason: `no_test_summary`,
+`errors_outside_examples`, `stopped` or `subset`.
+
+**INCOMPLETE, a signal kind** (171c740, 3586139). The same judgement is turned
+on the current run. It is incomplete when it lacks examples its baseline ran and
+its counts say why: more errors outside examples than any baseline run, stopped,
+or filtered. Otherwise the missing examples were deleted. An incomplete run
+keeps NEW and ERROR. It drops DISAPPEARED and FREQUENCY unless every occurrence
+lies in an example that ran now, and drops LATENCY, since a partial suite can't
+veto a stall. It adds one tier-1 group, on the behavior that shows why: each new
+error outside examples (named `<file> failed to load: <class>: <message>`), else
+the test summary. Confidence is E(n) from n ≥ 1, like ERROR. Before this, one
+spec file that failed to load read as 9 changes.
+
+**A new error outside examples is tier-1 NEW** (8557049). Errors the listener
+reports outside every example (a `raise` after a describe block, a suite hook)
+form their own class. Behaviors from the reporter's event stream used to get no
+rules in a run with examples. Once v2 stopped calling such a run incomplete, an
+exit-1 run reported 0 changes. Now it gets NEW at tier 1 with E(n), under the
+usual presence rule (n ≥ 2), and FREQUENCY and DISAPPEARED under their usual
+rules. When the error did leave the run incomplete, it is named once, as
+INCOMPLETE.
+
+**A DISAPPEARED example heads its group, and a file's collapse into one**
+(dc2e2d6). Under §2's grouping the lowest tier headed the group, so SQL
+attributed only to a deleted example headlined as tier-3 FREQUENCY. That ranked
+the deletion beside real regressions and reminded it like one. Now a DISAPPEARED
+example always heads its own group, because what was attributed to it moved when
+it went. Two or more DISAPPEARED examples of one spec file (the part of the
+template before ` # `) form one group with everything attributed to them. The
+group ranks at its headline's tier, 4. A single one stays its own group.
+Renderers print it as `N examples of <file>  gone` (JSON:
+`groups[].disappeared_examples`). On the hunt fixture (`b_spec.rb` deleted, a
+warning 1 → 3), changes went from 17 to 2, FREQUENCY first.
+
+**Still-open reminders.** §5's baseline contamination is handled by re-judging
+signals, not by excluding runs. A run reminds of signals from its own baseline
+runs, oldest first, that are still open. A signal is still open when today's
+rules reproduce it on its own run, and every later run through this one still
+fires it against the signal's original baseline. A later run that skipped
+examples that baseline ran gives no verdict, so a focus or load-error run can't
+resolve a failure. Left out:
+
+- signals this run raised again (same kind, behavior and measure), and repeats
+  of one key;
+- INCOMPLETE, which is about its own run;
+- any group with a dismissed signal;
+- any group headed by DISAPPEARED (dc2e2d6). A disappearance that stays is the
+  new normal. A DISAPPEARED signal supporting another headline still rides with
+  that reminder.
+
+An interrupted, unfinished or incomplete run reminds of nothing. Reminders last
+only as long as the window: once the signal's run leaves the baseline, the
+change is what siftr calls normal.
+
+**What verified these.** `noise/analyze.rb` models §2 as backtested: clean
+baselines, one group per example, no INCOMPLETE, no errors outside examples, no
+collapse and no reminders. So §3's numbers say nothing about the revisions.
+§3's runs all ran the whole suite, so eligibility v2 shouldn't change their
+baselines, but the backtest wasn't re-run to confirm it. The revisions are
+checked instead by fixture tests that replay captured RSpec runs through the
+binary:
+
+- `crates/siftr-cli/tests/core_hunt.rs`: grown, shrunk and red `--fail-fast`
+  suites; fixing a file that never loaded; a deleted spec file as one change
+  and never a reminder; focus and load-error runs resolving nothing.
+- `core_reminders.rs`: a reminder keeps the DISAPPEARED query that supports its
+  headline.
+- `cli_collapse.rs`: the collapsed line and `disappeared_examples`.
+
+`script/verify` runs them end to end: the full gate, then `dogfood/rails_demo`
+through an N+1, an unfixed rerun, a load error, a raise after describe, and
+recovery.
