@@ -145,6 +145,22 @@ fn table() {
             "job_6513270e-269e-0d37-f2a7-4de452e6b438_retry",
             "job_<uuid>_retry",
         ),
+        // Rails compiled-view method names: `__<String#hash>_<id>`, a negative hash's `-` rewritten to `_`.
+        (
+            "DEPRECATION WARNING: User#display_name is deprecated; use #name (called from _app_views_users_show_html_erb__484173706772255391_5232 at /app/views/users/show.html.erb:1)",
+            "DEPRECATION WARNING: User#display_name is deprecated; use #name (called from _app_views_users_show_html_erb__<int>_<int> at /app/views/users/show.html.erb:<int>)",
+        ),
+        (
+            "called from _app_views_users_show_html_erb___129572542000730357_5232 at x",
+            "called from _app_views_users_show_html_erb__<int>_<int> at x",
+        ),
+        // Only a run of two or more collapses: a single `_` before digits is a different name.
+        (
+            "active_record_1 v_2 v__2",
+            "active_record_<int> v_<int> v__<int>",
+        ),
+        ("snake___case stays", "snake___case stays"),
+        ("tail___ and ___12abc", "tail___ and ___12abc"),
     ];
     let mut n = Normalizer::new();
     let mut failures = Vec::new();
@@ -167,6 +183,16 @@ fn ansi_color_does_not_split_behaviors() {
         "User Load (0.3ms)  SELECT 1",
         "\x1b[1mUser Load (0.3ms)\x1b[0m SELECT 1",
     );
+}
+
+#[test]
+fn strip_ansi_keeps_only_the_text() {
+    let mut out = vec![b'x'];
+    let line = "  \x1b[1m\x1b[36mUser Load (0.0ms)\x1b[0m  \x1b[1m\x1b[34mSELECT 1\x1b[0m";
+    siftr_normalize::strip_ansi(line.as_bytes(), &mut out);
+    assert_eq!(out, b"  User Load (0.0ms)  SELECT 1");
+    siftr_normalize::strip_ansi(b"cut \x1b[3", &mut out);
+    assert_eq!(out, b"cut ");
 }
 
 #[test]

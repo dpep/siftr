@@ -296,6 +296,18 @@ impl Normalizer {
             }
             if CLASS[line[i] as usize] & sep != 0 {
                 self.piece(line, piece, i, level);
+                // Rails view methods are `erb__<hash>`, or `erb___<hash>` when the per-boot hash is negative.
+                let run = if sep == SEP_WORD {
+                    underscores_before_digits(&line[i..e])
+                } else {
+                    0
+                };
+                if run >= 2 {
+                    self.template.extend_from_slice(b"__");
+                    i += run;
+                    piece = i;
+                    continue;
+                }
                 self.template.push(line[i]);
                 piece = i + 1;
             }
@@ -426,6 +438,28 @@ fn next_word(line: &[u8], at: usize) -> Option<(usize, usize)> {
         end -= 1;
     }
     (end > start).then_some((start, end))
+}
+
+/// Length of the `_` run starting `t` when an all-digit piece follows it, else 0.
+fn underscores_before_digits(t: &[u8]) -> usize {
+    let run = t.iter().take_while(|&&b| b == b'_').count();
+    let piece = &t[run..];
+    let digits = leading_digits(piece);
+    let ends = piece
+        .get(digits)
+        .is_none_or(|&b| CLASS[b as usize] & SEP_WORD != 0);
+    if digits > 0 && ends { run } else { 0 }
+}
+
+/// Copies `line` into `out` without its ANSI escape sequences, for parsing a line's structure.
+pub fn strip_ansi(line: &[u8], out: &mut Vec<u8>) {
+    out.clear();
+    let mut i = 0;
+    while let Some(esc) = line[i..].iter().position(|&b| b == 0x1b) {
+        out.extend_from_slice(&line[i..i + esc]);
+        i = skip_ansi(line, i + esc);
+    }
+    out.extend_from_slice(&line[i..]);
 }
 
 fn trim_spaces_end(t: &[u8]) -> &[u8] {
