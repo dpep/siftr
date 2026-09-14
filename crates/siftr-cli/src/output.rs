@@ -189,7 +189,8 @@ fn ineligible_words(why: Ineligible) -> String {
 }
 
 /// `r4: no test summary`; runs left out for the same reason share one: `r1 r2: no test summary; r4: …`.
-fn skipped_label(skipped: &[(RunId, Ineligible)]) -> String {
+/// `named` is every run the header names, compared or skipped.
+fn skipped_label(skipped: &[(RunId, Ineligible)], named: &[RunId]) -> String {
     let mut reasons: Vec<(String, Vec<RunId>)> = Vec::new();
     for &(run, why) in skipped {
         let reason = ineligible_words(why);
@@ -200,7 +201,7 @@ fn skipped_label(skipped: &[(RunId, Ineligible)]) -> String {
     }
     reasons
         .iter()
-        .map(|(reason, runs)| format!("{}: {reason}", runs_label(runs)))
+        .map(|(reason, runs)| format!("{}: {reason}", runs_label(runs, named)))
         .collect::<Vec<_>>()
         .join("; ")
 }
@@ -311,6 +312,9 @@ impl Changes<'_> {
             groups.iter().partition(|g| g.setup);
         let run = self.run.id;
         let n = self.baseline_runs.len() as u64;
+        let named: Vec<RunId> = (self.baseline_runs.iter().copied())
+            .chain(self.skipped_runs.iter().map(|&(run, _)| run))
+            .collect();
         if let Some(signal) = self.run.interrupted {
             writeln!(
                 w,
@@ -320,7 +324,7 @@ impl Changes<'_> {
             writeln!(
                 w,
                 "{run}: no comparable earlier runs (skipped {})",
-                skipped_label(self.skipped_runs)
+                skipped_label(self.skipped_runs, &named)
             )?;
         } else if n == 0 {
             let lines = self.run.end.map_or(0, |end| end.lines);
@@ -335,13 +339,13 @@ impl Changes<'_> {
                 .map_or_else(String::new, |why| format!(" (incomplete: {why})"));
             let skipped = match self.skipped_runs {
                 [] => String::new(),
-                skipped => format!("; skipped {}", skipped_label(skipped)),
+                skipped => format!("; skipped {}", skipped_label(skipped, &named)),
             };
             write!(
                 w,
                 "{run}{incomplete} vs {} ({}{skipped}): {}",
                 plural(n, "baseline run"),
-                runs_label(self.baseline_runs),
+                runs_label(self.baseline_runs, &named),
                 plural(code.len() as u64, "change")
             )?;
             if n < u64::from(MIN_BASELINE_RUNS) {
@@ -451,16 +455,19 @@ fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
     writeln!(w, "       evidence: {}", plural(lines, "line"))
 }
 
-/// The baseline runs, oldest to newest.
-fn runs_label(runs: &[RunId]) -> String {
+/// Runs oldest to newest. A range never spans a run in `named` that isn't one of `runs`: `r1…r7` beside
+/// `skipped r7` reads as though r7 was compared.
+fn runs_label(runs: &[RunId], named: &[RunId]) -> String {
     let mut sorted = runs.to_vec();
     sorted.sort();
-    match sorted.as_slice() {
-        [] => String::new(),
-        [one] => one.to_string(),
-        [first, .., last] if sorted.len() > 3 => format!("{first}…{last}"),
-        all => ids(all).join(" "),
-    }
+    sorted
+        .chunk_by(|a, b| !named.iter().any(|run| a < run && run < b))
+        .map(|segment| match segment {
+            [first, .., last] if segment.len() > 3 => format!("{first}…{last}"),
+            all => ids(all).join(" "),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// What moved, in one phrase: `queries 3 → 10`.
@@ -887,8 +894,33 @@ mod tests {
         let runs: Vec<RunId> = ["r11", "r10", "r9", "r7"]
             .map(|r| r.parse().unwrap())
             .to_vec();
-        assert_eq!(runs_label(&runs), "r7…r11");
-        assert_eq!(runs_label(&runs[..2]), "r10 r11");
+        assert_eq!(runs_label(&runs, &runs), "r7…r11");
+        assert_eq!(runs_label(&runs[..2], &runs), "r10 r11");
+    }
+
+    #[test]
+    fn a_range_never_spans_a_run_named_elsewhere() {
+        let run = |r: &str| r.parse::<RunId>().unwrap();
+        let compared: Vec<RunId> = ["r1", "r2", "r3", "r4", "r6"].map(run).to_vec();
+        let named = [compared.clone(), vec![run("r5"), run("r7")]].concat();
+        assert_eq!(runs_label(&compared, &named), "r1…r4 r6");
+        assert_eq!(
+            runs_label(&compared, &compared),
+            "r1…r6",
+            "no other run named"
+        );
+        let skipped = [
+            (run("r9"), Ineligible::NoTestSummary),
+            (run("r5"), Ineligible::NoTestSummary),
+            (run("r7"), Ineligible::NoTestSummary),
+            (run("r8"), Ineligible::NoTestSummary),
+        ];
+        let named = [compared, vec![run("r5"), run("r7"), run("r8"), run("r9")]].concat();
+        assert_eq!(
+            skipped_label(&skipped, &named),
+            "r5 r7 r8 r9: no test summary",
+            "r6 was compared, so no r5…r9"
+        );
     }
 
     #[test]
@@ -915,7 +947,7 @@ mod tests {
             (run("r2"), Ineligible::NoTestSummary),
         ];
         assert_eq!(
-            skipped_label(&skipped),
+            skipped_label(&skipped, &skipped.map(|(run, _)| run)),
             "r2 r4: no test summary; r3: 1 error outside examples, 0 now"
         );
     }
