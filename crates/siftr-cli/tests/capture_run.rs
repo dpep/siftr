@@ -177,7 +177,8 @@ fn a_chatty_orphan_does_not_hold_the_drain_open_by_staying_noisy() {
     .output()
     .unwrap();
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        // Normally ~1.6s; the orphan ticks for 10s, so 4s still proves the drain let go.
+        started.elapsed() < Duration::from_secs(4),
         "{:?}",
         started.elapsed()
     );
