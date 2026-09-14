@@ -15,13 +15,7 @@ fn analyze(text: &str) -> Analysis {
     let mut analyzer = Analyzer::new();
     let stream = Stream::Stdout;
     let mut splitter = LineSplitter::new();
-    splitter.feed(text.as_bytes(), |seq, line| {
-        analyzer.observe(Observation {
-            stream: &stream,
-            seq,
-            line,
-        })
-    });
+    splitter.feed(&stream, text.as_bytes(), |obs| analyzer.observe(obs));
     analyzer.finish()
 }
 
@@ -38,9 +32,10 @@ fn record(store: &mut Store, context: &Context, text: &str, finish: bool) -> (Ru
     if finish {
         let baseline = store.baseline_runs(context, run, 10).unwrap();
         let baseline_runs: Vec<RunId> = baseline.iter().map(|(id, _)| *id).collect();
+        let stats = analysis.stats();
         let signals = detect(
-            &analysis.stats(),
-            &Baseline::from_runs(baseline.iter().map(|(_, s)| s)),
+            &stats,
+            &Baseline::from_runs(&stats, baseline.iter().map(|(id, s)| (*id, s))),
         );
         let end = RunEnd {
             wall: Duration::from_millis(1500),
@@ -144,6 +139,7 @@ fn scoped_analysis(events: &[(Kind, &str, Option<&str>, Option<f64>)]) -> Analys
                 stream: &stream,
                 seq,
                 line: line.as_bytes(),
+                raw_len: line.len() as u64 + 1,
             },
             duration: None,
             outcome: None,
@@ -193,9 +189,10 @@ fn scopes_measures_and_grouped_signals_read_back_as_detected() {
         let analysis = run_of(queries);
         let baseline = store.baseline_runs(&context, run, 10).unwrap();
         let baseline_runs: Vec<RunId> = baseline.iter().map(|(id, _)| *id).collect();
+        let stats = analysis.stats();
         detected = detect(
-            &analysis.stats(),
-            &Baseline::from_runs(baseline.iter().map(|(_, s)| s)),
+            &stats,
+            &Baseline::from_runs(&stats, baseline.iter().map(|(id, s)| (*id, s))),
         );
         let end = RunEnd {
             wall: Duration::from_millis(5),
@@ -312,8 +309,8 @@ fn capture_keeps_raw_bytes_per_stream() {
 /// command that never ran.
 #[test]
 fn concurrent_opens_of_an_unmigrated_home_all_succeed() {
-    const OPENS: usize = 8;
-    for _ in 0..10 {
+    const OPENS: usize = 16;
+    for _ in 0..100 {
         let home = tempfile::tempdir().unwrap();
         let start = std::sync::Barrier::new(OPENS);
         std::thread::scope(|scope| {

@@ -79,9 +79,9 @@ mod tests {
 
     fn analyze(analyzer: &mut Analyzer, stream: &Stream, text: &str) {
         let mut splitter = LineSplitter::new();
-        let mut observe = |seq, line: &[u8]| analyzer.observe(Observation { stream, seq, line });
-        splitter.feed(text.as_bytes(), &mut observe);
-        splitter.finish(&mut observe);
+        let mut observe = |obs: Observation<'_>| analyzer.observe(obs);
+        splitter.feed(stream, text.as_bytes(), &mut observe);
+        splitter.finish(stream, &mut observe);
     }
 
     #[test]
@@ -136,6 +136,7 @@ mod tests {
                     stream: &stream,
                     seq: *seq,
                     line,
+                    raw_len: line.len() as u64 + 1,
                 };
                 sink.record(&Event {
                     kind: Kind::TestExample,

@@ -3,6 +3,7 @@
 mod histogram;
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use histogram::LogHistogram;
@@ -21,8 +22,8 @@ pub const MAX_EXEMPLAR_BYTES: usize = 1024;
 pub const MAX_BEHAVIORS: usize = 20_000;
 /// (behavior, scope) attributions kept per run. Past it, a scoped event still counts, as unattributed.
 pub const MAX_SCOPE_CELLS: usize = 200_000;
-/// Distinct measure names kept per behavior.
-pub const MAX_MEASURES: usize = 4;
+/// Distinct measure names kept per behavior. A test summary has five.
+pub const MAX_MEASURES: usize = 5;
 /// The template of the one behavior that absorbs events past [`MAX_BEHAVIORS`].
 pub const OVERFLOW_TEMPLATE: &str = "siftr: events of behaviors beyond the per-run cap";
 
@@ -113,6 +114,52 @@ pub struct ScopeStats {
     pub count: u64,
     /// `(measure name, sum)`, by name.
     pub sums: Vec<(String, f64)>,
+}
+
+/// Where a test run's log line fell relative to its examples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Phase {
+    /// Before the first example started: boot, schema checks, `before(:suite)`.
+    Setup,
+    /// Inside this example.
+    Example(BehaviorId),
+    /// After one example finished and before the next started: `before(:context)`, `after(:context)`.
+    Between,
+    /// After the last example finished: `after(:suite)`.
+    Teardown,
+}
+
+static BETWEEN: LazyLock<BehaviorId> =
+    LazyLock::new(|| BehaviorId::of(Kind::TestSummary, b"siftr: between examples"));
+static TEARDOWN: LazyLock<BehaviorId> =
+    LazyLock::new(|| BehaviorId::of(Kind::TestSummary, b"siftr: after the last example"));
+
+impl Phase {
+    /// The phase as an event's scope, the id aggregates and the store keep it by. Setup is no scope, as
+    /// runs recorded before phases were told apart kept it; the other phases outside examples take
+    /// reserved ids no behavior has.
+    pub fn scope_id(self) -> Option<BehaviorId> {
+        match self {
+            Phase::Setup => None,
+            Phase::Example(id) => Some(id),
+            Phase::Between => Some(*BETWEEN),
+            Phase::Teardown => Some(*TEARDOWN),
+        }
+    }
+
+    pub fn from_scope_id(id: Option<BehaviorId>) -> Self {
+        match id {
+            None => Phase::Setup,
+            Some(id) if id == *BETWEEN => Phase::Between,
+            Some(id) if id == *TEARDOWN => Phase::Teardown,
+            Some(id) => Phase::Example(id),
+        }
+    }
+
+    /// Not inside any one example: the environment or suite-level hooks, not an example's own code.
+    pub fn outside_examples(self) -> bool {
+        !matches!(self, Phase::Example(_))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -390,7 +437,7 @@ impl BehaviorStats {
             .map(|m| &m.stats)
     }
 
-    /// Occurrences outside every scope.
+    /// Occurrences outside every scope: a test run's [`Phase::Setup`], or a stream with no examples.
     pub fn unscoped_count(&self) -> u64 {
         let scoped: u64 = self.scopes.iter().map(|s| s.count).sum();
         self.stats
@@ -473,6 +520,7 @@ mod tests {
                 stream: &self.stream,
                 seq: self.seq,
                 line: line.as_bytes(),
+                raw_len: line.len() as u64 + 1,
             };
             self.aggregator.record(&Event {
                 kind,
@@ -613,6 +661,14 @@ mod tests {
             .expect("overflow behavior");
         assert_eq!(overflow.stats.count, extra as u64);
         assert!(overflow.exemplars.len() <= FIRST_EXEMPLARS + SAMPLED_EXEMPLARS);
+    }
+
+    #[test]
+    fn phases_round_trip_through_scope_ids() {
+        let example = Phase::Example(BehaviorId::of(Kind::TestExample, b"passes"));
+        for phase in [Phase::Setup, example, Phase::Between, Phase::Teardown] {
+            assert_eq!(Phase::from_scope_id(phase.scope_id()), phase);
+        }
     }
 
     #[test]

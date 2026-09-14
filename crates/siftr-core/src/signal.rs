@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::aggregate::{BehaviorStats, RunStats, overflow_behavior};
+use crate::aggregate::{BehaviorStats, Phase, RunStats, overflow_behavior};
 use crate::baseline::Baseline;
 use crate::behavior::{BehaviorId, Kind};
 use crate::num::{median, round_sig};
@@ -111,10 +111,10 @@ pub struct BaselineNumbers {
     pub failures: Option<u32>,
 }
 
-/// Where a signal's change happened: inside one example, or before any example ran (`scope: None`).
+/// Where a signal's change happened: inside one example, or in one phase outside them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Attribution {
-    pub scope: Option<BehaviorId>,
+    pub scope: Phase,
     /// The measure within that scope, now.
     pub current: f64,
     /// The measure within that scope, median across baseline runs.
@@ -145,16 +145,18 @@ pub struct Signal {
 }
 
 impl Signal {
-    /// Changed before the first example: the environment (a cold DB, schema load), not the code under test.
-    pub fn setup(&self) -> bool {
-        self.attribution.is_some_and(|a| a.scope.is_none())
+    /// Changed outside every example (setup, between examples, teardown): the environment or suite hooks,
+    /// e.g. a cold DB's schema load, not the code under test.
+    pub fn outside_examples(&self) -> bool {
+        self.attribution.is_some_and(|a| a.scope.outside_examples())
     }
 }
 
+/// The tier of changes outside every example.
 pub const SETUP_TIER: u8 = 5;
 
 /// Signals ranked by group, each group's headline first.
-pub fn detect(current: &RunStats, baseline: &Baseline<'_>) -> Vec<Signal> {
+pub fn detect<K>(current: &RunStats, baseline: &Baseline<'_, K>) -> Vec<Signal> {
     let runs: Vec<&RunStats> = baseline.iter().collect();
     if runs.is_empty() {
         return Vec::new();
@@ -186,13 +188,8 @@ pub fn value(run: &RunStats, behavior: BehaviorId, name: &str) -> Option<f64> {
     }
 }
 
-/// The measure `name` of `behavior` within `scope` of `run` (`None`: outside every scope); zero when absent.
-pub fn scoped_value(
-    run: &RunStats,
-    behavior: BehaviorId,
-    scope: Option<BehaviorId>,
-    name: &str,
-) -> f64 {
+/// The measure `name` of `behavior` within `scope` of `run`; zero when absent.
+pub fn scoped_value(run: &RunStats, behavior: BehaviorId, scope: Phase, name: &str) -> f64 {
     let Some(b) = run.get(behavior) else {
         return 0.0;
     };
@@ -206,8 +203,8 @@ pub fn scoped_value(
                 .map_or(0.0, |(_, sum)| *sum)
         }
     };
-    match scope {
-        Some(scope) => b.scopes.iter().find(|s| s.scope == scope).map_or(0.0, sum),
+    match scope.scope_id() {
+        Some(id) => b.scopes.iter().find(|s| s.scope == id).map_or(0.0, sum),
         None if name == measure::COUNT => b.unscoped_count() as f64,
         None => {
             let total = b.measure(name).map_or(0.0, |m| m.sum);
@@ -263,8 +260,8 @@ fn tier(kind: SignalKind, class: Class) -> u8 {
 /// Signals sharing a key form one group.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Key {
-    /// An example, or the setup phase before any example (`None`).
-    Scope(Option<BehaviorId>),
+    /// An example, or one phase outside them.
+    Scope(Phase),
     /// Stderr has no per-example attribution: the same message from different call sites groups by prefix.
     Prefix(String),
     Behavior(BehaviorId),
@@ -599,7 +596,7 @@ impl<'a> Comparison<'a> {
     ) {
         let mut tier = tier(kind, class);
         let (key, attribution) = match class {
-            Class::Example => (Key::Scope(Some(id)), None),
+            Class::Example => (Key::Scope(Phase::Example(id)), None),
             _ => {
                 let owners = self.owners(id, class, name);
                 match owners.as_slice() {
@@ -614,7 +611,7 @@ impl<'a> Comparison<'a> {
                             current: scoped_value(self.current, id, *owner, name),
                             baseline: median(&baseline_values).unwrap_or(0.0),
                         };
-                        if owner.is_none() {
+                        if owner.outside_examples() {
                             tier = SETUP_TIER;
                         }
                         (Key::Scope(*owner), Some(attribution))
@@ -652,20 +649,20 @@ impl<'a> Comparison<'a> {
         });
     }
 
-    /// The scopes whose own measure moved against the baseline median; `None` is the setup phase.
+    /// The scopes whose own measure moved against the baseline median.
     /// Unknown (empty) when any run couldn't attribute every occurrence.
-    fn owners(&self, id: BehaviorId, class: Class, name: &str) -> Vec<Option<BehaviorId>> {
+    fn owners(&self, id: BehaviorId, class: Class, name: &str) -> Vec<Phase> {
         let all = || std::iter::once(self.current).chain(self.runs.iter().copied());
         if all().any(|run| run.get(id).is_some_and(|b| b.unattributed > 0)) {
             return Vec::new();
         }
-        let mut scopes: BTreeSet<Option<BehaviorId>> = all()
+        let mut scopes: BTreeSet<Phase> = all()
             .filter_map(|run| run.get(id))
-            .flat_map(|b| b.scopes.iter().map(|s| Some(s.scope)))
+            .flat_map(|b| b.scopes.iter().map(|s| Phase::from_scope_id(Some(s.scope))))
             .collect();
         // Only a test run has a setup phase, and only side-channel SQL and requests are attributed to examples.
         if self.reporter && matches!(class, Class::Sql | Class::Request) {
-            scopes.insert(None);
+            scopes.insert(Phase::Setup);
         }
         scopes
             .into_iter()

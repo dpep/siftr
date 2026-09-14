@@ -217,7 +217,8 @@ fn outcomes(store: &Store, run: &RunRecord, signals: &[StoredSignal]) -> Result<
         .into_iter()
         .map(|id| store.run_stats(id))
         .collect::<Result<Vec<RunStats>>>()?;
-    let baseline = Baseline::from_runs(&baseline_stats);
+    let own = store.run_stats(run.id)?;
+    let baseline = Baseline::from_runs(&own, baseline_stats.iter().enumerate());
     let fires = |id: RunId| -> Result<HashSet<Key>> {
         Ok(detect(&store.run_stats(id)?, &baseline)
             .iter()

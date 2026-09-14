@@ -3,6 +3,7 @@ use std::time::Duration;
 use super::*;
 use crate::aggregate::{DurationSummary, Measure, MeasureStats, ScopeStats, Stats};
 use crate::behavior::Behavior;
+use crate::interpret::rspec::summary;
 
 /// A behavior as one run saw it.
 #[derive(Clone)]
@@ -58,9 +59,13 @@ impl B {
         self
     }
     /// `count` occurrences inside `scope`, plus `queries` summed there when given.
-    fn within(mut self, scope: &B, count: u64, queries: Option<f64>) -> Self {
+    fn within(self, scope: &B, count: u64, queries: Option<f64>) -> Self {
+        self.in_phase(Phase::Example(scope.id()), count, queries)
+    }
+    /// `count` occurrences in a phase other than setup, plus `queries` summed there when given.
+    fn in_phase(mut self, phase: Phase, count: u64, queries: Option<f64>) -> Self {
         self.0.scopes.push(ScopeStats {
-            scope: scope.id(),
+            scope: phase.scope_id().expect("setup is what no scope holds"),
             count,
             sums: queries
                 .map(|q| ("queries".to_owned(), q))
@@ -88,11 +93,36 @@ fn run(behaviors: &[B]) -> RunStats {
     behaviors.iter().map(|b| b.0.clone()).collect()
 }
 
+/// A test summary: `examples` ran of `expected` loaded, with `errors` outside examples.
+fn summary(examples: f64, expected: f64, errors: f64) -> B {
+    let mut s = b(Kind::TestSummary, "rspec");
+    s.0.measures = [
+        (summary::ERRORS_OUTSIDE_OF_EXAMPLES, errors),
+        (summary::EXAMPLES, examples),
+        (summary::EXPECTED, expected),
+    ]
+    .map(|(name, sum)| Measure {
+        name: name.to_owned(),
+        stats: MeasureStats {
+            count: 1,
+            sum,
+            min: sum,
+            max: sum,
+        },
+    })
+    .to_vec();
+    s
+}
+
+fn baseline<'a>(current: &RunStats, runs: &'a [RunStats]) -> Baseline<'a, usize> {
+    Baseline::from_runs(current, runs.iter().enumerate())
+}
+
 /// `(group, headline, kind, measure, current, confidence)` per signal.
 type Row = (u32, bool, SignalKind, String, f64, f64);
 
 fn rows(current: &RunStats, baseline: &[RunStats]) -> Vec<Row> {
-    detect(current, &Baseline::from_runs(baseline))
+    detect(current, &self::baseline(current, baseline))
         .into_iter()
         .map(|s| {
             (
@@ -171,12 +201,12 @@ fn an_n_plus_one_is_one_group_headed_by_the_request() {
             row(1, false, Disappeared, "count", 0.0, 0.86),
         ]
     );
-    let signals = detect(&current, &Baseline::from_runs(&baseline));
+    let signals = detect(&current, &self::baseline(&current, &baseline));
     let sql = &signals[1];
     assert_eq!(
         sql.attribution,
         Some(Attribution {
-            scope: Some(show.id()),
+            scope: Phase::Example(show.id()),
             current: 8.0,
             baseline: 0.0
         }),
@@ -217,10 +247,10 @@ fn changes_before_the_first_example_form_one_setup_group_ranked_last() {
         metadata.count(2),
         b(Kind::DbQuery, "CREATE TABLE users"),
     ]);
-    let signals = detect(&current, &Baseline::from_runs(&baseline));
+    let signals = detect(&current, &self::baseline(&current, &baseline));
     let summary: Vec<_> = signals
         .iter()
-        .map(|s| (s.group, s.kind, s.tier, s.setup()))
+        .map(|s| (s.group, s.kind, s.tier, s.outside_examples()))
         .collect();
     assert_eq!(
         summary,
@@ -244,12 +274,12 @@ fn a_known_flaky_failure_is_not_an_error_but_a_new_exception_is() {
     ];
     let same = run(&[example.clone().failed(), timeout]);
     assert!(
-        detect(&same, &Baseline::from_runs(&flaky_baseline))
+        detect(&same, &baseline(&same, &flaky_baseline))
             .iter()
             .all(|s| s.kind != SignalKind::Error)
     );
     let different = run(&[example.clone().failed(), mismatch]);
-    let error = detect(&different, &Baseline::from_runs(&flaky_baseline))
+    let error = detect(&different, &baseline(&different, &flaky_baseline))
         .into_iter()
         .find(|s| s.kind == SignalKind::Error)
         .expect("a different exception is news");
@@ -343,7 +373,7 @@ fn unattributed_occurrences_leave_a_signal_ungrouped() {
         3
     ];
     let current = run(&[show, other, partial]);
-    let signals = detect(&current, &Baseline::from_runs(&baseline));
+    let signals = detect(&current, &self::baseline(&current, &baseline));
     let sql = signals
         .iter()
         .find(|s| s.measure == "count")
@@ -353,4 +383,90 @@ fn unattributed_occurrences_leave_a_signal_ungrouped() {
         signals.iter().all(|s| s.measure != "queries"),
         "an example's query total isn't claimed from partial attribution"
     );
+}
+
+#[test]
+fn changes_after_the_last_example_are_teardown_ranked_with_setup() {
+    use SignalKind::*;
+    let example = b(Kind::TestExample, "passes").seq(1);
+    let metadata = b(Kind::DbQuery, "ar_internal_metadata Load");
+    let runs = vec![run(&[example.clone(), metadata.clone()]); 3];
+    let current = run(&[
+        example.clone().failed(),
+        metadata.count(2),
+        b(Kind::DbQuery, "Job Load").in_phase(Phase::Teardown, 1, None),
+    ]);
+    let phases: Vec<_> = detect(&current, &baseline(&current, &runs))
+        .iter()
+        .map(|s| (s.group, s.kind, s.tier, s.attribution.map(|a| a.scope)))
+        .collect();
+    assert_eq!(
+        phases,
+        [
+            (1, Error, 1, None),
+            (2, New, SETUP_TIER, Some(Phase::Teardown)),
+            (3, Frequency, SETUP_TIER, Some(Phase::Setup)),
+        ]
+    );
+}
+
+/// hunt-blind: one run that didn't run the whole suite used to silence every count rule for ten runs.
+#[test]
+fn one_incomplete_run_in_the_baseline_does_not_blind_the_rest() {
+    let [a, c, d, show] = ["a", "c", "d", "shows"].map(|t| b(Kind::TestExample, t));
+    let request = |q| {
+        b(Kind::HttpRequest, "UsersController#show")
+            .within(&show, 1, Some(q))
+            .queries(q)
+    };
+    let suite = |ran: f64, queries| {
+        run(&[
+            summary(ran, ran, 0.0),
+            a.clone(),
+            c.clone(),
+            d.clone(),
+            show.clone(),
+            request(queries),
+        ])
+    };
+    let (clean, current) = (suite(4.0, 3.0), suite(4.0, 10.0));
+    let incomplete = [
+        ("killed", run(std::slice::from_ref(&a))),
+        (
+            "load error",
+            run(&[summary(3.0, 3.0, 1.0), a.clone(), c.clone(), d.clone()]),
+        ),
+        (
+            "fail-fast",
+            run(&[summary(2.0, 4.0, 0.0), a.clone(), c.clone()]),
+        ),
+    ];
+    for (name, incomplete) in incomplete {
+        let runs = [clean.clone(), incomplete, clean.clone(), clean.clone()];
+        let comparable = baseline(&current, &runs);
+        assert_eq!(
+            comparable.keys().copied().collect::<Vec<_>>(),
+            [0, 2, 3],
+            "{name}"
+        );
+        assert_eq!(
+            rows(&current, &runs),
+            [row(1, true, SignalKind::Frequency, "queries", 10.0, 0.8)],
+            "{name}"
+        );
+    }
+}
+
+/// hunt #4: after an upgrade, runs recorded without test results made every example NEW.
+#[test]
+fn runs_recorded_before_test_results_were_read_are_no_baseline_for_a_test_run() {
+    let output = b(Kind::Log, "1 example, 0 failures").stdout();
+    let old = vec![run(std::slice::from_ref(&output)); 3];
+    let current = run(&[
+        summary(1.0, 1.0, 0.0),
+        b(Kind::TestExample, "passes").seq(1),
+        output,
+    ]);
+    assert_eq!(baseline(&current, &old).skipped().len(), 3);
+    assert_eq!(rows(&current, &old), []);
 }

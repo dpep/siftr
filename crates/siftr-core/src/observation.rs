@@ -62,6 +62,9 @@ pub struct Observation<'a> {
     pub seq: u64,
     /// The line without its terminator. Bytes, because logs are not always UTF-8.
     pub line: &'a [u8],
+    /// Bytes the line took in the stream, terminator included. `line` can be shorter: `\r` is stripped
+    /// and overlong lines are clipped, so byte offsets into the stream must count this instead.
+    pub raw_len: u64,
 }
 
 /// Longer lines are truncated, so a stream with no newlines can't grow memory without bound.
@@ -72,6 +75,8 @@ pub const MAX_LINE: usize = 1 << 20;
 #[derive(Debug, Default)]
 pub struct LineSplitter {
     carry: Vec<u8>,
+    /// Bytes of the partial line so far, including any past what `carry` keeps.
+    carry_len: u64,
     seq: u64,
 }
 
@@ -80,20 +85,33 @@ impl LineSplitter {
         Self::default()
     }
 
-    /// Calls `on_line(seq, line)` for every line completed by `chunk`.
-    pub fn feed(&mut self, chunk: &[u8], mut on_line: impl FnMut(u64, &[u8])) {
+    /// Calls `on_line` for every line of `stream` completed by `chunk`.
+    pub fn feed(
+        &mut self,
+        stream: &Stream,
+        chunk: &[u8],
+        mut on_line: impl FnMut(Observation<'_>),
+    ) {
         let mut rest = chunk;
         while let Some(newline) = rest.iter().position(|&b| b == b'\n') {
             let (head, tail) = rest.split_at(newline);
             rest = &tail[1..];
             self.seq += 1;
-            if self.carry.is_empty() {
-                on_line(self.seq, clip(head));
+            let raw_len = self.carry_len + head.len() as u64 + 1;
+            let line = if self.carry.is_empty() {
+                head
             } else {
                 self.keep(head);
-                on_line(self.seq, clip(&self.carry));
-                self.carry.clear();
-            }
+                &self.carry
+            };
+            on_line(Observation {
+                stream,
+                seq: self.seq,
+                line: clip(line),
+                raw_len,
+            });
+            self.carry.clear();
+            self.carry_len = 0;
         }
         self.keep(rest);
     }
@@ -102,14 +120,21 @@ impl LineSplitter {
         let room = MAX_LINE.saturating_sub(self.carry.len());
         self.carry
             .extend_from_slice(&bytes[..bytes.len().min(room)]);
+        self.carry_len += bytes.len() as u64;
     }
 
     /// Emits the trailing unterminated line, if any. Call at end of stream.
-    pub fn finish(&mut self, mut on_line: impl FnMut(u64, &[u8])) {
-        if !self.carry.is_empty() {
+    pub fn finish(&mut self, stream: &Stream, mut on_line: impl FnMut(Observation<'_>)) {
+        if self.carry_len > 0 {
             self.seq += 1;
-            on_line(self.seq, clip(&self.carry));
+            on_line(Observation {
+                stream,
+                seq: self.seq,
+                line: clip(&self.carry),
+                raw_len: self.carry_len,
+            });
             self.carry.clear();
+            self.carry_len = 0;
         }
     }
 
@@ -128,31 +153,41 @@ fn clip(line: &[u8]) -> &[u8] {
 mod tests {
     use super::*;
 
-    fn split(chunks: &[&[u8]]) -> Vec<(u64, String)> {
+    /// `(seq, line, raw_len)` per line.
+    fn split(chunks: &[&[u8]]) -> Vec<(u64, String, u64)> {
+        let stream = Stream::Stdout;
         let mut splitter = LineSplitter::new();
         let mut lines = Vec::new();
-        let mut push =
-            |seq, line: &[u8]| lines.push((seq, String::from_utf8_lossy(line).into_owned()));
+        let mut push = |obs: Observation<'_>| {
+            let line = String::from_utf8_lossy(obs.line).into_owned();
+            lines.push((obs.seq, line, obs.raw_len));
+        };
         for chunk in chunks {
-            splitter.feed(chunk, &mut push);
+            splitter.feed(&stream, chunk, &mut push);
         }
-        splitter.finish(&mut push);
+        splitter.finish(&stream, &mut push);
         lines
     }
 
     #[test]
     fn joins_lines_across_chunks_and_numbers_them() {
         let lines = split(&[b"one\ntw", b"o\r\n\nthr", b"ee"]);
-        let expected = [(1, "one"), (2, "two"), (3, ""), (4, "three")];
-        assert_eq!(lines, expected.map(|(seq, l)| (seq, l.to_owned())));
+        let expected = [(1, "one", 4), (2, "two", 5), (3, "", 1), (4, "three", 5)];
+        assert_eq!(
+            lines,
+            expected.map(|(seq, l, raw)| (seq, l.to_owned(), raw))
+        );
     }
 
     #[test]
-    fn truncates_overlong_lines_without_renumbering() {
+    fn truncates_overlong_lines_without_renumbering_or_losing_their_length() {
         let long = vec![b'x'; MAX_LINE + 10];
         let lines = split(&[&long[..MAX_LINE / 2], &long[MAX_LINE / 2..], b"\nnext\n"]);
-        let shape: Vec<_> = lines.iter().map(|(seq, line)| (*seq, line.len())).collect();
-        assert_eq!(shape, [(1, MAX_LINE), (2, 4)]);
+        let shape: Vec<_> = lines
+            .iter()
+            .map(|(seq, line, raw)| (*seq, line.len(), *raw))
+            .collect();
+        assert_eq!(shape, [(1, MAX_LINE, MAX_LINE as u64 + 11), (2, 4, 5)]);
     }
 
     #[test]

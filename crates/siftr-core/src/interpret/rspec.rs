@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::{Claim, Event, Interpreter, Outcome, generic, literal, rails};
-use crate::aggregate::Aggregator;
+use crate::aggregate::{Aggregator, Phase};
 use crate::behavior::{BehaviorId, Kind};
 use crate::normalize::Normalizer;
 use crate::observation::{Observation, Stream};
@@ -18,6 +18,18 @@ use crate::observation::{Observation, Stream};
 pub const EVENTS_STREAM: &str = "rspec-events";
 /// `Stream::File` name of the run's Rails log slice; `log_offset`s count bytes from its first byte.
 pub const LOG_STREAM: &str = "log/test.log";
+
+/// Measures of the `test.summary` behavior.
+pub mod summary {
+    /// Examples that ran, pending ones included.
+    pub const EXAMPLES: &str = "examples";
+    /// Examples loaded to run, from the reporter's start: more than [`EXAMPLES`] when the run stopped early.
+    pub const EXPECTED: &str = "expected";
+    pub const FAILURES: &str = "failures";
+    pub const PENDING: &str = "pending";
+    /// Load errors and hook errors: RSpec still runs the other files when one fails to load.
+    pub const ERRORS_OUTSIDE_OF_EXAMPLES: &str = "errors_outside_of_examples";
+}
 
 /// Identity of a `test.example`: `<spec file> # <full description>`.
 ///
@@ -29,8 +41,10 @@ pub struct Rspec {
     scopes: Scopes,
     /// The running example's RSpec id and the log offset it started at.
     started: Option<(String, u64)>,
+    /// Examples the reporter's start said it would run, until its summary.
+    expected: Option<u64>,
     log: rails::Log,
-    /// Offset of the next log line. Exact for `\n` endings and lines under `MAX_LINE`, as Rails writes.
+    /// Offset of the next log line.
     log_offset: u64,
     template: Vec<u8>,
 }
@@ -59,9 +73,9 @@ impl Rspec {
         match &**name {
             EVENTS_STREAM => self.event(obs, normalizer, emit),
             LOG_STREAM => {
-                let scope = self.scopes.at(self.log_offset);
-                self.log_offset += obs.line.len() as u64 + 1;
-                self.log.line(obs, scope, normalizer, emit);
+                let phase = self.scopes.at(self.log_offset);
+                self.log_offset += obs.raw_len;
+                self.log.line(obs, phase.scope_id(), normalizer, emit);
             }
             _ => return Claim::Declined,
         }
@@ -79,11 +93,12 @@ impl Rspec {
             return generic::log(obs, None, normalizer, emit);
         };
         match record {
+            Record::Start { expected } => self.expected = expected,
             Record::ExampleStarted { id, log_offset } => {
                 self.started = log_offset.map(|offset| (id, offset));
             }
             Record::Example(example) => self.example(obs, &example, emit),
-            Record::Summary(summary) => summary.emit(obs, emit),
+            Record::Summary(summary) => summary.emit(obs, self.expected.take(), emit),
             Record::Other => {}
         }
     }
@@ -135,6 +150,9 @@ impl Rspec {
 #[derive(Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum Record {
+    Start {
+        expected: Option<u64>,
+    },
     ExampleStarted {
         id: String,
         log_offset: Option<u64>,
@@ -200,8 +218,19 @@ struct Summary {
 impl Summary {
     const TEMPLATE: &[u8] = b"rspec";
 
-    fn emit(&self, obs: Observation<'_>, emit: &mut impl FnMut(&Event<'_>)) {
+    fn emit(&self, obs: Observation<'_>, expected: Option<u64>, emit: &mut impl FnMut(&Event<'_>)) {
         let failed = self.failures > 0 || self.errors_outside_of_examples > 0;
+        let measures = [
+            (summary::EXAMPLES, self.examples as f64),
+            (summary::FAILURES, self.failures as f64),
+            (summary::PENDING, self.pending as f64),
+            (
+                summary::ERRORS_OUTSIDE_OF_EXAMPLES,
+                self.errors_outside_of_examples as f64,
+            ),
+            (summary::EXPECTED, expected.unwrap_or(0) as f64),
+        ];
+        let known = if expected.is_some() { 5 } else { 4 };
         emit(&Event {
             kind: Kind::TestSummary,
             template: literal(Self::TEMPLATE),
@@ -214,15 +243,7 @@ impl Summary {
                 Outcome::Success
             }),
             scope: None,
-            measures: &[
-                ("examples", self.examples as f64),
-                ("failures", self.failures as f64),
-                ("pending", self.pending as f64),
-                (
-                    "errors_outside_of_examples",
-                    self.errors_outside_of_examples as f64,
-                ),
-            ],
+            measures: &measures[..known],
         });
     }
 }
@@ -253,12 +274,14 @@ impl Scopes {
         }
     }
 
-    fn at(&self, offset: u64) -> Option<BehaviorId> {
+    fn at(&self, offset: u64) -> Phase {
         let i = self.0.partition_point(|scope| scope.end <= offset);
-        self.0
-            .get(i)
-            .filter(|scope| scope.start <= offset)
-            .map(|scope| scope.example)
+        match self.0.get(i) {
+            Some(scope) if scope.start <= offset => Phase::Example(scope.example),
+            _ if i == 0 => Phase::Setup,
+            None => Phase::Teardown,
+            Some(_) => Phase::Between,
+        }
     }
 }
 
@@ -266,6 +289,7 @@ impl Scopes {
 mod tests {
     use super::super::fixtures::interpret;
     use super::*;
+    use crate::observation::MAX_LINE;
 
     fn example(id: &str, description: &str, line: u32, status: &str) -> String {
         format!(
@@ -364,10 +388,85 @@ mod tests {
         );
     }
 
+    /// The phase of each log line in `parts`: `(Some(name), bytes)` is inside example `A <name>`, `(None, bytes)` outside.
+    fn phases(parts: &[(Option<&str>, &[u8])]) -> Vec<Phase> {
+        let mut events = Vec::new();
+        let mut offset = 0;
+        for (i, (example, bytes)) in (1..).zip(parts) {
+            let end = offset + bytes.len();
+            if let Some(name) = example {
+                let id = format!("./a_spec.rb[1:{i}]");
+                events.push(format!(
+                    r#"{{"event":"example_started","id":"{id}","log_offset":{offset}}}"#
+                ));
+                events.push(format!(
+                    r#"{{"event":"example","id":"{id}","full_description":"A {name}","file_path":"./a_spec.rb","status":"passed","run_time":0.1,"log_offset":{end}}}"#
+                ));
+            }
+            offset = end;
+        }
+        let log: Vec<u8> = parts
+            .iter()
+            .flat_map(|(_, bytes)| bytes.iter().copied())
+            .collect();
+        interpret(&[
+            (EVENTS_STREAM, events.join("\n").as_bytes()),
+            (LOG_STREAM, &log),
+        ])
+        .into_iter()
+        .filter(|s| s.kind == Kind::Log)
+        .map(|s| Phase::from_scope_id(s.scope))
+        .collect()
+    }
+
+    fn example_named(name: &str) -> Phase {
+        Phase::Example(BehaviorId::of(
+            Kind::TestExample,
+            format!("./a_spec.rb # A {name}").as_bytes(),
+        ))
+    }
+
+    #[test]
+    fn lines_outside_examples_are_setup_between_or_teardown() {
+        let got = phases(&[
+            (None, b"boot\n"),
+            (Some("first"), b"in first\n"),
+            (None, b"before context\n"),
+            (Some("second"), b"in second\n"),
+            (None, b"after suite\n"),
+        ]);
+        let expected = [
+            Phase::Setup,
+            example_named("first"),
+            Phase::Between,
+            example_named("second"),
+            Phase::Teardown,
+        ];
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn crlf_and_overlong_lines_keep_later_lines_in_their_own_example() {
+        let long = [vec![b'x'; MAX_LINE + 10], b"\n".to_vec()].concat();
+        let bodies: [(&str, &[u8]); 2] = [("crlf", b"one\r\ntwo\r\nthree\r\n"), ("long", &long)];
+        for (name, body) in bodies {
+            let got = phases(&[
+                (None, b"boot\n"),
+                (Some("first"), body),
+                (Some("second"), b"in second\n"),
+            ]);
+            assert_eq!(got.last(), Some(&example_named("second")), "{name}");
+        }
+    }
+
     #[test]
     fn the_summary_carries_counts_and_fails_on_errors_outside_examples() {
-        let summary = r#"{"event":"summary","duration":0.5,"load_time":0.8,"examples":3,"failures":0,"pending":1,"errors_outside_of_examples":1}"#;
-        let [seen] = interpret(&[(EVENTS_STREAM, summary.as_bytes())])
+        let events = [
+            r#"{"event":"start","expected":4,"load_time":0.8}"#,
+            r#"{"event":"summary","duration":0.5,"load_time":0.8,"examples":3,"failures":0,"pending":1,"errors_outside_of_examples":1}"#,
+        ]
+        .join("\n");
+        let [seen] = interpret(&[(EVENTS_STREAM, events.as_bytes())])
             .try_into()
             .expect("one event");
         assert_eq!(seen.kind, Kind::TestSummary);
@@ -379,7 +478,8 @@ mod tests {
                 ("examples", 3.0),
                 ("failures", 0.0),
                 ("pending", 1.0),
-                ("errors_outside_of_examples", 1.0)
+                ("errors_outside_of_examples", 1.0),
+                ("expected", 4.0)
             ]
         );
     }

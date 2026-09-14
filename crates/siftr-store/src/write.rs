@@ -177,7 +177,7 @@ impl Store {
                     b.failures,
                     s.exception,
                     a.is_some(),
-                    a.and_then(|a| a.scope).map(|id| id.to_string()),
+                    a.and_then(|a| a.scope.scope_id()).map(|id| id.to_string()),
                     a.map(|a| a.current),
                     a.map(|a| a.baseline),
                     s.confidence,

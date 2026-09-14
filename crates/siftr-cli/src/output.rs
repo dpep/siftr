@@ -94,7 +94,7 @@ pub fn groups(signals: &[StoredSignal]) -> Vec<Group<'_>> {
             members.sort_by_key(|s| (!s.signal.headline, s.id));
             Group {
                 rank,
-                setup: members[0].signal.setup(),
+                setup: members[0].signal.outside_examples(),
                 members,
             }
         })
@@ -283,7 +283,7 @@ pub fn change(stored: &StoredSignal) -> String {
         }
     };
     if let Some(a) = s.attribution {
-        if a.scope.is_none() {
+        if a.scope.outside_examples() {
             text.push_str(" (before the first example)");
         } else if (a.current, Some(a.baseline)) != (s.current, b.median) {
             text.push_str(&format!(
@@ -390,7 +390,7 @@ pub fn signal_json(stored: &StoredSignal) -> Value {
         "exception": s.exception,
         "attribution": s.attribution.map(|a| json!({
             "scope": stored.scope.as_ref().map(behavior_json),
-            "setup": a.scope.is_none(),
+            "setup": a.scope.outside_examples(),
             "current": a.current,
             "baseline": a.baseline,
         })),

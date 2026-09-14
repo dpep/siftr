@@ -51,17 +51,12 @@ pub(super) fn interpret(streams: &[(&str, &[u8])]) -> Vec<Seen> {
     for (name, bytes) in streams {
         let stream = Stream::File((*name).into());
         let mut splitter = LineSplitter::new();
-        let mut observe = |seq, line: &[u8]| {
-            let obs = Observation {
-                stream: &stream,
-                seq,
-                line,
-            };
+        let mut observe = |obs: Observation<'_>| {
             let claim = rspec.interpret(obs, &mut normalizer, &mut emit);
-            assert_eq!(claim, Claim::Claimed, "{name} line {seq}");
+            assert_eq!(claim, Claim::Claimed, "{name} line {}", obs.seq);
         };
-        splitter.feed(bytes, &mut observe);
-        splitter.finish(&mut observe);
+        splitter.feed(&stream, bytes, &mut observe);
+        splitter.finish(&stream, &mut observe);
     }
     seen
 }

@@ -9,8 +9,8 @@ use anyhow::{Result, bail};
 use rusqlite::types::Type;
 use rusqlite::{OptionalExtension, Row, params};
 use siftr_core::aggregate::{
-    BehaviorStats, DurationSummary, Exemplar, Measure, MeasureStats, RunStats, ScopeStats, Stats,
-    overflow_behavior,
+    BehaviorStats, DurationSummary, Exemplar, Measure, MeasureStats, Phase, RunStats, ScopeStats,
+    Stats, overflow_behavior,
 };
 use siftr_core::behavior::{Behavior, BehaviorId};
 use siftr_core::context::Context;
@@ -373,10 +373,10 @@ fn stored_signal(row: &Row<'_>) -> rusqlite::Result<StoredSignal> {
     };
     let attribution = match row.get::<_, bool>(12)? {
         true => Some(Attribution {
-            scope: match row.get::<_, Option<String>>(13)? {
+            scope: Phase::from_scope_id(match row.get::<_, Option<String>>(13)? {
                 Some(_) => Some(parsed(row, 13)?),
                 None => None,
-            },
+            }),
             current: row.get::<_, Option<f64>>(14)?.unwrap_or(0.0),
             baseline: row.get::<_, Option<f64>>(15)?.unwrap_or(0.0),
         }),

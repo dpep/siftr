@@ -83,6 +83,7 @@ mod tests {
             stream: &stream,
             seq: 1,
             line,
+            raw_len: line.len() as u64 + 1,
         };
         let _ = Generic.observe(obs, &mut Normalizer::new(), &mut aggregator);
         let stats = aggregator.finish()[0].stats;

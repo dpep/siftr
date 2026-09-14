@@ -1,0 +1,52 @@
+
+While loading ./spec/requests/users_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.
+Failure/Error: __send__(method, file)
+
+SyntaxError:
+  --> ~/code/lib/rust/siftr/dogfood/rails_demo/spec/requests/users_spec.rb
+
+  Unmatched `(', missing `)' ?
+
+    26  RSpec.describe "Users broken" do
+  [0m  27    it "never loads" do
+  [0m> 28  [1;3m    expect(1).to eq(1
+  [0m  29    end
+  [0m  30  end
+  [0m
+  [1m~/code/lib/rust/siftr/dogfood/rails_demo/spec/requests/users_spec.rb:29: syntax error found ([1;4mSyntaxError[m[1m)[m
+  [1m  27 |   it "never loads" do[m
+  [1m  28 |     expect(1).to eq(1[m
+  [1m> 29 |   end[m
+  [1m     |   ^~~ unexpected 'end'; expected a `)` to close the arguments[m
+  [1m  30 | end[m
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:2144:in 'Kernel#load'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:2144:in 'RSpec::Core::Configuration#load_file_handling_errors'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1643:in 'block in RSpec::Core::Configuration#load_spec_files'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1641:in 'Array#each'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1641:in 'RSpec::Core::Configuration#load_spec_files'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:102:in 'RSpec::Core::Runner#setup'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:86:in 'RSpec::Core::Runner#run'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:71:in 'RSpec::Core::Runner.run'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:45:in 'RSpec::Core::Runner.invoke'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/exe/rspec:4:in '<top (required)>'
+# ~/.rvm/gems/ruby-3.4.9/bin/rspec:25:in 'Kernel#load'
+# ~/.rvm/gems/ruby-3.4.9/bin/rspec:25:in '<main>'
+# ~/.rvm/gems/ruby-3.4.9/bin/ruby_executable_hooks:22:in 'Kernel#eval'
+# ~/.rvm/gems/ruby-3.4.9/bin/ruby_executable_hooks:22:in '<main>'
+# 
+#   Showing full backtrace because every line was filtered out.
+#   See docs for RSpec::Configuration#backtrace_exclusion_patterns and
+#   RSpec::Configuration#backtrace_inclusion_patterns for more information.
+.*......
+
+Pending: (Failures listed here are expected and do not affect your suite's status)
+
+  1) Comment is hidden when flagged
+     # moderation is not built yet
+     Failure/Error: expect(Comment.new).to respond_to(:hidden?)
+       expected #<Comment id: nil, body: nil, created_at: nil, post_id: nil, updated_at: nil> to respond to :hidden?
+     # ./spec/models/comment_spec.rb:10:in 'block (2 levels) in <top (required)>'
+
+Finished in 0.02562 seconds (files took 0.89888 seconds to load)
+8 examples, 0 failures, 1 pending, 1 error occurred outside of examples
+

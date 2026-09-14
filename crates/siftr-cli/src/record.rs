@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result};
 use siftr_core::analyze::{Analysis, Analyzer};
 use siftr_core::baseline::{Baseline, MAX_RUNS};
 use siftr_core::context::Context;
-use siftr_core::observation::{LineSplitter, Observation, Stream};
+use siftr_core::observation::{LineSplitter, Stream};
 use siftr_core::signal::detect;
 use siftr_store::{Capture, Finished, NewRun, RunEnd, RunId, RunRecord, Store, StoredSignal};
 
@@ -68,9 +68,7 @@ impl Recording {
         };
         let (stream, splitter) = &mut self.streams[index];
         let analyzer = &mut self.analyzer;
-        splitter.feed(bytes, |seq, line| {
-            analyzer.observe(Observation { stream, seq, line });
-        });
+        splitter.feed(stream, bytes, |obs| analyzer.observe(obs));
     }
 
     pub fn finish(self, exit_code: Option<i32>) -> Result<Recorded> {
@@ -85,12 +83,11 @@ impl Recording {
         } = self;
         let (wall, analysis) = analyze(capture, streams, analyzer, started);
 
-        let baseline = store.baseline_runs(&context, run, MAX_RUNS)?;
-        let signals = detect(
-            &analysis.stats(),
-            &Baseline::from_runs(baseline.iter().map(|(_, stats)| stats)),
-        );
-        let baseline_runs: Vec<RunId> = baseline.iter().map(|(id, _)| *id).collect();
+        let recent = store.baseline_runs(&context, run, MAX_RUNS)?;
+        let current = analysis.stats();
+        let baseline = Baseline::from_runs(&current, recent.iter().map(|(id, stats)| (*id, stats)));
+        let signals = detect(&current, &baseline);
+        let baseline_runs: Vec<RunId> = baseline.keys().copied().collect();
         let end = RunEnd {
             wall,
             exit_code,
@@ -155,7 +152,7 @@ fn analyze(
 ) -> (Duration, Analysis) {
     let wall = started.elapsed();
     for (stream, splitter) in &mut streams {
-        splitter.finish(|seq, line| analyzer.observe(Observation { stream, seq, line }));
+        splitter.finish(stream, |obs| analyzer.observe(obs));
     }
     if let Some(capture) = capture
         && let Err(error) = capture.finish()
