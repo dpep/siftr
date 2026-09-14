@@ -86,7 +86,7 @@ fn events_index_the_captured_log_slice_across_a_rotation() {
     let (_, run) = project.run(&[]);
 
     let log = project
-        .captured(&run, "file-log_test.log.log")
+        .captured(&run, "file-log_test.log")
         .expect("log slice");
     assert_eq!(
         log, "first line\nsecond line\n",
@@ -125,7 +125,7 @@ fn a_log_that_cannot_be_placed_is_skipped_loudly_and_no_offsets_are_kept() {
         stderr.contains("log/test.log skipped: it rotated more than once"),
         "{stderr}"
     );
-    assert_eq!(project.captured(&run, "file-log_test.log.log"), None);
+    assert_eq!(project.captured(&run, "file-log_test.log"), None);
     let events = project
         .captured(&run, "file-rspec-events.log")
         .expect("events");

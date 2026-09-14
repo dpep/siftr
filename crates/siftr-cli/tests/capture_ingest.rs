@@ -49,7 +49,7 @@ fn a_scenario_is_replayed_into_the_runs_capture_byte_for_byte() {
         ("stdout.txt", "stdout.log"),
         ("stderr.txt", "stderr.log"),
         ("rspec.ndjson", "file-rspec-events.log"),
-        ("test.log", "file-log_test.log.log"),
+        ("test.log", "file-log_test.log"),
     ];
     let mut lines = 0;
     for (source, captured) in streams {
