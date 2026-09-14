@@ -478,7 +478,20 @@ fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
         writeln!(w, "       in: {}", printable(&scope.template, 100))?;
     }
     let lines: u64 = group.members.iter().map(|m| m.exemplars).sum();
-    writeln!(w, "       evidence: {}", plural(lines, "line"))
+    // What disappeared has no lines in this run: its evidence is in the baseline runs that had it, as `explain` shows.
+    let gone = group
+        .members
+        .iter()
+        .any(|m| matches!(m.signal.kind, SignalKind::Disappeared));
+    match (lines, gone) {
+        (0, true) => writeln!(w, "       evidence: in the baseline runs, not this one"),
+        (lines, true) => writeln!(
+            w,
+            "       evidence: {}, and the baseline runs for what disappeared",
+            plural(lines, "line")
+        ),
+        (lines, false) => writeln!(w, "       evidence: {}", plural(lines, "line")),
+    }
 }
 
 /// Runs oldest to newest. A range never spans a run in `named` that isn't one of `runs`: `r1…r7` beside
@@ -946,6 +959,46 @@ mod tests {
             skipped_label(&skipped, &named),
             "r5 r7 r8 r9: no test summary",
             "r6 was compared, so no r5…r9"
+        );
+    }
+
+    #[test]
+    fn a_disappearance_points_at_the_baseline_for_its_evidence() {
+        let behavior = Behavior::new(siftr_core::behavior::Kind::Log, b"cache hit for key <hex>");
+        let stored = StoredSignal {
+            id: "s1".parse().unwrap(),
+            run: "r4".parse().unwrap(),
+            behavior: behavior.clone(),
+            signal: Signal {
+                kind: SignalKind::Disappeared,
+                behavior: behavior.id,
+                measure: "count".to_owned(),
+                current: 0.0,
+                baseline: siftr_core::signal::BaselineNumbers {
+                    runs: 3,
+                    present_in: 3,
+                    median: Some(5.0),
+                    min: Some(5.0),
+                    max: Some(5.0),
+                    failures: None,
+                },
+                exception: None,
+                attribution: None,
+                confidence: 0.8,
+                tier: 4,
+                group: 1,
+                headline: true,
+            },
+            scope: None,
+            exemplars: 0,
+        };
+        let signals = [stored];
+        let mut rendered = Vec::new();
+        group_lines(&mut rendered, &groups(&signals)[0]).unwrap();
+        let rendered = String::from_utf8(rendered).unwrap();
+        assert!(
+            rendered.ends_with("       evidence: in the baseline runs, not this one\n"),
+            "{rendered}"
         );
     }
 
