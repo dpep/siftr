@@ -56,6 +56,14 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             "{}: {lines} lines, {total} behaviors, {}",
             run.id, run.command
         )?;
+        if run.overflow_events > 0 {
+            writeln!(
+                w,
+                "note: {} events of behaviors past the {}-behavior cap count as one overflow behavior",
+                run.overflow_events,
+                siftr_core::aggregate::MAX_BEHAVIORS
+            )?;
+        }
         writeln!(
             w,
             "  {:>7} {:>6} {:>8} {:>8} {:>8}  BEHAVIOR",

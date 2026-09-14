@@ -21,10 +21,7 @@ pub struct Analysis {
 
 impl Analysis {
     pub fn stats(&self) -> RunStats {
-        self.aggregates
-            .iter()
-            .map(|a| (a.behavior.id, a.stats))
-            .collect()
+        RunStats::from_aggregates(&self.aggregates)
     }
 }
 

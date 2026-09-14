@@ -1,5 +1,6 @@
 //! Queries behind the CLI's read commands.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::str::FromStr;
 use std::time::{Duration, UNIX_EPOCH};
@@ -7,11 +8,14 @@ use std::time::{Duration, UNIX_EPOCH};
 use anyhow::{Result, bail};
 use rusqlite::types::Type;
 use rusqlite::{OptionalExtension, Row, params};
-use siftr_core::aggregate::{DurationSummary, Exemplar, RunStats, Stats};
-use siftr_core::baseline::BehaviorBaseline;
+use siftr_core::aggregate::{
+    BehaviorStats, DurationSummary, Exemplar, Measure, MeasureStats, RunStats, ScopeStats, Stats,
+    overflow_behavior,
+};
 use siftr_core::behavior::{Behavior, BehaviorId};
 use siftr_core::context::Context;
-use siftr_core::signal::Signal;
+use siftr_core::observation::Stream;
+use siftr_core::signal::{Attribution, BaselineNumbers, Signal};
 
 use crate::write::int;
 use crate::{RunEnd, RunId, RunRecord, SignalId, Store, StoredSignal};
@@ -24,34 +28,68 @@ pub enum Order {
     Time,
 }
 
-const RUN_COLUMNS: &str =
-    "id, project, context, command, cwd, started_at_ms, wall_ms, exit_code, lines";
+/// The overflow behavior's id is a fixed hex hash, so it is safe to inline.
+fn run_columns() -> String {
+    format!(
+        "id, project, context, command, cwd, started_at_ms, wall_ms, exit_code, lines,
+         (SELECT count FROM aggregates o WHERE o.run_id = runs.id AND o.behavior_id = '{}')",
+        overflow_behavior().id
+    )
+}
 const STATS_COLUMNS: &str =
     "a.count, a.errors, a.duration_count, a.duration_total_us, a.p50_us, a.p95_us, a.max_us";
 
 impl Store {
     pub fn run(&self, id: RunId) -> Result<Option<RunRecord>> {
-        let sql = format!("SELECT {RUN_COLUMNS} FROM runs WHERE id = ?1");
+        let sql = format!("SELECT {} FROM runs WHERE id = ?1", run_columns());
         Ok(self.conn.query_row(&sql, [id.0], run_record).optional()?)
     }
 
     /// The most recent finished run in `project`, in any context.
     pub fn latest_run(&self, project: &str) -> Result<Option<RunRecord>> {
         let sql = format!(
-            "SELECT {RUN_COLUMNS} FROM runs WHERE project = ?1 AND wall_ms IS NOT NULL ORDER BY id DESC LIMIT 1"
+            "SELECT {} FROM runs WHERE project = ?1 AND wall_ms IS NOT NULL ORDER BY id DESC LIMIT 1",
+            run_columns()
         );
         Ok(self
             .conn
-            .query_row(&sql, [project], run_record)
+            .query_row(&sql, params![project], run_record)
             .optional()?)
+    }
+
+    /// The most recent finished run of `context`.
+    pub fn latest_run_of(&self, context: &Context) -> Result<Option<RunRecord>> {
+        let sql = format!(
+            "SELECT {} FROM runs WHERE project = ?1 AND context = ?2 AND wall_ms IS NOT NULL
+             ORDER BY id DESC LIMIT 1",
+            run_columns()
+        );
+        let args = params![context.project(), context.name()];
+        Ok(self.conn.query_row(&sql, args, run_record).optional()?)
     }
 
     /// Runs in `project`, newest first, finished or not.
     pub fn runs(&self, project: &str, limit: usize) -> Result<Vec<RunRecord>> {
-        let sql =
-            format!("SELECT {RUN_COLUMNS} FROM runs WHERE project = ?1 ORDER BY id DESC LIMIT ?2");
+        let sql = format!(
+            "SELECT {} FROM runs WHERE project = ?1 ORDER BY id DESC LIMIT ?2",
+            run_columns()
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![project, int(limit as u64)], run_record)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Runs of `context`, newest first, finished or not.
+    pub fn runs_of(&self, context: &Context, limit: usize) -> Result<Vec<RunRecord>> {
+        let sql = format!(
+            "SELECT {} FROM runs WHERE project = ?1 AND context = ?2 ORDER BY id DESC LIMIT ?3",
+            run_columns()
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            params![context.project(), context.name(), int(limit as u64)],
+            run_record,
+        )?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -82,12 +120,96 @@ impl Store {
             .collect()
     }
 
-    fn run_stats(&self, run: RunId) -> Result<RunStats> {
-        let sql =
-            format!("SELECT a.behavior_id, {STATS_COLUMNS} FROM aggregates a WHERE a.run_id = ?1");
+    /// Everything the signal rules read about `run`.
+    pub fn run_stats(&self, run: RunId) -> Result<RunStats> {
+        let mut measures: HashMap<BehaviorId, Vec<Measure>> = HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT behavior_id, name, count, sum, min, max FROM aggregate_measures WHERE run_id = ?1 ORDER BY behavior_id, name",
+        )?;
+        let rows = stmt.query_map([run.0], |row| {
+            let measure = Measure {
+                name: row.get(1)?,
+                stats: MeasureStats {
+                    count: row.get::<_, i64>(2)?.unsigned_abs(),
+                    sum: row.get(3)?,
+                    min: row.get(4)?,
+                    max: row.get(5)?,
+                },
+            };
+            Ok((parsed::<BehaviorId>(row, 0)?, measure))
+        })?;
+        for row in rows {
+            let (id, measure) = row?;
+            measures.entry(id).or_default().push(measure);
+        }
+
+        let mut sums: HashMap<(BehaviorId, BehaviorId), Vec<(String, f64)>> = HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT behavior_id, scope_id, name, sum FROM aggregate_scope_sums WHERE run_id = ?1 ORDER BY behavior_id, scope_id, name",
+        )?;
+        let rows = stmt.query_map([run.0], |row| {
+            Ok((
+                (parsed(row, 0)?, parsed(row, 1)?),
+                (row.get::<_, String>(2)?, row.get::<_, f64>(3)?),
+            ))
+        })?;
+        for row in rows {
+            let (key, sum) = row?;
+            sums.entry(key).or_default().push(sum);
+        }
+
+        let mut scopes: HashMap<BehaviorId, Vec<ScopeStats>> = HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT behavior_id, scope_id, count FROM aggregate_scopes WHERE run_id = ?1 ORDER BY behavior_id, scope_id",
+        )?;
+        let rows = stmt.query_map([run.0], |row| {
+            Ok((
+                parsed::<BehaviorId>(row, 0)?,
+                parsed::<BehaviorId>(row, 1)?,
+                row.get::<_, i64>(2)?.unsigned_abs(),
+            ))
+        })?;
+        for row in rows {
+            let (id, scope, count) = row?;
+            scopes.entry(id).or_default().push(ScopeStats {
+                scope,
+                count,
+                sums: sums.remove(&(id, scope)).unwrap_or_default(),
+            });
+        }
+
+        let sql = format!(
+            "SELECT b.id, b.kind, b.template, {STATS_COLUMNS}, a.unattributed, e.stream, e.seq
+             FROM aggregates a JOIN behaviors b ON b.id = a.behavior_id
+             LEFT JOIN exemplars e ON e.run_id = a.run_id AND e.behavior_id = a.behavior_id AND e.position = 0
+             WHERE a.run_id = ?1"
+        );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map([run.0], |row| Ok((parsed(row, 0)?, stats(row, 1)?)))?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        let rows = stmt.query_map([run.0], |row| {
+            let behavior = behavior(row, 0)?;
+            let first = match row.get::<_, Option<String>>(11)? {
+                Some(_) => Some((
+                    parsed::<Stream>(row, 11)?,
+                    row.get::<_, i64>(12)?.unsigned_abs(),
+                )),
+                None => None,
+            };
+            Ok(BehaviorStats {
+                first,
+                stats: stats(row, 3)?,
+                measures: Vec::new(),
+                scopes: Vec::new(),
+                unattributed: row.get::<_, i64>(10)?.unsigned_abs(),
+                behavior,
+            })
+        })?;
+        rows.map(|row| {
+            let mut b = row?;
+            b.measures = measures.remove(&b.behavior.id).unwrap_or_default();
+            b.scopes = scopes.remove(&b.behavior.id).unwrap_or_default();
+            Ok(b)
+        })
+        .collect()
     }
 
     /// The runs `run`'s signals were judged against, newest first.
@@ -99,9 +221,9 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Most confident first.
+    /// In rank order: by group, each group's headline first.
     pub fn signals(&self, run: RunId) -> Result<Vec<StoredSignal>> {
-        let sql = format!("{SIGNAL_SELECT} WHERE s.run_id = ?1 ORDER BY s.confidence DESC, s.id");
+        let sql = format!("{SIGNAL_SELECT} WHERE s.run_id = ?1 ORDER BY s.id");
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([run.0], stored_signal)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -219,29 +341,58 @@ impl Store {
     }
 }
 
-const SIGNAL_SELECT: &str =
-    "SELECT s.id, s.run_id, s.kind, s.count, s.baseline_runs, s.present_in, s.baseline_mean,
-    s.baseline_spread, s.confidence, b.id, b.kind, b.template
-    FROM signals s JOIN behaviors b ON b.id = s.behavior_id";
+const SIGNAL_SELECT: &str = "SELECT s.id, s.run_id, s.kind, s.measure, s.current, s.baseline_runs, s.present_in,
+    s.baseline_median, s.baseline_min, s.baseline_max, s.baseline_failures, s.exception,
+    s.attributed, s.scope_id, s.scope_current, s.scope_baseline, s.confidence, s.tier, s.group_rank, s.headline,
+    b.id, b.kind, b.template,
+    sb.id, sb.kind, sb.template,
+    (SELECT COUNT(*) FROM exemplars e WHERE e.run_id = s.run_id AND e.behavior_id = s.behavior_id)
+    FROM signals s JOIN behaviors b ON b.id = s.behavior_id
+    LEFT JOIN behaviors sb ON sb.id = s.scope_id";
 
 fn stored_signal(row: &Row<'_>) -> rusqlite::Result<StoredSignal> {
-    let behavior = behavior(row, 9)?;
+    let behavior = behavior(row, 20)?;
+    let scope = match row.get::<_, Option<String>>(23)? {
+        Some(_) => Some(self::behavior(row, 23)?),
+        None => None,
+    };
+    let attribution = match row.get::<_, bool>(12)? {
+        true => Some(Attribution {
+            scope: match row.get::<_, Option<String>>(13)? {
+                Some(_) => Some(parsed(row, 13)?),
+                None => None,
+            },
+            current: row.get::<_, Option<f64>>(14)?.unwrap_or(0.0),
+            baseline: row.get::<_, Option<f64>>(15)?.unwrap_or(0.0),
+        }),
+        false => None,
+    };
     Ok(StoredSignal {
         id: SignalId(row.get(0)?),
         run: RunId(row.get(1)?),
         signal: Signal {
             kind: parsed(row, 2)?,
             behavior: behavior.id,
-            count: row.get::<_, i64>(3)?.unsigned_abs(),
-            baseline_runs: row.get(4)?,
-            baseline: BehaviorBaseline {
-                present_in: row.get(5)?,
-                mean_count: row.get(6)?,
-                count_spread: row.get(7)?,
+            measure: row.get(3)?,
+            current: row.get(4)?,
+            baseline: BaselineNumbers {
+                runs: row.get(5)?,
+                present_in: row.get(6)?,
+                median: row.get(7)?,
+                min: row.get(8)?,
+                max: row.get(9)?,
+                failures: row.get(10)?,
             },
-            confidence: row.get(8)?,
+            exception: row.get(11)?,
+            attribution,
+            confidence: row.get(16)?,
+            tier: row.get(17)?,
+            group: row.get(18)?,
+            headline: row.get(19)?,
         },
         behavior,
+        scope,
+        exemplars: row.get::<_, i64>(26)?.unsigned_abs(),
     })
 }
 
@@ -262,6 +413,7 @@ fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         cwd: row.get(4)?,
         started_at: UNIX_EPOCH + Duration::from_millis(row.get::<_, i64>(5)?.unsigned_abs()),
         end,
+        overflow_events: row.get::<_, Option<i64>>(9)?.unwrap_or(0).unsigned_abs(),
     })
 }
 

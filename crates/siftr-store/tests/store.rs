@@ -1,8 +1,12 @@
 use std::time::{Duration, SystemTime};
 
+use siftr_core::aggregate::Aggregator;
 use siftr_core::analyze::{Analysis, Analyzer};
 use siftr_core::baseline::Baseline;
+use siftr_core::behavior::{BehaviorId, Kind};
 use siftr_core::context::Context;
+use siftr_core::interpret::Event;
+use siftr_core::normalize::Normalizer;
 use siftr_core::observation::{LineSplitter, Observation, Stream};
 use siftr_core::signal::detect;
 use siftr_store::{Finished, NewRun, Order, RunEnd, RunId, Store};
@@ -123,6 +127,114 @@ fn a_finished_run_reads_back_as_it_was_analyzed() {
         store.latest_run_with("/project", top.behavior.id).unwrap(),
         Some(run)
     );
+}
+
+/// One run's aggregates from `(kind, line, scope)` events, each with an optional `queries` measure.
+fn scoped_analysis(events: &[(Kind, &str, Option<&str>, Option<f64>)]) -> Analysis {
+    let mut aggregator = Aggregator::new();
+    let mut normalizer = Normalizer::new();
+    let stream = Stream::File("log/test.log".into());
+    for (seq, &(kind, line, scope, queries)) in (1..).zip(events) {
+        let measures = queries.map(|q| [("queries", q)]);
+        aggregator.record(&Event {
+            kind,
+            template: normalizer.normalize(line.as_bytes()),
+            input: line.as_bytes(),
+            source: Observation {
+                stream: &stream,
+                seq,
+                line: line.as_bytes(),
+            },
+            duration: None,
+            outcome: None,
+            scope: scope.map(|s| BehaviorId::of(Kind::TestExample, s.as_bytes())),
+            measures: measures.as_ref().map_or(&[], |m| m.as_slice()),
+        });
+    }
+    Analysis {
+        observations: events.len() as u64,
+        aggregates: aggregator.finish(),
+    }
+}
+
+#[test]
+fn scopes_measures_and_grouped_signals_read_back_as_detected() {
+    let home = tempfile::tempdir().unwrap();
+    let mut store = Store::open(home.path()).unwrap();
+    let context = Context::named("/project", "rspec");
+    let run_of = |queries: usize| {
+        let mut events = vec![
+            (Kind::TestExample, "shows a user", None, None),
+            (Kind::DbQuery, "SchemaMigration Load", None, None),
+            (
+                Kind::HttpRequest,
+                "GET UsersController#show 2xx",
+                Some("shows a user"),
+                Some(queries as f64),
+            ),
+        ];
+        events.extend(std::iter::repeat_n(
+            (Kind::DbQuery, "Comment Load", Some("shows a user"), None),
+            queries,
+        ));
+        scoped_analysis(&events)
+    };
+    let mut detected = Vec::new();
+    let mut last = None;
+    for queries in [3, 3, 10] {
+        let run = store
+            .begin_run(&NewRun {
+                context: &context,
+                command: "rspec",
+                cwd: "/project",
+                started_at: SystemTime::now(),
+            })
+            .unwrap();
+        let analysis = run_of(queries);
+        let baseline = store.baseline_runs(&context, run, 10).unwrap();
+        let baseline_runs: Vec<RunId> = baseline.iter().map(|(id, _)| *id).collect();
+        detected = detect(
+            &analysis.stats(),
+            &Baseline::from_runs(baseline.iter().map(|(_, s)| s)),
+        );
+        let end = RunEnd {
+            wall: Duration::from_millis(5),
+            exit_code: Some(0),
+            lines: analysis.observations,
+        };
+        store
+            .finish_run(
+                run,
+                &Finished {
+                    end,
+                    analysis: &analysis,
+                    baseline_runs: &baseline_runs,
+                    signals: &detected,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store.run_stats(run).unwrap(),
+            analysis.stats(),
+            "run stats round-trip"
+        );
+        last = Some(run);
+    }
+    let stored = store.signals(last.unwrap()).unwrap();
+    assert!(!detected.is_empty());
+    assert_eq!(
+        stored.iter().map(|s| s.signal.clone()).collect::<Vec<_>>(),
+        detected
+    );
+    let sql = stored
+        .iter()
+        .find(|s| s.behavior.template == "Comment Load")
+        .expect("the SQL behind the request");
+    assert_eq!(
+        sql.scope.as_ref().map(|b| b.template.as_str()),
+        Some("shows a user")
+    );
+    assert_eq!(sql.exemplars, 8);
 }
 
 #[test]

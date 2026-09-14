@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use histogram::LogHistogram;
 
-use crate::behavior::{Behavior, BehaviorId};
+use crate::behavior::{Behavior, BehaviorId, Kind};
 use crate::interpret::{Event, Outcome};
 use crate::observation::{Observation, Stream};
 
@@ -15,6 +15,21 @@ use crate::observation::{Observation, Stream};
 pub const FIRST_EXEMPLARS: usize = 3;
 /// Exemplars reservoir-sampled from the rest, so late occurrences are represented too.
 pub const SAMPLED_EXEMPLARS: usize = 5;
+/// Exemplar text is cut here; the run's capture keeps the whole line at the exemplar's `seq`.
+pub const MAX_EXEMPLAR_BYTES: usize = 1024;
+/// Distinct behaviors kept per run. Events of later behaviors count into the overflow behavior.
+pub const MAX_BEHAVIORS: usize = 20_000;
+/// (behavior, scope) attributions kept per run. Past it, a scoped event still counts, as unattributed.
+pub const MAX_SCOPE_CELLS: usize = 200_000;
+/// Distinct measure names kept per behavior.
+pub const MAX_MEASURES: usize = 4;
+/// The template of the one behavior that absorbs events past [`MAX_BEHAVIORS`].
+pub const OVERFLOW_TEMPLATE: &str = "siftr: events of behaviors beyond the per-run cap";
+
+/// The behavior counting events whose own behavior didn't fit under [`MAX_BEHAVIORS`].
+pub fn overflow_behavior() -> Behavior {
+    Behavior::new(Kind::Log, OVERFLOW_TEMPLATE.as_bytes())
+}
 
 /// A raw line kept as evidence, addressable in the run's capture by `stream` and `seq`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,10 +41,18 @@ pub struct Exemplar {
 
 impl From<&Observation<'_>> for Exemplar {
     fn from(obs: &Observation<'_>) -> Self {
+        let mut line = String::from_utf8_lossy(obs.line).into_owned();
+        if line.len() > MAX_EXEMPLAR_BYTES {
+            let cut = (0..=MAX_EXEMPLAR_BYTES)
+                .rev()
+                .find(|&i| line.is_char_boundary(i))
+                .unwrap_or(0);
+            line.truncate(cut);
+        }
         Exemplar {
             stream: obs.stream.clone(),
             seq: obs.seq,
-            line: String::from_utf8_lossy(obs.line).into_owned(),
+            line,
         }
     }
 }
@@ -54,13 +77,54 @@ pub struct Stats {
     pub duration: Option<DurationSummary>,
 }
 
-/// One run's stats, by behavior: what baselines are built from.
-pub type RunStats = HashMap<BehaviorId, Stats>;
+/// A named measure's values across a behavior's events in one run.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MeasureStats {
+    pub count: u64,
+    pub sum: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
+impl MeasureStats {
+    fn record(&mut self, value: f64) {
+        if self.count == 0 {
+            self.min = value;
+            self.max = value;
+        } else {
+            self.min = self.min.min(value);
+            self.max = self.max.max(value);
+        }
+        self.count += 1;
+        self.sum += value;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Measure {
+    pub name: String,
+    pub stats: MeasureStats,
+}
+
+/// A behavior's occurrences within one scope (e.g. one test example), with its measures summed there.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeStats {
+    pub scope: BehaviorId,
+    pub count: u64,
+    /// `(measure name, sum)`, by name.
+    pub sums: Vec<(String, f64)>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Aggregate {
     pub behavior: Behavior,
     pub stats: Stats,
+    /// By name.
+    pub measures: Vec<Measure>,
+    /// Scoped occurrences, by scope id. Occurrences outside any scope are `count - Σ scopes - unattributed`.
+    pub scopes: Vec<ScopeStats>,
+    /// Scoped occurrences that didn't fit under [`MAX_SCOPE_CELLS`]: counted, but not attributed.
+    pub unattributed: u64,
     /// In stream order.
     pub exemplars: Vec<Exemplar>,
 }
@@ -68,6 +132,8 @@ pub struct Aggregate {
 #[derive(Debug)]
 pub struct Aggregator {
     behaviors: HashMap<BehaviorId, Accumulator>,
+    cells: usize,
+    overflow: BehaviorId,
     rng: XorShift,
 }
 
@@ -81,33 +147,66 @@ impl Aggregator {
     pub fn new() -> Self {
         Aggregator {
             behaviors: HashMap::new(),
+            cells: 0,
+            overflow: overflow_behavior().id,
             rng: XorShift(0x9e37_79b9_7f4a_7c15),
         }
     }
 
     pub fn record(&mut self, event: &Event<'_>) {
-        let id = crate::behavior::BehaviorId::of(event.kind, event.template.template);
-        let acc = self.behaviors.entry(id).or_insert_with(|| Accumulator {
-            behavior: Behavior {
-                id,
-                kind: event.kind,
-                template: String::from_utf8_lossy(event.template.template).into_owned(),
-            },
-            count: 0,
-            errors: 0,
-            durations: None,
-            first: Vec::new(),
-            sampled: Vec::new(),
-        });
+        let id = BehaviorId::of(event.kind, event.template.template);
+        // Examples and summaries are exempt: the suite bounds them, and they are what everything else is scoped to.
+        let admitted = self.behaviors.contains_key(&id)
+            || self.behaviors.len() < MAX_BEHAVIORS
+            || matches!(event.kind, Kind::TestExample | Kind::TestSummary);
+        let overflow = self.overflow;
+        let acc = if admitted {
+            self.behaviors.entry(id).or_insert_with(|| {
+                Accumulator::new(Behavior {
+                    id,
+                    kind: event.kind,
+                    template: String::from_utf8_lossy(event.template.template).into_owned(),
+                })
+            })
+        } else {
+            self.behaviors
+                .entry(overflow)
+                .or_insert_with(|| Accumulator::new(overflow_behavior()))
+        };
         acc.count += 1;
         if event.outcome == Some(Outcome::Failure) {
             acc.errors += 1;
         }
+        acc.keep_exemplar(&event.source, &mut self.rng);
+        if !admitted {
+            return;
+        }
         if let Some(duration) = event.duration {
             acc.durations.get_or_insert_default().record(duration);
         }
+        let measures = event.measures;
+        for &(name, value) in measures.iter().filter(|(_, v)| v.is_finite()) {
+            match acc.measures.iter().position(|(known, _)| *known == name) {
+                Some(i) => acc.measures[i].1.record(value),
+                None if acc.measures.len() < MAX_MEASURES => {
+                    let mut stats = MeasureStats::default();
+                    stats.record(value);
+                    acc.measures.push((name, stats));
+                }
+                None => {}
+            }
+        }
+        if let Some(scope) = event.scope {
+            match acc.scopes.get_mut(&scope) {
+                Some(cell) => cell.record(measures),
+                None if self.cells < MAX_SCOPE_CELLS => {
+                    self.cells += 1;
+                    acc.scopes.entry(scope).or_default().record(measures);
+                }
+                None => acc.unattributed += 1,
+            }
+        }
         // Per-slot value stats (siftr-normalize's SlotStats) are observed here: `event.template.slots` index `event.input`.
-        acc.keep_exemplar(&event.source, &mut self.rng);
     }
 
     /// Most frequent first.
@@ -133,11 +232,47 @@ struct Accumulator {
     count: u64,
     errors: u64,
     durations: Option<Box<LogHistogram>>,
+    measures: Vec<(&'static str, MeasureStats)>,
+    scopes: HashMap<BehaviorId, Cell>,
+    unattributed: u64,
     first: Vec<Exemplar>,
     sampled: Vec<Exemplar>,
 }
 
+#[derive(Debug, Default)]
+struct Cell {
+    count: u64,
+    sums: Vec<(&'static str, f64)>,
+}
+
+impl Cell {
+    fn record(&mut self, measures: &[(&'static str, f64)]) {
+        self.count += 1;
+        for &(name, value) in measures.iter().filter(|(_, v)| v.is_finite()) {
+            match self.sums.iter().position(|(known, _)| *known == name) {
+                Some(i) => self.sums[i].1 += value,
+                None if self.sums.len() < MAX_MEASURES => self.sums.push((name, value)),
+                None => {}
+            }
+        }
+    }
+}
+
 impl Accumulator {
+    fn new(behavior: Behavior) -> Self {
+        Accumulator {
+            behavior,
+            count: 0,
+            errors: 0,
+            durations: None,
+            measures: Vec::new(),
+            scopes: HashMap::new(),
+            unattributed: 0,
+            first: Vec::new(),
+            sampled: Vec::new(),
+        }
+    }
+
     /// Algorithm R over occurrences after the first few. Call after counting this occurrence.
     fn keep_exemplar(&mut self, source: &Observation<'_>, rng: &mut XorShift) {
         if self.first.len() < FIRST_EXEMPLARS {
@@ -158,6 +293,33 @@ impl Accumulator {
         let mut sampled = self.sampled;
         sampled.sort_by_key(|e| e.seq);
         exemplars.append(&mut sampled);
+        let mut measures: Vec<Measure> = self
+            .measures
+            .into_iter()
+            .map(|(name, stats)| Measure {
+                name: name.to_owned(),
+                stats,
+            })
+            .collect();
+        measures.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut scopes: Vec<ScopeStats> = self
+            .scopes
+            .into_iter()
+            .map(|(scope, cell)| {
+                let mut sums: Vec<(String, f64)> = cell
+                    .sums
+                    .into_iter()
+                    .map(|(name, sum)| (name.to_owned(), sum))
+                    .collect();
+                sums.sort_by(|a, b| a.0.cmp(&b.0));
+                ScopeStats {
+                    scope,
+                    count: cell.count,
+                    sums,
+                }
+            })
+            .collect();
+        scopes.sort_by_key(|s| s.scope);
         Aggregate {
             behavior: self.behavior,
             stats: Stats {
@@ -165,6 +327,9 @@ impl Accumulator {
                 errors: self.errors,
                 duration: self.durations.map(|h| h.summary()),
             },
+            measures,
+            scopes,
+            unattributed: self.unattributed,
             exemplars,
         }
     }
@@ -185,51 +350,154 @@ impl XorShift {
     }
 }
 
+/// One run as the signal rules read it: every behavior's stats, measures and scope attribution.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RunStats {
+    behaviors: HashMap<BehaviorId, BehaviorStats>,
+}
+
+/// An [`Aggregate`] without its exemplars, but with where it first occurred.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BehaviorStats {
+    pub behavior: Behavior,
+    /// The first occurrence: its stream classifies the behavior, its line orders examples.
+    pub first: Option<(Stream, u64)>,
+    pub stats: Stats,
+    pub measures: Vec<Measure>,
+    pub scopes: Vec<ScopeStats>,
+    pub unattributed: u64,
+}
+
+impl BehaviorStats {
+    pub fn from_aggregate(aggregate: &Aggregate) -> Self {
+        BehaviorStats {
+            behavior: aggregate.behavior.clone(),
+            first: aggregate
+                .exemplars
+                .first()
+                .map(|e| (e.stream.clone(), e.seq)),
+            stats: aggregate.stats,
+            measures: aggregate.measures.clone(),
+            scopes: aggregate.scopes.clone(),
+            unattributed: aggregate.unattributed,
+        }
+    }
+
+    pub fn measure(&self, name: &str) -> Option<&MeasureStats> {
+        self.measures
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| &m.stats)
+    }
+
+    /// Occurrences outside every scope.
+    pub fn unscoped_count(&self) -> u64 {
+        let scoped: u64 = self.scopes.iter().map(|s| s.count).sum();
+        self.stats
+            .count
+            .saturating_sub(scoped)
+            .saturating_sub(self.unattributed)
+    }
+}
+
+impl RunStats {
+    pub fn from_aggregates(aggregates: &[Aggregate]) -> Self {
+        aggregates
+            .iter()
+            .map(BehaviorStats::from_aggregate)
+            .collect()
+    }
+
+    pub fn get(&self, id: BehaviorId) -> Option<&BehaviorStats> {
+        self.behaviors.get(&id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &BehaviorStats> {
+        self.behaviors.values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.behaviors.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.behaviors.is_empty()
+    }
+
+    /// Occurrences of `id` in this run; zero when absent.
+    pub fn count(&self, id: BehaviorId) -> u64 {
+        self.get(id).map_or(0, |b| b.stats.count)
+    }
+}
+
+impl FromIterator<BehaviorStats> for RunStats {
+    fn from_iter<I: IntoIterator<Item = BehaviorStats>>(iter: I) -> Self {
+        RunStats {
+            behaviors: iter.into_iter().map(|b| (b.behavior.id, b)).collect(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::behavior::Kind;
     use crate::normalize::Normalizer;
 
-    fn record(
-        aggregator: &mut Aggregator,
-        normalizer: &mut Normalizer,
+    struct Recorder {
+        aggregator: Aggregator,
+        normalizer: Normalizer,
+        stream: Stream,
         seq: u64,
-        line: &str,
-        duration: Option<Duration>,
-    ) {
-        let stream = Stream::Stdout;
-        let source = Observation {
-            stream: &stream,
-            seq,
-            line: line.as_bytes(),
-        };
-        aggregator.record(&Event {
-            kind: Kind::Log,
-            template: normalizer.normalize(line.as_bytes()),
-            input: line.as_bytes(),
-            source,
-            duration,
-            outcome: None,
-            scope: None,
-            measures: &[],
-        });
+    }
+
+    impl Recorder {
+        fn new() -> Self {
+            Recorder {
+                aggregator: Aggregator::new(),
+                normalizer: Normalizer::new(),
+                stream: Stream::Stdout,
+                seq: 0,
+            }
+        }
+
+        fn event(
+            &mut self,
+            kind: Kind,
+            line: &str,
+            duration: Option<Duration>,
+            scope: Option<BehaviorId>,
+            measures: &[(&'static str, f64)],
+        ) {
+            self.seq += 1;
+            let source = Observation {
+                stream: &self.stream,
+                seq: self.seq,
+                line: line.as_bytes(),
+            };
+            self.aggregator.record(&Event {
+                kind,
+                template: self.normalizer.normalize(line.as_bytes()),
+                input: line.as_bytes(),
+                source,
+                duration,
+                outcome: None,
+                scope,
+                measures,
+            });
+        }
+
+        fn log(&mut self, line: &str, duration: Option<Duration>) {
+            self.event(Kind::Log, line, duration, None, &[]);
+        }
     }
 
     #[test]
     fn exemplars_are_bounded_and_start_with_the_first_occurrences() {
-        let mut aggregator = Aggregator::new();
-        let mut normalizer = Normalizer::new();
+        let mut r = Recorder::new();
         for seq in 1..=1_000 {
-            record(
-                &mut aggregator,
-                &mut normalizer,
-                seq,
-                &format!("tick {seq}"),
-                None,
-            );
+            r.log(&format!("tick {seq}"), None);
         }
-        let [aggregate] = aggregator.finish().try_into().expect("one behavior");
+        let [aggregate] = r.aggregator.finish().try_into().expect("one behavior");
         assert_eq!(aggregate.stats.count, 1_000);
         let seqs: Vec<u64> = aggregate.exemplars.iter().map(|e| e.seq).collect();
         assert_eq!(seqs.len(), FIRST_EXEMPLARS + SAMPLED_EXEMPLARS);
@@ -243,18 +511,11 @@ mod tests {
 
     #[test]
     fn summarizes_durations() {
-        let mut aggregator = Aggregator::new();
-        let mut normalizer = Normalizer::new();
+        let mut r = Recorder::new();
         for ms in 1..=100 {
-            record(
-                &mut aggregator,
-                &mut normalizer,
-                ms,
-                "query",
-                Some(Duration::from_millis(ms)),
-            );
+            r.log("query", Some(Duration::from_millis(ms)));
         }
-        let summary = aggregator.finish()[0]
+        let summary = r.aggregator.finish()[0]
             .stats
             .duration
             .expect("durations recorded");
@@ -266,5 +527,99 @@ mod tests {
         };
         assert!(near(summary.p50, 50.0), "p50 {:?}", summary.p50);
         assert!(near(summary.p95, 95.0), "p95 {:?}", summary.p95);
+    }
+
+    #[test]
+    fn attributes_occurrences_and_measures_to_scopes() {
+        let mut r = Recorder::new();
+        let show = BehaviorId::of(Kind::TestExample, b"shows a user");
+        let index = BehaviorId::of(Kind::TestExample, b"lists users");
+        r.event(Kind::DbQuery, "SELECT users", None, None, &[]);
+        for _ in 0..3 {
+            r.event(Kind::DbQuery, "SELECT users", None, Some(show), &[]);
+        }
+        r.event(Kind::DbQuery, "SELECT users", None, Some(index), &[]);
+        r.event(
+            Kind::HttpRequest,
+            "UsersController#show",
+            None,
+            Some(show),
+            &[("queries", 3.0)],
+        );
+        r.event(
+            Kind::HttpRequest,
+            "UsersController#show",
+            None,
+            Some(show),
+            &[("queries", 7.0)],
+        );
+        let run = RunStats::from_aggregates(&r.aggregator.finish());
+        let sql = run
+            .iter()
+            .find(|b| b.behavior.kind == Kind::DbQuery)
+            .unwrap();
+        assert_eq!(sql.unscoped_count(), 1, "setup, before any example");
+        let counts: Vec<_> = sql.scopes.iter().map(|s| (s.scope, s.count)).collect();
+        let mut expected = vec![(show, 3), (index, 1)];
+        expected.sort();
+        assert_eq!(counts, expected);
+
+        let request = run
+            .iter()
+            .find(|b| b.behavior.kind == Kind::HttpRequest)
+            .unwrap();
+        let queries = request.measure("queries").unwrap();
+        assert_eq!(
+            (queries.count, queries.sum, queries.min, queries.max),
+            (2, 10.0, 3.0, 7.0)
+        );
+        assert_eq!(request.scopes[0].sums, [("queries".to_owned(), 10.0)]);
+    }
+
+    #[test]
+    fn distinct_behaviors_are_capped_into_one_overflow_behavior() {
+        let mut r = Recorder::new();
+        // Letters only, so the normalizer can't fold them into one template.
+        let word = |mut i: usize| {
+            let mut w = String::new();
+            loop {
+                w.push((b'a' + (i % 26) as u8) as char);
+                i /= 26;
+                if i == 0 {
+                    break w;
+                }
+            }
+        };
+        let extra = 50;
+        for i in 0..MAX_BEHAVIORS + extra {
+            r.log(&format!("event {}", word(i)), None);
+        }
+        r.event(
+            Kind::TestExample,
+            "an example past the cap",
+            None,
+            None,
+            &[],
+        );
+        let aggregates = r.aggregator.finish();
+        assert_eq!(
+            aggregates.len(),
+            MAX_BEHAVIORS + 2,
+            "cap + overflow + exempt example"
+        );
+        let overflow = aggregates
+            .iter()
+            .find(|a| a.behavior == overflow_behavior())
+            .expect("overflow behavior");
+        assert_eq!(overflow.stats.count, extra as u64);
+        assert!(overflow.exemplars.len() <= FIRST_EXEMPLARS + SAMPLED_EXEMPLARS);
+    }
+
+    #[test]
+    fn exemplar_text_is_capped_on_a_char_boundary() {
+        let mut r = Recorder::new();
+        r.log(&"é".repeat(MAX_EXEMPLAR_BYTES), None);
+        let line = &r.aggregator.finish()[0].exemplars[0].line;
+        assert!(line.len() <= MAX_EXEMPLAR_BYTES && line.len() >= MAX_EXEMPLAR_BYTES - 1);
     }
 }

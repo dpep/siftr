@@ -4,7 +4,8 @@ use anyhow::{Result, bail};
 use rusqlite::Connection;
 
 /// Append a migration to change the schema; never edit one that has shipped.
-const MIGRATIONS: &[&str] = &[r"
+const MIGRATIONS: &[&str] = &[
+    r"
 CREATE TABLE runs (
     id            INTEGER PRIMARY KEY,
     project       TEXT NOT NULL,
@@ -71,7 +72,75 @@ CREATE TABLE signals (
     confidence      REAL NOT NULL
 );
 CREATE INDEX signals_by_run ON signals (run_id);
-"];
+",
+    r"
+-- Scoped events past the per-run attribution cap: counted in `count`, not in any scope.
+ALTER TABLE aggregates ADD COLUMN unattributed INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE aggregate_measures (
+    run_id      INTEGER NOT NULL,
+    behavior_id TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    count       INTEGER NOT NULL,
+    sum         REAL NOT NULL,
+    min         REAL NOT NULL,
+    max         REAL NOT NULL,
+    PRIMARY KEY (run_id, behavior_id, name),
+    FOREIGN KEY (run_id, behavior_id) REFERENCES aggregates (run_id, behavior_id)
+) WITHOUT ROWID;
+
+-- A behavior's occurrences inside one scope (a test example); unscoped ones are the remainder.
+CREATE TABLE aggregate_scopes (
+    run_id      INTEGER NOT NULL,
+    behavior_id TEXT NOT NULL,
+    scope_id    TEXT NOT NULL,
+    count       INTEGER NOT NULL,
+    PRIMARY KEY (run_id, behavior_id, scope_id),
+    FOREIGN KEY (run_id, behavior_id) REFERENCES aggregates (run_id, behavior_id)
+) WITHOUT ROWID;
+
+CREATE TABLE aggregate_scope_sums (
+    run_id      INTEGER NOT NULL,
+    behavior_id TEXT NOT NULL,
+    scope_id    TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    sum         REAL NOT NULL,
+    PRIMARY KEY (run_id, behavior_id, scope_id, name),
+    FOREIGN KEY (run_id, behavior_id, scope_id) REFERENCES aggregate_scopes (run_id, behavior_id, scope_id)
+) WITHOUT ROWID;
+
+-- The skeleton's uncalibrated signals stay readable in signals_v1; nothing reads them.
+DROP INDEX signals_by_run;
+ALTER TABLE signals RENAME TO signals_v1;
+
+CREATE TABLE signals (
+    id                INTEGER PRIMARY KEY,
+    run_id            INTEGER NOT NULL REFERENCES runs (id),
+    behavior_id       TEXT NOT NULL REFERENCES behaviors (id),
+    kind              TEXT NOT NULL,
+    measure           TEXT NOT NULL,
+    current           REAL NOT NULL,
+    baseline_runs     INTEGER NOT NULL,
+    present_in        INTEGER NOT NULL,
+    -- NULL when no baseline run had the measure.
+    baseline_median   REAL,
+    baseline_min      REAL,
+    baseline_max      REAL,
+    baseline_failures INTEGER,
+    exception         TEXT,
+    -- attributed = 1 with a NULL scope_id is the setup phase, before the first example.
+    attributed        INTEGER NOT NULL,
+    scope_id          TEXT,
+    scope_current     REAL,
+    scope_baseline    REAL,
+    confidence        REAL NOT NULL,
+    tier              INTEGER NOT NULL,
+    group_rank        INTEGER NOT NULL,
+    headline          INTEGER NOT NULL
+);
+CREATE INDEX signals_by_run ON signals (run_id, group_rank);
+",
+];
 
 pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {
     conn.execute_batch(

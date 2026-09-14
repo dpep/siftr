@@ -61,6 +61,8 @@ pub struct RunRecord {
     pub cwd: String,
     pub started_at: SystemTime,
     pub end: Option<RunEnd>,
+    /// Events of behaviors past the per-run cap, counted into the overflow behavior.
+    pub overflow_events: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,4 +88,8 @@ pub struct StoredSignal {
     pub run: RunId,
     pub behavior: Behavior,
     pub signal: Signal,
+    /// The example the signal is attributed to, when the store knows it.
+    pub scope: Option<Behavior>,
+    /// Evidence lines kept for the behavior in this run.
+    pub exemplars: u64,
 }

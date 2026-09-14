@@ -17,6 +17,7 @@ pub struct Finished<'a> {
     pub analysis: &'a Analysis,
     /// The runs `signals` were judged against.
     pub baseline_runs: &'a [RunId],
+    /// In rank order, as `detect` returns them: signal ids follow it.
     pub signals: &'a [Signal],
 }
 
@@ -51,8 +52,17 @@ impl Store {
                 "INSERT OR IGNORE INTO behaviors (id, kind, template) VALUES (?1, ?2, ?3)",
             )?;
             let mut aggregate = tx.prepare(
-                "INSERT INTO aggregates (run_id, behavior_id, count, errors, duration_count, duration_total_us, p50_us, p95_us, max_us)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO aggregates (run_id, behavior_id, count, errors, duration_count, duration_total_us, p50_us, p95_us, max_us, unattributed)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?;
+            let mut measure = tx.prepare(
+                "INSERT INTO aggregate_measures (run_id, behavior_id, name, count, sum, min, max) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            let mut scope = tx.prepare(
+                "INSERT INTO aggregate_scopes (run_id, behavior_id, scope_id, count) VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            let mut scope_sum = tx.prepare(
+                "INSERT INTO aggregate_scope_sums (run_id, behavior_id, scope_id, name, sum) VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
             let mut exemplar = tx.prepare(
                 "INSERT INTO exemplars (run_id, behavior_id, position, stream, seq, line) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -79,7 +89,27 @@ impl Store {
                     duration.map(|d| micros(d.p50)),
                     duration.map(|d| micros(d.p95)),
                     duration.map(|d| micros(d.max)),
+                    int(agg.unattributed),
                 ])?;
+                for m in &agg.measures {
+                    let s = m.stats;
+                    measure.execute(params![
+                        run.0,
+                        id,
+                        m.name,
+                        int(s.count),
+                        s.sum,
+                        s.min,
+                        s.max
+                    ])?;
+                }
+                for s in &agg.scopes {
+                    let scope_id = s.scope.to_string();
+                    scope.execute(params![run.0, id, scope_id, int(s.count)])?;
+                    for (name, sum) in &s.sums {
+                        scope_sum.execute(params![run.0, id, scope_id, name, sum])?;
+                    }
+                }
                 for (position, e) in (0_i64..).zip(&agg.exemplars) {
                     exemplar.execute(params![
                         run.0,
@@ -97,20 +127,35 @@ impl Store {
                 baseline.execute(params![run.0, baseline_run.0])?;
             }
             let mut signal = tx.prepare(
-                "INSERT INTO signals (run_id, behavior_id, kind, count, baseline_runs, present_in, baseline_mean, baseline_spread, confidence)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO signals (run_id, behavior_id, kind, measure, current, baseline_runs, present_in,
+                    baseline_median, baseline_min, baseline_max, baseline_failures, exception,
+                    attributed, scope_id, scope_current, scope_baseline, confidence, tier, group_rank, headline)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             )?;
             for s in finished.signals {
+                let b = s.baseline;
+                let a = s.attribution;
                 signal.execute(params![
                     run.0,
                     s.behavior.to_string(),
                     s.kind.as_str(),
-                    int(s.count),
-                    s.baseline_runs,
-                    s.baseline.present_in,
-                    s.baseline.mean_count,
-                    s.baseline.count_spread,
+                    s.measure,
+                    s.current,
+                    b.runs,
+                    b.present_in,
+                    b.median,
+                    b.min,
+                    b.max,
+                    b.failures,
+                    s.exception,
+                    a.is_some(),
+                    a.and_then(|a| a.scope).map(|id| id.to_string()),
+                    a.map(|a| a.current),
+                    a.map(|a| a.baseline),
                     s.confidence,
+                    s.tier,
+                    s.group,
+                    s.headline,
                 ])?;
             }
         }

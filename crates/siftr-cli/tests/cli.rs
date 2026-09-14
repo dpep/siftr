@@ -98,7 +98,7 @@ fn app_log(k: u64, regressed: bool) -> String {
     log
 }
 
-fn signal_summary(changes: &Value) -> Vec<(String, String, u64, f64)> {
+fn signal_summary(changes: &Value) -> Vec<(String, String, f64, f64)> {
     changes["signals"]
         .as_array()
         .unwrap()
@@ -107,7 +107,7 @@ fn signal_summary(changes: &Value) -> Vec<(String, String, u64, f64)> {
             (
                 s["kind"].as_str().unwrap().to_owned(),
                 s["behavior"]["template"].as_str().unwrap().to_owned(),
-                s["count"].as_u64().unwrap(),
+                s["current"].as_f64().unwrap(),
                 s["confidence"].as_f64().unwrap(),
             )
         })
@@ -129,15 +129,16 @@ fn a_regression_surfaces_as_new_disappeared_and_frequency_signals() {
         changes["baseline_runs"],
         serde_json::json!(["r3", "r2", "r1"])
     );
+    // Ranked: a varying count far outside its range (tier 3) before new/gone lines (tier 4).
     let expected = [
-        ("new", "WARN cache miss for key <hex>", 20, 0.76),
-        ("disappeared", "cache hit for key <hex>", 0, 0.73),
         (
             "frequency",
             "User Load (<duration>) SELECT * FROM users WHERE id = <int>",
-            200,
-            0.71,
+            200.0,
+            0.79,
         ),
+        ("new", "WARN cache miss for key <hex>", 20.0, 0.8),
+        ("disappeared", "cache hit for key <hex>", 0.0, 0.8),
     ]
     .map(|(kind, template, count, confidence)| {
         (kind.to_owned(), template.to_owned(), count, confidence)
@@ -157,12 +158,12 @@ fn a_regression_surfaces_as_new_disappeared_and_frequency_signals() {
     let explain = sandbox.output(&["explain", first_signal]);
     assert_eq!(code(&explain), 0, "{}", stderr(&explain));
     assert!(
-        stdout(&explain).contains("r3: 0  r2: 0  r1: 0"),
+        stdout(&explain).contains("count     r4 200  |  baseline r3 50  r2 52  r1 51"),
         "{}",
         stdout(&explain)
     );
 
-    let behavior = &changes["signals"][0]["behavior"]["id"].as_str().unwrap()[..10];
+    let behavior = &changes["signals"][1]["behavior"]["id"].as_str().unwrap()[..10];
     let evidence = sandbox.output(&["evidence", behavior, "-j"]);
     assert_eq!(code(&evidence), 0, "{}", stderr(&evidence));
     let evidence = json(&evidence);
@@ -202,7 +203,7 @@ fn a_steady_run_has_no_changes() {
         stdout(&changes)
     );
     assert!(
-        stdout(&changes).starts_with("r4: 92 lines, 3 behaviors, 0 changes vs 3 baseline runs"),
+        stdout(&changes).starts_with("r4 vs 3 baseline runs (r1 r2 r3): 0 changes"),
         "{}",
         stdout(&changes)
     );
@@ -233,7 +234,7 @@ fn run_passes_output_through_and_exits_with_the_childs_code() {
     let stderr = stderr(&output);
     assert!(stderr.starts_with("oops\n"), "{stderr}");
     assert!(
-        stderr.contains("r1: 2 lines, 2 behaviors, no changes"),
+        stderr.contains("r1: 2 lines, 2 behaviors; no earlier runs"),
         "{stderr}"
     );
 
@@ -283,7 +284,7 @@ fn rails_fixture_deprecation_warnings_are_new_behaviors_on_stderr() {
     for (kind, template, count, confidence) in &signals {
         assert_eq!(
             (kind.as_str(), *count, *confidence),
-            ("new", 1, 0.4),
+            ("new", 1.0, 0.8),
             "{template}"
         );
         assert!(

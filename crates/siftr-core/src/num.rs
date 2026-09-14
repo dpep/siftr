@@ -16,6 +16,24 @@ pub fn round_sig(value: f64, digits: i32) -> f64 {
     }
 }
 
+/// The middle value, averaging the two middle ones for an even count. `None` when empty.
+pub fn median(values: &[f64]) -> Option<f64> {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let mid = sorted.len() / 2;
+    match sorted.len() {
+        0 => None,
+        len if len % 2 == 1 => Some(sorted[mid]),
+        _ => Some((sorted[mid - 1] + sorted[mid]) / 2.0),
+    }
+}
+
+/// Median absolute deviation from the median. `None` when empty.
+pub fn mad(values: &[f64]) -> Option<f64> {
+    let m = median(values)?;
+    median(&values.iter().map(|v| (v - m).abs()).collect::<Vec<_>>())
+}
+
 /// Rounds `value` to `digits` significant figures, half up.
 pub fn round_sig_u64(value: u64, digits: u32) -> u64 {
     let places = value.checked_ilog10().unwrap_or(0) + 1;
@@ -42,6 +60,14 @@ mod tests {
         for (value, digits, expected) in cases {
             assert_eq!(round_sig(value, digits), expected, "{value} to {digits}");
         }
+    }
+
+    #[test]
+    fn medians_and_deviations() {
+        assert_eq!(median(&[]), None);
+        assert_eq!(median(&[3.0, 1.0, 2.0]), Some(2.0));
+        assert_eq!(median(&[1.0, 1.1]), Some(1.05));
+        assert_eq!(mad(&[100.0, 105.0, 110.0]), Some(5.0));
     }
 
     #[test]
