@@ -29,6 +29,9 @@ First version. If you ran a pre-release build, see **Upgrading** below.
 - A run is left out of a baseline only when it skipped examples this run ran (a failed spec file, `--fail-fast`, a focus filter). A suite that grows or shrinks, a red `--fail-fast` suite, or fixing a spec file that never loaded no longer hides a regression landing in that run.
 - A run is INCOMPLETE only when it skipped examples its baseline ran; deleting spec files is a real change, not a partial run. A load error names the file and Ruby's cause: `./spec/x_spec.rb failed to load: SyntaxError: …`.
 - `history --signals`: a focus or load-error run no longer counts as resolving a signal, and INCOMPLETE is never listed as still open. `history` marks incomplete runs, and `history --context <unknown>` exits 2 like `changes`.
+- A busy data directory no longer holds up `siftr run` indefinitely: if another siftr holds it for more than 2s, the command runs unrecorded, with a warning saying why.
+- Runs whose command was killed by a signal (exit 129–159) never join baselines, including runs recorded by older builds.
+- Retention never prunes a run that is still recording, and keeps the evidence a still-open reminder points `explain` to. When a signal's evidence was pruned anyway, `explain` shows its numbers and says so rather than failing.
 
 ### Upgrading
 
