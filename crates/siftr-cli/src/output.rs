@@ -35,9 +35,12 @@
 //!   capture, when the line is a test listener event that carries one; else null).
 //! - nothing found (exit 1) is still the command's document: `changes` with `run` null and empty arrays,
 //!   `summary` with `run` null, `evidence` with `run` null, `history` an empty array.
+//! - not recorded (`run -j` when the store was unusable or busy, or analysis failed; the exit code is still the
+//!   command's): that same empty `changes` document plus `not_recorded` {`code`, `message`}, `code` as for an error.
 //! - error (exit 2; `run` keeps its own codes), on stdout: {`error`: {`code`, `message`}}. `code` is `usage`
 //!   (bad arguments, including an id of the wrong kind), `not_found` (a named run, signal, behavior or context
-//!   doesn't exist) or `failed` (anything else).
+//!   doesn't exist), `busy` (another siftr held the store past its wait; worth retrying) or `failed` (anything
+//!   else).
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
@@ -53,8 +56,9 @@ use siftr_core::num::round_sig;
 use siftr_core::signal::{MIN_BASELINE_RUNS, Signal, SignalKind};
 use siftr_store::{Feedback, RunId, RunRecord, StoredSignal};
 
+/// Never panics as `eprintln!` does on a closed stderr (`2>&1 | head`): siftr may still be recording.
 pub fn warn(message: impl Display) {
-    eprintln!("siftr: warning: {message}");
+    let _ = writeln!(io::stderr(), "siftr: warning: {message}");
 }
 
 /// What kind of failure an error is, so a `-j` consumer can branch without reading the message.
@@ -62,6 +66,7 @@ pub fn warn(message: impl Display) {
 pub enum ErrorCode {
     Usage,
     NotFound,
+    Busy,
     Failed,
 }
 
@@ -70,6 +75,7 @@ impl ErrorCode {
         match self {
             ErrorCode::Usage => "usage",
             ErrorCode::NotFound => "not_found",
+            ErrorCode::Busy => "busy",
             ErrorCode::Failed => "failed",
         }
     }
@@ -109,8 +115,13 @@ pub fn not_found(message: impl Into<String>) -> anyhow::Error {
 fn code_of(error: &anyhow::Error) -> ErrorCode {
     error
         .chain()
-        .find_map(|cause| cause.downcast_ref::<Coded>())
-        .map_or(ErrorCode::Failed, |coded| coded.code)
+        .find_map(|cause| match cause.downcast_ref::<Coded>() {
+            Some(coded) => Some(coded.code),
+            None => cause
+                .is::<siftr_store::StoreBusy>()
+                .then_some(ErrorCode::Busy),
+        })
+        .unwrap_or(ErrorCode::Failed)
 }
 
 pub fn error(error: &anyhow::Error, json: bool) {
@@ -119,15 +130,24 @@ pub fn error(error: &anyhow::Error, json: bool) {
 
 /// Under `-j` the error is the document on stdout, so a consumer reading stdout always gets one.
 pub fn report_error(code: ErrorCode, message: &str, json: bool) {
-    if json {
+    let _ = if json {
         let document = json!({ "error": { "code": code.as_str(), "message": message } });
-        println!(
+        writeln!(
+            io::stdout(),
             "{}",
             serde_json::to_string_pretty(&document).unwrap_or_default()
-        );
+        )
     } else {
-        eprintln!("siftr: error: {message}");
-    }
+        writeln!(io::stderr(), "siftr: error: {message}")
+    };
+}
+
+/// `run -j` when nothing was recorded: the empty `changes` document, and why.
+pub fn not_recorded_json(error: &anyhow::Error) -> Value {
+    let mut document = Changes::empty_json();
+    document["not_recorded"] =
+        json!({ "code": code_of(error).as_str(), "message": format!("{error:#}") });
+    document
 }
 
 /// Prints to stdout as JSON under `-j`, else as human text.

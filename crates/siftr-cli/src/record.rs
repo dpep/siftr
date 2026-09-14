@@ -32,25 +32,67 @@ pub struct Recorded {
     pub signals: Vec<StoredSignal>,
 }
 
-impl Recording {
-    pub fn begin(store: Store, context: Context, command: &str, cwd: &str) -> Result<Self> {
+/// A run begun in the store, before any analysis: unlike a `Recording` (its interpreters aren't `Send`), it can be
+/// begun on another thread.
+pub struct Begun {
+    store: Store,
+    run: RunId,
+    context: Context,
+    capture: Capture,
+    started: Instant,
+}
+
+impl Begun {
+    /// `started` is when the input began, not now: `run` begins recording while the command already runs.
+    pub fn new(
+        store: Store,
+        context: Context,
+        command: &str,
+        cwd: &str,
+        started: Instant,
+    ) -> Result<Self> {
+        let now = SystemTime::now();
         let new = NewRun {
             context: &context,
             command,
             cwd,
-            started_at: SystemTime::now(),
+            started_at: now.checked_sub(started.elapsed()).unwrap_or(now),
         };
         let run = store.begin_run(&new)?;
         let capture = store.capture(run)?;
-        Ok(Recording {
+        Ok(Begun {
             store,
             run,
             context,
-            capture: Some(capture),
+            capture,
+            started,
+        })
+    }
+}
+
+impl From<Begun> for Recording {
+    fn from(begun: Begun) -> Self {
+        Recording {
+            store: begun.store,
+            run: begun.run,
+            context: begun.context,
+            capture: Some(begun.capture),
             streams: Vec::new(),
             analyzer: Analyzer::new(),
-            started: Instant::now(),
-        })
+            started: begun.started,
+        }
+    }
+}
+
+impl Recording {
+    pub fn begin(
+        store: Store,
+        context: Context,
+        command: &str,
+        cwd: &str,
+        started: Instant,
+    ) -> Result<Self> {
+        Begun::new(store, context, command, cwd, started).map(Recording::from)
     }
 
     /// Raw bytes from `stream`, in arrival order. A capture write failure warns once and stops the capture only.

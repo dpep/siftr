@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 
 use anyhow::{Context as _, Result, bail};
 use siftr_core::context::{Context, shell_join};
@@ -66,6 +67,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         context,
         &shell_join(&argv),
         &location.cwd,
+        Instant::now(),
     )?;
     for (stream, mut input) in inputs {
         let mut buf = vec![0; CHUNK_BYTES];
