@@ -76,7 +76,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     };
     output::emit(globals.json, as_json, |w| {
         writeln!(w, "runs in {project}")?;
-        for (run, &(changes, _, _)) in runs.iter().zip(&counts) {
+        for (run, &(changes, _, complete)) in runs.iter().zip(&counts) {
             let status = match run.end {
                 Some(end) if run.interrupted.is_some() => format!(
                     "interrupted (signal {}) {:>8} lines",
@@ -87,8 +87,10 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                     let exit = end
                         .exit_code
                         .map_or_else(|| "-".to_owned(), |code| code.to_string());
+                    // Its changes don't mean what a whole run's do.
+                    let marker = if complete { "" } else { "  incomplete" };
                     format!(
-                        "exit {exit:<3} {:>8} lines  {:<10}",
+                        "exit {exit:<3} {:>8} lines  {:<10}{marker}",
                         end.lines,
                         plural(changes as u64, "change")
                     )
