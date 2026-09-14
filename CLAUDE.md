@@ -128,6 +128,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
+`script/verify [SHA]` runs that gate in a throwaway worktree, then drives the
+real loop on `dogfood/rails_demo` (N+1, unfixed rerun, load error, raise after
+describe, recovery) — run it before calling a change done.
+
 `--no-fail-fast` matters: without it cargo stops at the first failing test
 binary, so one known failure hides whether every later crate's tests pass.
 Prove a test fails before its fix in a throwaway `git worktree add --detach`
