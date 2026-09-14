@@ -1,0 +1,38 @@
+
+While loading ./spec/c_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.
+Failure/Error: __send__(method, file)
+
+SyntaxError:
+  --> /project/spec/c_spec.rb
+
+  Unmatched `end', missing keyword (`do', `def`, `if`, etc.) ?
+
+  > 1  [1;3mRSpec.describe "c" do it("c1") { expect(1).to eq 1 } end end
+  [0m
+  [1m/project/spec/c_spec.rb:1: syntax errors found ([1;4mSyntaxError[m[1m)[m
+  [1m> 1 | ... end[m
+  [1m    |     ^~~ unexpected 'end', ignoring it[m
+  [1m    |     ^~~ unexpected 'end', expecting end-of-input[m
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:2144:in 'Kernel#load'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:2144:in 'RSpec::Core::Configuration#load_file_handling_errors'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1643:in 'block in RSpec::Core::Configuration#load_spec_files'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1641:in 'Array#each'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1641:in 'RSpec::Core::Configuration#load_spec_files'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:102:in 'RSpec::Core::Runner#setup'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:86:in 'RSpec::Core::Runner#run'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:71:in 'RSpec::Core::Runner.run'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:45:in 'RSpec::Core::Runner.invoke'
+# ~/.rvm/gems/ruby-3.4.9/gems/rspec-core-3.13.6/exe/rspec:4:in '<top (required)>'
+# ~/.rvm/gems/ruby-3.4.9/bin/rspec:25:in 'Kernel#load'
+# ~/.rvm/gems/ruby-3.4.9/bin/rspec:25:in '<main>'
+# ~/.rvm/gems/ruby-3.4.9/bin/ruby_executable_hooks:22:in 'Kernel#eval'
+# ~/.rvm/gems/ruby-3.4.9/bin/ruby_executable_hooks:22:in '<main>'
+# 
+#   Showing full backtrace because every line was filtered out.
+#   See docs for RSpec::Configuration#backtrace_exclusion_patterns and
+#   RSpec::Configuration#backtrace_inclusion_patterns for more information.
+..........
+
+Finished in 0.00217 seconds (files took 0.14934 seconds to load)
+10 examples, 0 failures, 1 error occurred outside of examples
+

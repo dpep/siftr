@@ -22,8 +22,8 @@ pub const MAX_EXEMPLAR_BYTES: usize = 1024;
 pub const MAX_BEHAVIORS: usize = 20_000;
 /// (behavior, scope) attributions kept per run. Past it, a scoped event still counts, as unattributed.
 pub const MAX_SCOPE_CELLS: usize = 200_000;
-/// Distinct measure names kept per behavior. A test summary has five.
-pub const MAX_MEASURES: usize = 5;
+/// Distinct measure names kept per behavior. A test summary has six.
+pub const MAX_MEASURES: usize = 6;
 /// The template of the one behavior that absorbs events past [`MAX_BEHAVIORS`].
 pub const OVERFLOW_TEMPLATE: &str = "siftr: events of behaviors beyond the per-run cap";
 

@@ -25,6 +25,8 @@ pub mod summary {
     pub const EXAMPLES: &str = "examples";
     /// Examples loaded to run, from the reporter's start: more than [`EXAMPLES`] when the run stopped early.
     pub const EXPECTED: &str = "expected";
+    /// Every example in the files that loaded, before filters: more than [`EXPECTED`] under a focus filter.
+    pub const DEFINED: &str = "defined";
     pub const FAILURES: &str = "failures";
     pub const PENDING: &str = "pending";
     /// Load errors and hook errors: RSpec still runs the other files when one fails to load.
@@ -41,8 +43,8 @@ pub struct Rspec {
     scopes: Scopes,
     /// The running example's RSpec id and the log offset it started at.
     started: Option<(String, u64)>,
-    /// Examples the reporter's start said it would run, until its summary.
-    expected: Option<u64>,
+    /// The reporter's start, until its summary.
+    start: Start,
     log: rails::Log,
     /// Offset of the next log line.
     log_offset: u64,
@@ -93,12 +95,12 @@ impl Rspec {
             return generic::log(obs, None, normalizer, emit);
         };
         match record {
-            Record::Start { expected } => self.expected = expected,
+            Record::Start(start) => self.start = start,
             Record::ExampleStarted { id, log_offset } => {
                 self.started = log_offset.map(|offset| (id, offset));
             }
             Record::Example(example) => self.example(obs, &example, emit),
-            Record::Summary(summary) => summary.emit(obs, self.expected.take(), emit),
+            Record::Summary(summary) => summary.emit(obs, std::mem::take(&mut self.start), emit),
             Record::ErrorOutsideExamples { context, class } => {
                 self.template.clear();
                 if let Some(class) = class {
@@ -168,9 +170,7 @@ impl Rspec {
 #[derive(Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum Record {
-    Start {
-        expected: Option<u64>,
-    },
+    Start(Start),
     ExampleStarted {
         id: String,
         log_offset: Option<u64>,
@@ -230,6 +230,13 @@ struct ExceptionInfo {
     class: String,
 }
 
+/// What the reporter's start said; `None` from a listener that predates the field.
+#[derive(Deserialize, Default)]
+struct Start {
+    expected: Option<u64>,
+    defined: Option<u64>,
+}
+
 #[derive(Deserialize)]
 struct Summary {
     duration: f64,
@@ -242,7 +249,7 @@ struct Summary {
 impl Summary {
     const TEMPLATE: &[u8] = b"rspec";
 
-    fn emit(&self, obs: Observation<'_>, expected: Option<u64>, emit: &mut impl FnMut(&Event<'_>)) {
+    fn emit(&self, obs: Observation<'_>, start: Start, emit: &mut impl FnMut(&Event<'_>)) {
         let failed = self.failures > 0 || self.errors_outside_of_examples > 0;
         let measures = [
             (summary::EXAMPLES, self.examples as f64),
@@ -252,9 +259,14 @@ impl Summary {
                 summary::ERRORS_OUTSIDE_OF_EXAMPLES,
                 self.errors_outside_of_examples as f64,
             ),
-            (summary::EXPECTED, expected.unwrap_or(0) as f64),
         ];
-        let known = if expected.is_some() { 5 } else { 4 };
+        let from_start = [
+            (summary::EXPECTED, start.expected),
+            (summary::DEFINED, start.defined),
+        ]
+        .into_iter()
+        .filter_map(|(name, count)| Some((name, count? as f64)));
+        let measures: Vec<(&'static str, f64)> = measures.into_iter().chain(from_start).collect();
         emit(&Event {
             kind: Kind::TestSummary,
             template: literal(Self::TEMPLATE),
@@ -267,7 +279,7 @@ impl Summary {
                 Outcome::Success
             }),
             scope: None,
-            measures: &measures[..known],
+            measures: &measures,
         });
     }
 }
@@ -486,7 +498,7 @@ mod tests {
     #[test]
     fn the_summary_carries_counts_and_fails_on_errors_outside_examples() {
         let events = [
-            r#"{"event":"start","expected":4,"load_time":0.8}"#,
+            r#"{"event":"start","expected":4,"defined":6,"load_time":0.8}"#,
             r#"{"event":"summary","duration":0.5,"load_time":0.8,"examples":3,"failures":0,"pending":1,"errors_outside_of_examples":1}"#,
         ]
         .join("\n");
@@ -503,7 +515,8 @@ mod tests {
                 ("failures", 0.0),
                 ("pending", 1.0),
                 ("errors_outside_of_examples", 1.0),
-                ("expected", 4.0)
+                ("expected", 4.0),
+                ("defined", 6.0)
             ]
         );
     }

@@ -1,0 +1,4 @@
+{"event":"start","expected":1,"defined":10,"load_time":0.066398}
+{"event":"example_started","id":"./spec/a_spec.rb[1:3]"}
+{"event":"example","id":"./spec/a_spec.rb[1:3]","description":"a3","full_description":"a a3","file_path":"./spec/a_spec.rb","line_number":4,"status":"passed","run_time":0.000627}
+{"event":"summary","duration":0.000935,"load_time":0.066398,"examples":1,"failures":0,"pending":0,"errors_outside_of_examples":0}

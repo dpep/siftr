@@ -1,0 +1,18 @@
+F..........
+
+Failures:
+
+  1) a a1
+     Failure/Error: it("a1") { expect(ENV["FAIL"]).to be_nil }
+
+       expected: nil
+            got: "1"
+     # ./spec/a_spec.rb:2:in 'block (2 levels) in <top (required)>'
+
+Finished in 0.01 seconds (files took 0.05771 seconds to load)
+11 examples, 1 failure
+
+Failed examples:
+
+rspec ./spec/a_spec.rb:2 # a a1
+

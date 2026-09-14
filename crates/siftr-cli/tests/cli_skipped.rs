@@ -81,12 +81,11 @@ fn a_recent_run_that_did_not_run_the_suite_is_named_as_skipped() {
         json!([{ "run": "r4", "reason": "errors_outside_examples" }])
     );
 
+    // Where no recent run ran the file that failed to load, nothing says its examples existed yet: compared.
     sandbox.ingest("alone", "load_error");
     let alone = sandbox.ingest("alone", "baseline");
     assert!(
-        alone.starts_with(
-            "r7: no comparable earlier runs (skipped r6: 1 error outside examples, 0 now)\n"
-        ),
+        alone.starts_with("r7 vs 1 baseline run (r6): 0 changes"),
         "{alone}"
     );
 }

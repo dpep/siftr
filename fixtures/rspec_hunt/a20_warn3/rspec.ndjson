@@ -1,0 +1,42 @@
+{"event":"start","expected":20,"defined":20,"load_time":0.058094}
+{"event":"example_started","id":"./spec/a_spec.rb[1:1]"}
+{"event":"example","id":"./spec/a_spec.rb[1:1]","description":"a1","full_description":"a a1","file_path":"./spec/a_spec.rb","line_number":2,"status":"passed","run_time":0.000739}
+{"event":"example_started","id":"./spec/a_spec.rb[1:2]"}
+{"event":"example","id":"./spec/a_spec.rb[1:2]","description":"a2","full_description":"a a2","file_path":"./spec/a_spec.rb","line_number":3,"status":"passed","run_time":0.000561}
+{"event":"example_started","id":"./spec/a_spec.rb[1:3]"}
+{"event":"example","id":"./spec/a_spec.rb[1:3]","description":"a3","full_description":"a a3","file_path":"./spec/a_spec.rb","line_number":4,"status":"passed","run_time":0.000024}
+{"event":"example_started","id":"./spec/a_spec.rb[1:4]"}
+{"event":"example","id":"./spec/a_spec.rb[1:4]","description":"a4","full_description":"a a4","file_path":"./spec/a_spec.rb","line_number":5,"status":"passed","run_time":0.00002}
+{"event":"example_started","id":"./spec/b_spec.rb[1:1]"}
+{"event":"example","id":"./spec/b_spec.rb[1:1]","description":"b1","full_description":"b b1","file_path":"./spec/b_spec.rb","line_number":2,"status":"passed","run_time":0.000022}
+{"event":"example_started","id":"./spec/b_spec.rb[1:2]"}
+{"event":"example","id":"./spec/b_spec.rb[1:2]","description":"b2","full_description":"b b2","file_path":"./spec/b_spec.rb","line_number":3,"status":"passed","run_time":0.000019}
+{"event":"example_started","id":"./spec/b_spec.rb[1:3]"}
+{"event":"example","id":"./spec/b_spec.rb[1:3]","description":"b3","full_description":"b b3","file_path":"./spec/b_spec.rb","line_number":4,"status":"passed","run_time":0.000019}
+{"event":"example_started","id":"./spec/b_spec.rb[1:4]"}
+{"event":"example","id":"./spec/b_spec.rb[1:4]","description":"b4","full_description":"b b4","file_path":"./spec/b_spec.rb","line_number":5,"status":"passed","run_time":0.000019}
+{"event":"example_started","id":"./spec/b_spec.rb[1:5]"}
+{"event":"example","id":"./spec/b_spec.rb[1:5]","description":"b5","full_description":"b b5","file_path":"./spec/b_spec.rb","line_number":6,"status":"passed","run_time":0.000019}
+{"event":"example_started","id":"./spec/b_spec.rb[1:6]"}
+{"event":"example","id":"./spec/b_spec.rb[1:6]","description":"b6","full_description":"b b6","file_path":"./spec/b_spec.rb","line_number":7,"status":"passed","run_time":0.000019}
+{"event":"example_started","id":"./spec/b_spec.rb[1:7]"}
+{"event":"example","id":"./spec/b_spec.rb[1:7]","description":"b7","full_description":"b b7","file_path":"./spec/b_spec.rb","line_number":8,"status":"passed","run_time":0.000018}
+{"event":"example_started","id":"./spec/b_spec.rb[1:8]"}
+{"event":"example","id":"./spec/b_spec.rb[1:8]","description":"b8","full_description":"b b8","file_path":"./spec/b_spec.rb","line_number":9,"status":"passed","run_time":0.000018}
+{"event":"example_started","id":"./spec/b_spec.rb[1:9]"}
+{"event":"example","id":"./spec/b_spec.rb[1:9]","description":"b9","full_description":"b b9","file_path":"./spec/b_spec.rb","line_number":10,"status":"passed","run_time":0.000284}
+{"event":"example_started","id":"./spec/b_spec.rb[1:10]"}
+{"event":"example","id":"./spec/b_spec.rb[1:10]","description":"b10","full_description":"b b10","file_path":"./spec/b_spec.rb","line_number":11,"status":"passed","run_time":0.000019}
+{"event":"example_started","id":"./spec/b_spec.rb[1:11]"}
+{"event":"example","id":"./spec/b_spec.rb[1:11]","description":"b11","full_description":"b b11","file_path":"./spec/b_spec.rb","line_number":12,"status":"passed","run_time":0.000018}
+{"event":"example_started","id":"./spec/b_spec.rb[1:12]"}
+{"event":"example","id":"./spec/b_spec.rb[1:12]","description":"b12","full_description":"b b12","file_path":"./spec/b_spec.rb","line_number":13,"status":"passed","run_time":0.000019}
+{"event":"example_started","id":"./spec/b_spec.rb[1:13]"}
+{"event":"example","id":"./spec/b_spec.rb[1:13]","description":"b13","full_description":"b b13","file_path":"./spec/b_spec.rb","line_number":14,"status":"passed","run_time":0.000018}
+{"event":"example_started","id":"./spec/b_spec.rb[1:14]"}
+{"event":"example","id":"./spec/b_spec.rb[1:14]","description":"b14","full_description":"b b14","file_path":"./spec/b_spec.rb","line_number":15,"status":"passed","run_time":0.000017}
+{"event":"example_started","id":"./spec/b_spec.rb[1:15]"}
+{"event":"example","id":"./spec/b_spec.rb[1:15]","description":"b15","full_description":"b b15","file_path":"./spec/b_spec.rb","line_number":16,"status":"passed","run_time":0.000017}
+{"event":"example_started","id":"./spec/b_spec.rb[1:16]"}
+{"event":"example","id":"./spec/b_spec.rb[1:16]","description":"b16","full_description":"b b16","file_path":"./spec/b_spec.rb","line_number":17,"status":"passed","run_time":0.000017}
+{"event":"summary","duration":0.00765,"load_time":0.058094,"examples":20,"failures":0,"pending":0,"errors_outside_of_examples":0}

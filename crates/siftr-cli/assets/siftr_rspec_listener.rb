@@ -18,8 +18,11 @@ module SiftrRspec
       @log_path = log_path
     end
 
+    # expected: examples to run after filters; defined: every example in the loaded files. A focus filter
+    # makes them differ, a deleted spec file doesn't.
     def start(n)
-      emit(event: "start", expected: n.count, load_time: n.load_time)
+      defined = RSpec.world.all_examples.size if RSpec.world.respond_to?(:all_examples)
+      emit(event: "start", expected: n.count, defined: defined, load_time: n.load_time)
     end
 
     def example_started(n)

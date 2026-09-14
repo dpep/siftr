@@ -189,7 +189,9 @@ pub fn still_open(
             .map(|(stored, _)| stored.signal.group)
             .collect();
         for (stored, outcome) in signals.into_iter().zip(outcomes) {
+            // INCOMPLETE is about its own run: a later run doesn't leave it open.
             if outcome.status() == "open"
+                && stored.signal.kind != SignalKind::Incomplete
                 && !dismissed.contains(&stored.signal.group)
                 && seen.insert(key(&stored.signal))
             {
@@ -318,24 +320,25 @@ fn judge(
         .into_iter()
         .map(|id| store.run_stats(id))
         .collect::<Result<Vec<RunStats>>>()?;
-    let own = store.run_stats(run.id)?;
-    let baseline = Baseline::from_runs(&own, baseline_stats.iter().enumerate());
-    let fires = |id: RunId| -> Result<HashSet<Key>> {
-        Ok(detect(&store.run_stats(id)?, &baseline)
-            .iter()
-            .map(key)
-            .collect())
+    // Each run is judged against the signal's own baseline runs, as its own run was. `None`: the run skipped
+    // examples those runs ran, so it can't say whether a change is still there.
+    let fires = |stats: &RunStats, verdict: bool| -> Option<HashSet<Key>> {
+        let baseline = Baseline::from_runs(stats, baseline_stats.iter().enumerate());
+        (!verdict || baseline.incomplete().is_none())
+            .then(|| detect(stats, &baseline).iter().map(key).collect())
     };
-    let own = fires(run.id)?;
-    let later: Vec<RunRecord> = store
-        .runs_after(&run.context, run.id)?
-        .into_iter()
-        .filter(|later| until.is_none_or(|until| later.id <= until))
-        .collect();
-    let later_fires = later
-        .iter()
-        .map(|later| fires(later.id))
-        .collect::<Result<Vec<_>>>()?;
+    let own = fires(&store.run_stats(run.id)?, false).unwrap_or_default();
+    let mut later: Vec<RunRecord> = Vec::new();
+    let mut later_fires: Vec<HashSet<Key>> = Vec::new();
+    for record in store.runs_after(&run.context, run.id)? {
+        if until.is_some_and(|until| record.id > until) {
+            continue;
+        }
+        if let Some(fired) = fires(&store.run_stats(record.id)?, true) {
+            later_fires.push(fired);
+            later.push(record);
+        }
+    }
 
     signals
         .iter()

@@ -183,6 +183,14 @@ pub fn detect<K>(current: &RunStats, baseline: &Baseline<'_, K>) -> Vec<Signal> 
             comparison.incomplete(why, &mut found);
         }
     }
+    if baseline.partial() {
+        // Every baseline run skipped existing examples: one that none of them ran was skipped, not written since.
+        let unrun = |example: BehaviorId| runs.iter().all(|run| run.count(example) == 0);
+        found.retain(|f| {
+            f.signal.kind != SignalKind::New
+                || !comparison.within_examples(f.signal.behavior, unrun)
+        });
+    }
     rank(found)
 }
 
@@ -604,18 +612,13 @@ impl<'a> Comparison<'a> {
             SignalKind::Incomplete | SignalKind::Error | SignalKind::New => false,
             SignalKind::Latency => true,
             SignalKind::Disappeared | SignalKind::Frequency => {
-                !self.within_examples_that_ran(signal.behavior)
+                !self.within_examples(signal.behavior, |example| self.current.count(example) > 0)
             }
         }
     }
 
-    /// Every occurrence of `id`, now and in the baseline, is an example that ran now or lies inside one.
-    fn within_examples_that_ran(&self, id: BehaviorId) -> bool {
-        let ran = |example: BehaviorId| {
-            self.current
-                .get(example)
-                .is_some_and(|b| b.behavior.kind == Kind::TestExample && b.stats.count > 0)
-        };
+    /// Every occurrence of `id`, now and in the baseline, is an example for which `ran` holds, or lies inside one.
+    fn within_examples(&self, id: BehaviorId, ran: impl Fn(BehaviorId) -> bool) -> bool {
         std::iter::once(self.current)
             .chain(self.runs.iter().copied())
             .filter_map(|run| run.get(id))
