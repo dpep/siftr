@@ -26,9 +26,13 @@ First version. If you ran a pre-release build, see **Upgrading** below.
 - Reports name skipped baseline runs and why (`skipped_runs`), and say when a run was incomplete (`run.complete`). `explain` and `evidence` show a failure's whole message.
 - Changes outside examples say whether they happened before, between or after them. In `-j`, `attribution.setup` is now true only for setup; use `attribution.phase`.
 - Two apps in one repository no longer share a baseline: the project is the nearest directory with a manifest (Gemfile, Cargo.toml, package.json, …), else the current directory.
+- A run is left out of a baseline only when it skipped examples this run ran (a failed spec file, `--fail-fast`, a focus filter). A suite that grows or shrinks, a red `--fail-fast` suite, or fixing a spec file that never loaded no longer hides a regression landing in that run.
+- A run is INCOMPLETE only when it skipped examples its baseline ran; deleting spec files is a real change, not a partial run. A load error names the file and Ruby's cause: `./spec/x_spec.rb failed to load: SyntaxError: …`.
+- `history --signals`: a focus or load-error run no longer counts as resolving a signal, and INCOMPLETE is never listed as still open. `history` marks incomplete runs, and `history --context <unknown>` exits 2 like `changes`.
 
 ### Upgrading
 
 - An app below its repository root, or a directory in a repository with no manifest, starts a fresh baseline once ("no earlier runs"). Runs at a repository root with a manifest keep theirs.
+- Runs recorded before this version carry no count of defined examples; a smaller one is still judged by which examples it ran, so right after a suite grew it may be skipped until it ages out of the last 10 runs.
 
 - The first command after upgrading migrates the database — seconds on a large store. Then run `siftr gc` once to prune the backlog and shrink the file; until you do, each run prunes a bounded amount.
