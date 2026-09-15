@@ -236,7 +236,7 @@ Latency values are in ms. "n/a" means no signal.
 around them, once real suites broke two assumptions the backtest never tested:
 every run ran the whole suite, and one group per example suits every change.
 Sections 1–6 are left as measured. Code: `crates/siftr-core/src/baseline.rs`,
-`crates/siftr-core/src/signal.rs`, `crates/siftr-cli/src/cmd/history.rs`.
+`crates/siftr-core/src/signal.rs`, `crates/siftr/src/cmd/history.rs`.
 
 **Baseline eligibility, v2** (3586139, replacing 2ac34c9). §3 only ever used
 clean runs as a baseline. v1 dropped a recent run by counts: no test summary,
@@ -321,7 +321,7 @@ baselines, but the backtest wasn't re-run to confirm it. The revisions are
 checked instead by fixture tests that replay captured RSpec runs through the
 binary:
 
-- `crates/siftr-cli/tests/core_hunt.rs`: grown, shrunk and red `--fail-fast`
+- `crates/siftr/tests/core_hunt.rs`: grown, shrunk and red `--fail-fast`
   suites; fixing a file that never loaded; a deleted spec file as one change
   and never a reminder; focus and load-error runs resolving nothing.
 - `core_reminders.rs`: a reminder keeps the DISAPPEARED query that supports its

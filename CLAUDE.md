@@ -75,7 +75,7 @@ crates/
   siftr-normalize  per-line masker → template + typed slots; slot stats + identifier/enum classification. Zero deps.
   siftr-core    pure: domain types, interpret, aggregate, baseline, signal. No I/O.
   siftr-store   one concrete `Store` over SQLite (rusqlite, bundled); a trait arrives with a second backend.
-  siftr-cli     the `siftr` binary: capture, commands, rendering.
+  siftr         the `siftr` binary: capture, commands, rendering.
 dogfood/        real projects/scripts used to exercise siftr end to end
 fixtures/       committed captured outputs used by tests (no private data)
 docs/findings/  measurements and experiments that justified a design choice
@@ -163,7 +163,7 @@ share.
   Plain RSpec exits **1** after one Ctrl-C, so pass the child's code through
   rather than assuming 130. Interrupted runs must never enter a baseline: a
   partial run reads as mass DISAPPEARED.
-- The embedded RSpec listener (`crates/siftr-cli/assets/`) is the source of
+- The embedded RSpec listener (`crates/siftr/assets/`) is the source of
   truth; siftr rebases its absolute log offsets (checked by `log_ino`) onto the
   captured slice.
 - Test timing is noisy (the same demo example varied 9x across two baseline

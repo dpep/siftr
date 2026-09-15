@@ -1,10 +1,16 @@
 [package]
-name = "siftr-cli"
-description = "The siftr binary: wrap a command, record its behaviors, and surface what changed."
+name = "siftr"
+description = "Wrap a test command, learn its behaviors, and surface what changed since recent runs, with evidence."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["rspec", "rails", "regression", "telemetry", "cli"]
+categories = ["command-line-utilities", "development-tools::testing"]
 
 [[bin]]
 name = "siftr"

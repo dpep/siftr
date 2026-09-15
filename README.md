@@ -332,7 +332,7 @@ Run the suite through siftr, read the first line of the report, and drill down o
 4. With `-j`, exit 2 means `error.code` tells you what went wrong: `usage` (fix the arguments), `not_found` (the run, signal, behavior or context doesn't exist), `busy` (retry) or `failed`. Exit 1 means nothing was found, and you still get the command's normal document, empty (`run: null`; `[]` for `history`).
 5. Once you act, record it: `siftr ack <signal> -m '…'` when you're fixing it, `siftr dismiss <signal> -m '…'` when it's intended. `siftr history --signals` shows what became of each.
 
-The `-j` fields that matter (full schema: top of [`crates/siftr-cli/src/output.rs`](crates/siftr-cli/src/output.rs)):
+The `-j` fields that matter (full schema: top of [`crates/siftr/src/output.rs`](crates/siftr/src/output.rs)):
 
 - `run.complete`: false when the run was unfinished, interrupted, or INCOMPLETE.
 - `changes`: number of code-level groups. `baseline_runs`: the run ids compared against. `skipped_runs[]`: {`run`, `reason`}, where `reason` is `no_test_summary`, `errors_outside_examples`, `stopped` or `subset`.

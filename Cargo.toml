@@ -7,11 +7,15 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
+authors = ["Daniel Pepper"]
+repository = "https://github.com/dpep/siftr"
+homepage = "https://github.com/dpep/siftr"
 
 [workspace.dependencies]
-siftr-core = { path = "crates/siftr-core" }
-siftr-normalize = { path = "crates/siftr-normalize" }
-siftr-store = { path = "crates/siftr-store" }
+# crates.io needs a version beside each path; keep these in step with workspace.package.version.
+siftr-core = { path = "crates/siftr-core", version = "0.1.0" }
+siftr-normalize = { path = "crates/siftr-normalize", version = "0.1.0" }
+siftr-store = { path = "crates/siftr-store", version = "0.1.0" }
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive", "env"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
