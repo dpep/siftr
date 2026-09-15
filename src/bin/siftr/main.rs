@@ -41,6 +41,7 @@ What siftr stores (the command's own output always passes through unchanged):
 
 Examples:
   siftr run -- bundle exec rspec
+  siftr --quiet-unless-changed -- backup.sh   silent unless something changed, for cron, CI and git hooks
   siftr log/production.log
   siftr cron
   siftr changes

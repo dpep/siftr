@@ -29,11 +29,15 @@ pub struct Args {
     /// Context to compare this input within
     #[arg(long, value_name = "NAME", default_value = "ingest")]
     context: String,
+
+    #[command(flatten)]
+    report: super::run::Report,
 }
 
 const CHUNK_BYTES: usize = 256 * 1024;
 
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
+    args.report.check(globals.json)?;
     let location = project::current()?;
     let mut argv = vec![
         "siftr".to_owned(),
@@ -84,6 +88,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let recorded = recording.finish(exit_code)?;
 
     let open = super::still_open(globals, &recorded.run, &recorded.signals);
+    if !args.report.shows(&recorded.signals, &open) {
+        return Ok(ExitCode::SUCCESS);
+    }
     let changes = Changes {
         run: &recorded.run,
         behaviors: recorded.behaviors,

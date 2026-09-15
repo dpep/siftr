@@ -59,6 +59,7 @@ Runs `CMD`, passes its output through, records the run, and prints changes to st
 
 - `-q` hides the command's output and keeps only siftr's report.
 - `-j` prints the changes as JSON on stdout (implies `-q`).
+- `--quiet-unless-changed` prints siftr's report only when there's something to read: a change, or one still open. Otherwise siftr adds nothing, so a job wrapped for cron, CI or a git hook prints only what the command did. It can't be combined with `-j`, which always prints its document.
 
 siftr stays out of the command's way. `siftr run -- … | head` stops the command just as it would unwrapped, and the truncated run never becomes a baseline. If the data directory is busy (another siftr holding it) or unusable, the command runs anyway, unrecorded, with one warning. Under `-j` you still get a document, with `run: null` and `not_recorded: {code, message}`.
 
@@ -85,6 +86,27 @@ next: siftr explain s1
 ```
 
 A disappearance is never reminded. A query or spec you removed on purpose isn't a regression left in place.
+
+#### Unattended: cron, CI, git hooks
+
+Cron mails whatever a job prints, so wrap a scheduled job with `--quiet-unless-changed`:
+
+```
+0 3 * * * /usr/local/bin/siftr --quiet-unless-changed -- /usr/local/bin/backup.sh --full
+```
+
+The job's own output and exit code pass through as always. siftr adds:
+
+| The run | siftr prints |
+|---|---|
+| nothing changed, or the first runs, with too little baseline to compare | nothing |
+| a change outside every example only (the environment or suite hooks) | nothing |
+| interrupted or killed, so not compared | nothing |
+| a change, INCOMPLETE included | the report |
+| an earlier change still open | the report, every run until it's fixed or `siftr dismiss`ed |
+| not recorded (the data directory busy or unusable), or siftr failing | its warning or error |
+
+A reminder repeats on purpose: a regression left in place should keep nagging. `siftr dismiss sN -m why` stops it. `siftr cron` prints each crontab job in this form.
 
 #### When a run is incomplete
 
@@ -253,7 +275,7 @@ next: siftr changes r6
 
 ### `siftr ingest [FILE]`
 
-Records a file, or stdin, as a run's stdout, for output you already have. `--context NAME` groups comparable inputs (default `ingest`). `--dir DIR` replays a captured scenario: any of `stdout.txt`, `stderr.txt`, `rspec.ndjson`, `test.log`, `exit_code.txt`.
+Records a file, or stdin, as a run's stdout, for output you already have. `--context NAME` groups comparable inputs (default `ingest`). `--dir DIR` replays a captured scenario: any of `stdout.txt`, `stderr.txt`, `rspec.ndjson`, `test.log`, `exit_code.txt`. `--quiet-unless-changed` works as for `run`.
 
 ```
 $ siftr ingest --context demo --dir fixtures/rails_demo/baseline      # and baseline_2
@@ -266,16 +288,16 @@ next: siftr explain s9
 
 ### `siftr cron`
 
-What runs on a schedule here, where cron's output goes, and the line that records each crontab job through `siftr --`. It reads your crontab, `/etc/crontab`, `/etc/cron.d`, launchd user agents on a calendar or interval, the mail spool, `/var/log/cron`, syslog and the macOS unified log. It edits nothing, runs no job and records nothing. With a synthetic crontab and agent:
+What runs on a schedule here, where cron's output goes, and the line that records each crontab job through `siftr --quiet-unless-changed --`. It reads your crontab, `/etc/crontab`, `/etc/cron.d`, launchd user agents on a calendar or interval, the mail spool, `/var/log/cron`, syslog and the macOS unified log. It edits nothing, runs no job and records nothing. With a synthetic crontab and agent:
 
 ```
 $ siftr cron
 scheduled jobs
   crontab -l               2 jobs
     0 3 * * *  /usr/local/bin/backup.sh --full
-      record it: 0 3 * * * /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/readme-cron/bin/siftr -- /usr/local/bin/backup.sh --full
+      record it: 0 3 * * * /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/readme-cron/bin/siftr --quiet-unless-changed -- /usr/local/bin/backup.sh --full
     */15 * * * *  cd ~/notes && git pull -q
-      record it: */15 * * * * /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/readme-cron/bin/siftr -- sh -c 'cd ~/notes && git pull -q'
+      record it: */15 * * * * /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/readme-cron/bin/siftr --quiet-unless-changed -- sh -c 'cd ~/notes && git pull -q'
   /etc/crontab             absent
   /etc/cron.d              absent
   ~/Library/LaunchAgents   1 job
@@ -285,7 +307,7 @@ where cron's output goes
   /var/log/cron            absent
   /var/log/syslog          absent
   unified log, last 7d     no lines from cron
-note: a wrapped job's report goes to stderr, so cron mails it after every run
+note: a wrapped job adds nothing to cron's mail unless something changed or is still open
 next: crontab -e, and replace a job with its record-it line
 ```
 

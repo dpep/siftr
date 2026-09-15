@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use siftr::context::Context;
 use siftr::observation::Stream;
+use siftr::store::StoredSignal;
 use signal_hook::consts::{SIGINT, SIGPIPE, SIGTERM};
 
 use super::Globals;
@@ -29,6 +30,9 @@ pub struct Args {
     #[arg(short, long)]
     quiet: bool,
 
+    #[command(flatten)]
+    report: Report,
+
     /// The command and its arguments
     #[arg(
         required = true,
@@ -37,6 +41,35 @@ pub struct Args {
         value_name = "CMD"
     )]
     command: Vec<OsString>,
+}
+
+/// When siftr's report prints, shared by `run` and `ingest`.
+#[derive(clap::Args)]
+pub struct Report {
+    /// Print siftr's report only when something changed or is still open; warnings and errors always print
+    #[arg(long)]
+    quiet_unless_changed: bool,
+}
+
+impl Report {
+    /// `-j` always prints its one document, so the flag would silently do nothing there.
+    pub fn check(&self, json: bool) -> Result<()> {
+        if self.quiet_unless_changed && json {
+            return Err(output::usage(
+                "--quiet-unless-changed can't be used with -j, which always prints its document; \
+                 read its changes and open_signals instead",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Worth reading: a change `changes` counts, or one still open. A first run, a setup-only change and an
+    /// interrupted run aren't.
+    pub fn shows(&self, signals: &[StoredSignal], open: &[StoredSignal]) -> bool {
+        !self.quiet_unless_changed
+            || !open.is_empty()
+            || output::groups(signals).iter().any(|group| !group.setup)
+    }
 }
 
 /// Bounds memory if analysis falls behind; passthrough happens before a chunk is queued, so it never waits.
@@ -61,6 +94,10 @@ enum Event {
 }
 
 pub fn run(args: Args, globals: &Globals) -> ExitCode {
+    if let Err(error) = args.report.check(globals.json) {
+        output::error(&error, globals.json);
+        return ExitCode::from(2);
+    }
     let argv: Vec<String> = args
         .command
         .iter()
@@ -245,9 +282,16 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
         // A partial run would read as behaviors disappearing, next to every baseline it joined.
         Some(signal) => recording
             .finish_interrupted(Some(code), signal)
-            .map(|recorded| report(&recorded, &[], globals.json)),
+            .map(|recorded| {
+                if args.report.shows(&recorded.signals, &[]) {
+                    report(&recorded, &[], globals.json);
+                }
+            }),
         None => recording.finish(Some(code)).map(|recorded| {
             let open = super::still_open(globals, &recorded.run, &recorded.signals);
+            if !args.report.shows(&recorded.signals, &open) {
+                return;
+            }
             report(&recorded, &open, globals.json);
             let shown = output::surfaced(&recorded.signals, globals.json)
                 .into_iter()

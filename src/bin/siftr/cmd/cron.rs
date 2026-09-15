@@ -226,7 +226,7 @@ impl Discovery {
         if wrappable {
             writeln!(
                 w,
-                "note: a wrapped job's report goes to stderr, so cron mails it after every run"
+                "note: a wrapped job adds nothing to cron's mail unless something changed or is still open"
             )?;
             writeln!(
                 w,
@@ -428,7 +428,7 @@ pub fn wrap(job: &Job, siftr: &str) -> String {
         .as_deref()
         .map_or(String::new(), |u| format!("{u} "));
     format!(
-        "{} {user}{} -- {command}",
+        "{} {user}{} --quiet-unless-changed -- {command}",
         job.schedule,
         shell_join(&[siftr])
     )
@@ -543,26 +543,26 @@ mod tests {
         let wrapped = |line: &str, with_user| job(line, with_user).unwrap().wrapped.unwrap();
         assert_eq!(
             wrapped("0 3 * * * /usr/local/bin/backup.sh --full", false),
-            "0 3 * * * /opt/bin/siftr -- /usr/local/bin/backup.sh --full"
+            "0 3 * * * /opt/bin/siftr --quiet-unless-changed -- /usr/local/bin/backup.sh --full"
         );
         assert_eq!(
             wrapped("@daily root cleanup", true),
-            "@daily root /opt/bin/siftr -- cleanup"
+            "@daily root /opt/bin/siftr --quiet-unless-changed -- cleanup"
         );
         assert_eq!(
             wrapped(
                 "0 * * * * cd ~/notes && git commit -qam 'auto' >/dev/null",
                 false
             ),
-            r"0 * * * * /opt/bin/siftr -- sh -c 'cd ~/notes && git commit -qam '\''auto'\'' >/dev/null'"
+            r"0 * * * * /opt/bin/siftr --quiet-unless-changed -- sh -c 'cd ~/notes && git commit -qam '\''auto'\'' >/dev/null'"
         );
         assert_eq!(
             wrapped("0 0 * * * date +\\%F", false),
-            r"0 0 * * * /opt/bin/siftr -- sh -c 'date +\%F'"
+            r"0 0 * * * /opt/bin/siftr --quiet-unless-changed -- sh -c 'date +\%F'"
         );
         assert_eq!(
             wrapped("0 0 * * * LANG=C sort x", false),
-            "0 0 * * * /opt/bin/siftr -- sh -c 'LANG=C sort x'"
+            "0 0 * * * /opt/bin/siftr --quiet-unless-changed -- sh -c 'LANG=C sort x'"
         );
     }
 
