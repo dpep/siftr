@@ -121,6 +121,12 @@ limit:
 - two or more rotations: `test.log.0` is not the starting inode. Bytes are lost
   and this is detectable, so report the log evidence as partial.
 
+Inode numbers are identity only while the file exists. ext4 gives a freed
+number to the next file created, so after two rotations the new `test.log`
+can carry the starting inode (APFS doesn't reuse this fast). siftr holds
+`test.log` and `test.log.0` open from start to end, so neither can be freed and
+no new file can take their numbers.
+
 **Truncation.** `rails log:clear` truncates in place (same inode). The logger
 opens the file O_APPEND, so writes continue from offset 0. If the end size is
 below the start size, the truncation is detectable. If the run writes more than

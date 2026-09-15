@@ -25,11 +25,27 @@ pub struct RailsLog {
 }
 
 struct Start {
-    /// `test.log`'s identity and size, if it existed.
-    log: Option<(Identity, u64)>,
-    /// `test.log.0`'s identity, to tell a rotation during the run from an old one.
-    rotated: Option<Identity>,
+    /// `test.log` and its size, if it existed.
+    log: Option<(Held, u64)>,
+    /// `test.log.0`, to tell a rotation during the run from an old one.
+    rotated: Option<Held>,
     guard: Vec<u8>,
+}
+
+/// A file open from snapshot to measure. An inode number names a file only while the file exists, and ext4 hands
+/// a freed number to the next file created; holding the file keeps it existing, so an identity match is this file.
+struct Held {
+    identity: Identity,
+    _open: File,
+}
+
+impl Held {
+    fn new((file, metadata): (File, Metadata)) -> Self {
+        Held {
+            identity: Identity::of(&metadata),
+            _open: file,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,23 +93,15 @@ impl RailsLog {
 
     /// Notes where the log ends before the child starts.
     pub fn snapshot(&mut self) -> Result<()> {
-        let log = match open(&self.path)? {
+        let (log, guard) = match open(&self.path)? {
             Some((file, metadata)) => {
                 let size = metadata.len();
-                let from = size.saturating_sub(GUARD_BYTES);
-                Some((
-                    Identity::of(&metadata),
-                    size,
-                    read_range(&file, from, size)?,
-                ))
+                let guard = read_range(&file, size.saturating_sub(GUARD_BYTES), size)?;
+                (Some((Held::new((file, metadata)), size)), guard)
             }
-            None => None,
-        };
-        let rotated = open(&rotated_path(&self.path))?.map(|(_, metadata)| Identity::of(&metadata));
-        let (log, guard) = match log {
-            Some((identity, size, guard)) => (Some((identity, size)), guard),
             None => (None, Vec::new()),
         };
+        let rotated = open(&rotated_path(&self.path))?.map(Held::new);
         self.start = Some(Start {
             log,
             rotated,
@@ -110,14 +118,14 @@ impl RailsLog {
         let segments = match (start.log, current) {
             (None, None) => Vec::new(),
             (Some(_), None) => bail!("it disappeared during the run"),
-            (Some((identity, size)), Some((file, metadata)))
-                if Identity::of(&metadata) == identity =>
+            (Some((held, size)), Some((file, metadata)))
+                if Identity::of(&metadata) == held.identity =>
             {
                 vec![Segment::after(file, &metadata, size, &start.guard)?]
             }
-            (Some((identity, size)), Some((file, metadata))) => {
+            (Some((held, size)), Some((file, metadata))) => {
                 let Some((old, old_metadata)) =
-                    rotated.filter(|(_, metadata)| Identity::of(metadata) == identity)
+                    rotated.filter(|(_, metadata)| Identity::of(metadata) == held.identity)
                 else {
                     bail!(
                         "it rotated more than once during the run, so some of the run's lines are gone"
@@ -129,7 +137,9 @@ impl RailsLog {
                 ]
             }
             (None, Some((file, metadata))) => {
-                if rotated.map(|(_, metadata)| Identity::of(&metadata)) != start.rotated {
+                if rotated.map(|(_, metadata)| Identity::of(&metadata))
+                    != start.rotated.map(|held| held.identity)
+                {
                     bail!(
                         "it was created and rotated during the run, so some of the run's lines are gone"
                     );
@@ -355,10 +365,38 @@ mod tests {
         assert_eq!(bytes(&log.measure().unwrap()), "one\n");
     }
 
+    /// Whether this process still holds inode `ino` open though its last link is gone.
+    fn held_after_unlink(ino: u64) -> bool {
+        // No dev check: macOS's /dev/fd reports its own device, not the file's.
+        std::fs::read_dir("/dev/fd")
+            .unwrap()
+            .filter_map(|entry| std::fs::metadata(entry.ok()?.path()).ok())
+            .any(|m| m.ino() == ino && m.nlink() == 0)
+    }
+
+    #[test]
+    fn the_start_files_stay_held_so_no_new_file_can_take_their_inode_numbers() {
+        let project = Project::new();
+        project.append("before\n");
+        project.rotate();
+        let [rotated, log] = [rotated_path(&project.log()), project.log()]
+            .map(|path| std::fs::metadata(path).unwrap());
+        let mut start = project.snapshot();
+        // Unlinks both: the first rotation replaces the old `.0`, the second the starting `test.log`.
+        project.rotate();
+        project.rotate();
+        for (name, file) in [("test.log", log), ("test.log.0", rotated)] {
+            assert!(held_after_unlink(file.ino()), "{name}");
+        }
+        let error = start.measure().err().expect("two rotations");
+        assert!(error.to_string().contains("more than once"), "{error}");
+    }
+
     #[test]
     fn what_cannot_be_placed_exactly_is_refused() {
+        // Empty, as `rails log:clear` leaves it: no guard bytes, so only identity can tell a new file from this one.
         let rotated_twice = Project::new();
-        rotated_twice.append("before\n");
+        rotated_twice.append("");
         let mut log = rotated_twice.snapshot();
         rotated_twice.rotate();
         rotated_twice.rotate();

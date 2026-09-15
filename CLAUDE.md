@@ -161,7 +161,8 @@ share.
 - Rails writes SQL/request logs to `log/test.log`, not stdout; a run's slice is
   the bytes appended between start and end offsets. Deprecation warnings in the
   test env go to stderr, not the log. Rotation/truncation are detectable, not
-  always recoverable — say so rather than silently mis-attributing.
+  always recoverable — say so rather than silently mis-attributing. An inode
+  number is identity only while the file is held open: ext4 reuses it at once.
 - RSpec (and most tools) colour only when stdout is a TTY, so capturing through
   a pipe changes what the user sees. `siftr run` gives the child a PTY for
   stdout when siftr's own stdout is a terminal, keeps stderr a pipe (the
