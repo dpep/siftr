@@ -1,8 +1,6 @@
-[workspace]
-resolver = "3"
-members = ["crates/*"]
-
-[workspace.package]
+[package]
+name = "siftr"
+description = "Wrap a test command, learn its behaviors, and surface what changed since recent runs, with evidence."
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
@@ -10,14 +8,22 @@ license = "MIT"
 authors = ["Daniel Pepper"]
 repository = "https://github.com/dpep/siftr"
 homepage = "https://github.com/dpep/siftr"
+readme = "README.md"
+keywords = ["rspec", "rails", "regression", "telemetry", "cli"]
+categories = ["command-line-utilities", "development-tools::testing"]
 
-[workspace.dependencies]
-# crates.io needs a version beside each path; keep these in step with workspace.package.version.
-siftr-core = { path = "crates/siftr-core", version = "0.1.0" }
-siftr-normalize = { path = "crates/siftr-normalize", version = "0.1.0" }
-siftr-store = { path = "crates/siftr-store", version = "0.1.0" }
+[[bin]]
+name = "siftr"
+path = "src/bin/siftr/main.rs"
+
+[dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive", "env"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+# PTY, termios and process groups, without unsafe; already in the tree through tempfile.
+rustix = { version = "1.1.4", features = ["pty", "termios", "process"] }
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# Signals delivered on a thread, so siftr can forward them and still persist the run.
+signal-hook = "0.3.18"
 tempfile = "3.27.0"

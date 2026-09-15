@@ -6,7 +6,7 @@ set -euo pipefail
 APP=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=$(cd "$APP/../.." && pwd)
 # The listener siftr embeds; the docs copy is the original experiment's.
-LISTENER=$ROOT/crates/siftr/assets/siftr_rspec_listener.rb
+LISTENER=$ROOT/assets/siftr_rspec_listener.rb
 OUT=${OUT:-$ROOT/fixtures/rails_demo}
 LOG=$APP/log/test.log
 

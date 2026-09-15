@@ -410,33 +410,9 @@ dependencies = [
  "clap",
  "rusqlite",
  "rustix",
- "serde_json",
- "siftr-core",
- "siftr-store",
- "signal-hook",
- "tempfile",
-]
-
-[[package]]
-name = "siftr-core"
-version = "0.1.0"
-dependencies = [
  "serde",
  "serde_json",
- "siftr-normalize",
-]
-
-[[package]]
-name = "siftr-normalize"
-version = "0.1.0"
-
-[[package]]
-name = "siftr-store"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rusqlite",
- "siftr-core",
+ "signal-hook",
  "tempfile",
 ]
 
