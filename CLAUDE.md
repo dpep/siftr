@@ -128,6 +128,10 @@ logging to stderr, flag > env > XDG for paths).
 
 ## Gate
 
+Push straight to `main` — no pull requests for this repo. Branch protection
+requires the `Rust` check but doesn't enforce admins, so a direct push is
+allowed; still watch that push's CI before tagging or publishing.
+
 Before every commit:
 
 ```
