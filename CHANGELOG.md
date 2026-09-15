@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 — 2026-09-15
 
 - A path in a log line no longer ties a behavior to the machine or directory it ran in. Where the path lives is canonicalized: the project root to `<root>/`, a home to `~/`, a temp dir to `<tmp>/` (with the names generated in it as `<tmpname>`), an installed gem, crate or npm package to `<gem:name>/`, `<crate:name>/` or `<npm:pkg>/`. What it names stays, so one deprecation warning on a laptop and in CI is one behavior, and upgrading a gem doesn't make its backtrace lines new.
 - Behaviors carry what their paths are (database, lock, manifest, log, test, source, view, config, dependency, temp), in `summary` and `explain` and as `behavior.roles` in `-j`. Nothing is signalled on them.
