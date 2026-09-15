@@ -27,12 +27,13 @@ The suite passed, and the N+1 costs under a millisecond, so neither the exit cod
 
 ## Install
 
-No release or Homebrew formula yet. Install from a clone (Rust 1.98+):
+From crates.io (Rust 1.98+):
 
 ```
-git clone <this repo> && cd siftr
-cargo install --path .
+cargo install siftr
 ```
+
+Or from a clone: `cargo install --path .`
 
 ## Usage
 
