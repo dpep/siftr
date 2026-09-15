@@ -280,6 +280,11 @@ exit=2
 
 The data directory holds `siftr.db` and each run's raw capture under `runs/<run>/`. The database also records how signals get used (shown, explained, acked, dismissed). Nothing leaves the machine.
 
+Nothing siftr stores holds a credential it recognizes: tokens (GitHub, GitLab, AWS, Google, Slack, Stripe, npm, SendGrid, OpenAI), JWTs, private keys, `Authorization` values, URL passwords, cookie values, and high-entropy values under keys like `password`, `api_key` or `access_token`, including Rails SQL binds. They are masked line by line before anything is written, as `<TOKEN_1>`, `<SECRET_2>` (the same number for the same value within a run). What the command prints to your terminal is untouched. Two settings choose what else is kept:
+
+- `SIFTR_REDACT=secrets` (default); `pii` also masks emails, public IPs and home directories in raw captures and kept lines; `off` keeps raw captures as the command wrote them. Kept lines and templates mask credentials under every setting, so behavior ids never depend on it.
+- `SIFTR_CAPTURE=off` writes no raw capture. `explain` and `evidence` then show the kept lines (first 1024 bytes) instead of a failure's whole message.
+
 siftr deletes old data as runs finish. Per command it keeps:
 
 - stats for the last 100 runs (`SIFTR_KEEP_RUNS`);

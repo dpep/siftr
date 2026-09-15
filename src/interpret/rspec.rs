@@ -12,6 +12,7 @@ use super::{Claim, Event, Interpreter, Outcome, generic, literal, rails};
 use crate::aggregate::{Aggregator, Phase};
 use crate::behavior::{BehaviorId, Kind};
 use crate::normalize::Normalizer;
+use crate::normalize::secrets::unnumber;
 use crate::observation::{Observation, Stream};
 
 /// `Stream::File` name of the listener's ndjson events.
@@ -109,17 +110,15 @@ impl Rspec {
                 self.template.clear();
                 match loaded_file(&context) {
                     Some(file) => {
-                        self.template.extend_from_slice(file.as_bytes());
+                        unnumber(file.as_bytes(), &mut self.template);
                         self.template.extend_from_slice(b" failed to load");
                     }
-                    None => self
-                        .template
-                        .extend_from_slice(context.trim_end_matches('.').as_bytes()),
+                    None => unnumber(context.trim_end_matches('.').as_bytes(), &mut self.template),
                 }
                 let cause = message.as_deref().and_then(cause);
                 for part in [class.as_deref(), cause.as_deref()].into_iter().flatten() {
                     self.template.extend_from_slice(b": ");
-                    self.template.extend_from_slice(part.as_bytes());
+                    unnumber(part.as_bytes(), &mut self.template);
                 }
                 emit(&Event {
                     kind: Kind::Exception,
@@ -143,11 +142,10 @@ impl Rspec {
         emit: &mut impl FnMut(&Event<'_>),
     ) {
         self.template.clear();
-        self.template
-            .extend_from_slice(example.spec_file().as_bytes());
+        // Event lines arrive redacted, their placeholders numbered per run.
+        unnumber(example.spec_file().as_bytes(), &mut self.template);
         self.template.extend_from_slice(b" # ");
-        self.template
-            .extend_from_slice(example.full_description.as_bytes());
+        unnumber(example.full_description.as_bytes(), &mut self.template);
         let id = BehaviorId::of(Kind::TestExample, &self.template);
         if let (Some((started, start)), Some(end)) = (self.started.take(), example.log_offset)
             && started == example.id

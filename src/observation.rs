@@ -71,6 +71,37 @@ pub struct Observation<'a> {
 /// Truncating rather than splitting keeps `seq` equal to the line number in the capture.
 pub const MAX_LINE: usize = 1 << 20;
 
+/// One line as it arrived, before [`Observation`] drops its `\r`: enough to write the line back out.
+#[derive(Debug, Clone, Copy)]
+pub struct RawLine<'a> {
+    pub seq: u64,
+    /// At most [`MAX_LINE`] bytes, a trailing `\r` included, without the `\n`.
+    pub bytes: &'a [u8],
+    /// Bytes the line took in the stream, terminator included.
+    pub raw_len: u64,
+    /// Whether a `\n` ended it: only a stream's last line may lack one.
+    pub terminated: bool,
+}
+
+impl<'a> RawLine<'a> {
+    /// The line without its `\r`, and whether it had one.
+    pub fn body(&self) -> (&'a [u8], bool) {
+        match self.bytes.strip_suffix(b"\r") {
+            Some(body) => (body, true),
+            None => (self.bytes, false),
+        }
+    }
+
+    fn observation(self, stream: &'a Stream) -> Observation<'a> {
+        Observation {
+            stream,
+            seq: self.seq,
+            line: self.body().0,
+            raw_len: self.raw_len,
+        }
+    }
+}
+
 /// Splits one stream's byte chunks into numbered lines, carrying a partial line across chunks.
 #[derive(Debug, Default)]
 pub struct LineSplitter {
@@ -92,6 +123,11 @@ impl LineSplitter {
         chunk: &[u8],
         mut on_line: impl FnMut(Observation<'_>),
     ) {
+        self.feed_raw(chunk, |raw| on_line(raw.observation(stream)));
+    }
+
+    /// [`LineSplitter::feed`], each line as it arrived.
+    pub fn feed_raw(&mut self, chunk: &[u8], mut on_line: impl FnMut(RawLine<'_>)) {
         let mut rest = chunk;
         while let Some(newline) = rest.iter().position(|&b| b == b'\n') {
             let (head, tail) = rest.split_at(newline);
@@ -104,11 +140,11 @@ impl LineSplitter {
                 self.keep(head);
                 &self.carry
             };
-            on_line(Observation {
-                stream,
+            on_line(RawLine {
                 seq: self.seq,
-                line: clip(line),
+                bytes: &line[..line.len().min(MAX_LINE)],
                 raw_len,
+                terminated: true,
             });
             self.carry.clear();
             self.carry_len = 0;
@@ -125,13 +161,18 @@ impl LineSplitter {
 
     /// Emits the trailing unterminated line, if any. Call at end of stream.
     pub fn finish(&mut self, stream: &Stream, mut on_line: impl FnMut(Observation<'_>)) {
+        self.finish_raw(|raw| on_line(raw.observation(stream)));
+    }
+
+    /// [`LineSplitter::finish`], the line as it arrived.
+    pub fn finish_raw(&mut self, mut on_line: impl FnMut(RawLine<'_>)) {
         if self.carry_len > 0 {
             self.seq += 1;
-            on_line(Observation {
-                stream,
+            on_line(RawLine {
                 seq: self.seq,
-                line: clip(&self.carry),
+                bytes: &self.carry,
                 raw_len: self.carry_len,
+                terminated: false,
             });
             self.carry.clear();
             self.carry_len = 0;
@@ -142,11 +183,6 @@ impl LineSplitter {
     pub fn lines(&self) -> u64 {
         self.seq
     }
-}
-
-fn clip(line: &[u8]) -> &[u8] {
-    let line = &line[..line.len().min(MAX_LINE)];
-    line.strip_suffix(b"\r").unwrap_or(line)
 }
 
 #[cfg(test)]

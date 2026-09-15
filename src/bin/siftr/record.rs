@@ -1,24 +1,29 @@
-//! One recorded run, shared by `run` and `ingest`: raw bytes to the capture, lines through the analyzer,
-//! then aggregates, baseline and signals persisted together.
+//! One recorded run, shared by `run` and `ingest`: each line redacted once, then to the capture and through the
+//! analyzer, then aggregates, baseline and signals persisted together.
 
+use std::os::unix::ffi::OsStrExt;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context as _, Result};
 use siftr::analyze::{Analysis, Analyzer};
 use siftr::baseline::{Baseline, Ineligible, MAX_RUNS};
 use siftr::context::Context;
-use siftr::observation::{LineSplitter, Stream};
+use siftr::normalize::secrets::{Mode, Redactor, Scanner};
+use siftr::observation::{LineSplitter, Observation, RawLine, Stream};
 use siftr::signal::detect;
 use siftr::store::{Capture, Finished, NewRun, RunEnd, RunId, RunRecord, Store, StoredSignal};
 
 use crate::output;
+use crate::privacy::Privacy;
 
 pub struct Recording {
     store: Store,
     run: RunId,
     context: Context,
     capture: Option<Capture>,
-    streams: Vec<(Stream, LineSplitter)>,
+    streams: Vec<(Stream, LineSplitter, Scanner)>,
+    redactor: Redactor,
+    redact: Mode,
     analyzer: Analyzer,
     started: Instant,
 }
@@ -38,7 +43,8 @@ pub struct Begun {
     store: Store,
     run: RunId,
     context: Context,
-    capture: Capture,
+    capture: Option<Capture>,
+    redact: Mode,
     started: Instant,
 }
 
@@ -58,13 +64,18 @@ impl Begun {
             cwd,
             started_at: now.checked_sub(started.elapsed()).unwrap_or(now),
         };
+        let privacy = Privacy::from_env();
         let run = store.begin_run(&new)?;
-        let capture = store.capture(run)?;
+        let capture = match privacy.capture {
+            true => Some(store.capture(run)?),
+            false => None,
+        };
         Ok(Begun {
             store,
             run,
             context,
             capture,
+            redact: privacy.redact,
             started,
         })
     }
@@ -73,12 +84,15 @@ impl Begun {
 impl From<Begun> for Recording {
     fn from(begun: Begun) -> Self {
         let roots = crate::project::roots(begun.context.project());
+        let home = std::env::var_os("HOME");
         Recording {
             store: begun.store,
             run: begun.run,
             context: begun.context,
-            capture: Some(begun.capture),
+            capture: begun.capture,
             streams: Vec::new(),
+            redactor: Redactor::new(home.as_ref().map(|home| home.as_bytes())),
+            redact: begun.redact,
             analyzer: Analyzer::with_roots(roots),
             started: begun.started,
         }
@@ -96,37 +110,28 @@ impl Recording {
         Begun::new(store, context, command, cwd, started).map(Recording::from)
     }
 
-    /// Raw bytes from `stream`, in arrival order. A capture write failure warns once and stops the capture only.
+    /// Raw bytes from `stream`, in arrival order.
     pub fn chunk(&mut self, stream: &Stream, bytes: &[u8]) {
-        if let Some(capture) = &mut self.capture
-            && let Err(error) = capture.write(stream, bytes)
-        {
-            output::warn(format_args!("raw capture stopped: {error}"));
-            self.capture = None;
-        }
-        let index = match self.streams.iter().position(|(known, _)| known == stream) {
+        let index = match self.streams.iter().position(|(known, ..)| known == stream) {
             Some(index) => index,
             None => {
-                self.streams.push((stream.clone(), LineSplitter::new()));
+                let fresh = (stream.clone(), LineSplitter::new(), Scanner::default());
+                self.streams.push(fresh);
                 self.streams.len() - 1
             }
         };
-        let (stream, splitter) = &mut self.streams[index];
-        let analyzer = &mut self.analyzer;
-        splitter.feed(stream, bytes, |obs| analyzer.observe(obs));
+        let (stream, splitter, scanner) = &mut self.streams[index];
+        let mut sink = Sink {
+            capture: &mut self.capture,
+            redactor: &mut self.redactor,
+            redact: self.redact,
+            analyzer: &mut self.analyzer,
+        };
+        splitter.feed_raw(bytes, |raw| sink.line(stream, scanner, raw));
     }
 
     pub fn finish(self, exit_code: Option<i32>) -> Result<Recorded> {
-        let Recording {
-            mut store,
-            run,
-            context,
-            capture,
-            streams,
-            analyzer,
-            started,
-        } = self;
-        let (wall, analysis) = analyze(capture, streams, analyzer, started);
+        let (mut store, run, context, wall, analysis) = self.analyze();
 
         let recent = store.baseline_runs(&context, run, MAX_RUNS)?;
         let current = analysis.stats();
@@ -163,16 +168,7 @@ impl Recording {
     /// `exit_code` is the child's own exit, not assumed from `signal`: a trapping child (RSpec force-quits
     /// only on the second SIGINT) can still exit with its own code rather than dying by the signal.
     pub fn finish_interrupted(self, exit_code: Option<i32>, signal: i32) -> Result<Recorded> {
-        let Recording {
-            mut store,
-            run,
-            capture,
-            streams,
-            analyzer,
-            started,
-            ..
-        } = self;
-        let (wall, analysis) = analyze(capture, streams, analyzer, started);
+        let (mut store, run, _, wall, analysis) = self.analyze();
 
         let end = RunEnd {
             wall,
@@ -188,24 +184,87 @@ impl Recording {
             signals: Vec::new(),
         })
     }
+
+    /// Drains buffered lines through the analyzer and closes the capture: shared tail of `finish` and
+    /// `finish_interrupted`.
+    fn analyze(self) -> (Store, RunId, Context, Duration, Analysis) {
+        let Recording {
+            store,
+            run,
+            context,
+            mut capture,
+            mut streams,
+            mut redactor,
+            redact,
+            mut analyzer,
+            started,
+        } = self;
+        let wall = started.elapsed();
+        let mut sink = Sink {
+            capture: &mut capture,
+            redactor: &mut redactor,
+            redact,
+            analyzer: &mut analyzer,
+        };
+        for (stream, splitter, scanner) in &mut streams {
+            splitter.finish_raw(|raw| sink.line(stream, scanner, raw));
+        }
+        if let Some(capture) = capture
+            && let Err(error) = capture.finish()
+        {
+            output::warn(format_args!("raw capture incomplete: {error}"));
+        }
+        let mut analysis = analyzer.finish();
+        // Kept lines come from the masked view templates need, so pii's extra masking reaches them here.
+        if redact == Mode::Pii {
+            let exemplars = analysis
+                .aggregates
+                .iter_mut()
+                .flat_map(|a| &mut a.exemplars);
+            for exemplar in exemplars {
+                let views =
+                    redactor.line(&mut Scanner::default(), exemplar.line.as_bytes(), redact);
+                if views.evidence != exemplar.line.as_bytes() {
+                    exemplar.line = String::from_utf8_lossy(views.evidence).into_owned();
+                }
+            }
+        }
+        (store, run, context, wall, analysis)
+    }
 }
 
-/// Drains buffered lines through the analyzer and closes the capture: shared tail of `finish` and
-/// `finish_interrupted`.
-fn analyze(
-    capture: Option<Capture>,
-    mut streams: Vec<(Stream, LineSplitter)>,
-    mut analyzer: Analyzer,
-    started: Instant,
-) -> (Duration, Analysis) {
-    let wall = started.elapsed();
-    for (stream, splitter) in &mut streams {
-        splitter.finish(stream, |obs| analyzer.observe(obs));
+/// Where each line goes once redacted.
+struct Sink<'r> {
+    capture: &'r mut Option<Capture>,
+    redactor: &'r mut Redactor,
+    redact: Mode,
+    analyzer: &'r mut Analyzer,
+}
+
+impl Sink<'_> {
+    /// A capture write failure warns once and stops the capture only.
+    fn line(&mut self, stream: &Stream, scanner: &mut Scanner, raw: RawLine<'_>) {
+        let (body, cr) = raw.body();
+        let views = self.redactor.line(scanner, body, self.redact);
+        // A line past `MAX_LINE` is captured clipped, as analyzed: an unscanned tail could hold a credential.
+        if let Some(capture) = self.capture.as_mut() {
+            let ending: &[u8] = match (cr, raw.terminated) {
+                (true, true) => b"\r\n",
+                (true, false) => b"\r",
+                (false, true) => b"\n",
+                (false, false) => b"",
+            };
+            if let Err(error) = capture.write_line(stream, views.evidence, ending) {
+                output::warn(format_args!("raw capture stopped: {error}"));
+                *self.capture = None;
+            }
+        }
+        self.analyzer.observe(Observation {
+            stream,
+            seq: raw.seq,
+            line: views.masked,
+            // As the line arrived: the RSpec listener's log offsets count the real file's bytes.
+            raw_len: raw.raw_len,
+        });
     }
-    if let Some(capture) = capture
-        && let Err(error) = capture.finish()
-    {
-        output::warn(format_args!("raw capture incomplete: {error}"));
-    }
-    (wall, analyzer.finish())
 }

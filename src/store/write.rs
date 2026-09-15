@@ -8,6 +8,7 @@ use rusqlite::params;
 
 use crate::aggregate::Stats;
 use crate::analyze::Analysis;
+use crate::normalize::secrets::redact_text;
 use crate::signal::Signal;
 use crate::store::{BUSY_WAIT, NewRun, RECORDING_LOCK, RunEnd, RunId, Store, busy, lock_within};
 
@@ -35,8 +36,8 @@ impl Store {
                 params![
                     run.context.project(),
                     run.context.name(),
-                    run.command,
-                    run.cwd,
+                    redact_text(run.command),
+                    redact_text(run.cwd),
                     unix_ms(run.started_at),
                 ],
             )

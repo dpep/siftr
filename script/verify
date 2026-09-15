@@ -32,6 +32,17 @@ if [ -z "${SKIP_GATE:-}" ]; then
   cargo clippy --all-targets --manifest-path "$WT/Cargo.toml" -- -D warnings >"$SCRATCH/clippy.log" 2>&1 \
     && echo "clippy: ok" || echo "clippy: FAILED (log: $SCRATCH/clippy.log)"
   cargo fmt --check --manifest-path "$WT/Cargo.toml" >/dev/null 2>&1 && echo "fmt: ok" || echo "fmt: FAILED"
+  if command -v gitleaks >/dev/null 2>&1; then
+    # $WT's .gitignore excludes target/, and gitleaks respects it in a git tree.
+    if gitleaks dir "$WT" --no-banner --redact --exit-code 1 >"$SCRATCH/secrets.log" 2>&1; then
+      echo "secrets: ok"
+    else
+      echo "secrets: FOUND (log: $SCRATCH/secrets.log)"
+      failed=1
+    fi
+  else
+    echo "secrets: skipped (gitleaks not installed)"
+  fi
   [ "$failed" = 0 ] || exit 1
 fi
 

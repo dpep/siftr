@@ -9,6 +9,7 @@ use rusqlite::types::Type;
 use rusqlite::{Row, params};
 
 use crate::behavior::BehaviorId;
+use crate::normalize::secrets::redact_text;
 use crate::store::read::parsed;
 use crate::store::write::unix_ms;
 use crate::store::{RunId, SignalId, Store, StoredSignal};
@@ -140,7 +141,7 @@ impl Store {
                     f.run.0,
                     f.behavior.to_string(),
                     f.signal.map(|s| s.0),
-                    f.note,
+                    f.note.as_deref().map(redact_text),
                 ])?;
             }
         }

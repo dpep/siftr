@@ -186,3 +186,8 @@ share.
   captured slice.
 - Test timing is noisy (the same demo example varied 9x across two baseline
   runs): latency signals need an absolute floor as well as a ratio.
+- Credential-shaped test data (Stripe, GitHub PATs, JWTs, private keys, …)
+  must be assembled at runtime from parts (e.g. `concat!("ghp_", "...")`):
+  GitHub push protection rejects literal tokens even in tests, and
+  allow-listing them in a public repo is not the fix. `script/verify` runs
+  gitleaks to catch regressions.

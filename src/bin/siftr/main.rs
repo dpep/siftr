@@ -3,6 +3,7 @@
 mod cmd;
 mod home;
 mod output;
+mod privacy;
 mod project;
 mod record;
 mod sidechannel;
@@ -23,6 +24,12 @@ Exit codes:
   ack      0 recorded, 2 error
   dismiss  0 recorded, 2 error
   gc       0 done, 2 error
+
+What siftr stores (the command's own output always passes through unchanged):
+  SIFTR_REDACT=secrets  default: credentials (tokens, keys, passwords, cookies) are masked before anything is stored
+  SIFTR_REDACT=pii      also emails, public IPs and home directories in raw captures and kept lines
+  SIFTR_REDACT=off      raw captures keep the output as it was; the database still never holds a credential
+  SIFTR_CAPTURE=off     no raw capture on disk; explain and evidence then show kept lines, not whole messages
 
 Examples:
   siftr run -- bundle exec rspec

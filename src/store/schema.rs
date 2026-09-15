@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result, bail};
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::store::{BUSY_WAIT, StoreBusy, lock_within};
+use crate::store::{BUSY_WAIT, StoreBusy, lock_within, scrub};
 
 /// Append a migration to change the schema; never edit one that has shipped.
 const MIGRATIONS: &[&str] = &[
@@ -205,7 +205,15 @@ WHERE interrupted IS NULL AND wall_ms IS NOT NULL AND exit_code BETWEEN 129 AND 
 -- What a behavior's paths are (database, lock, temp, …), comma-separated; empty when it has none.
 ALTER TABLE behaviors ADD COLUMN roles TEXT NOT NULL DEFAULT '';
 ",
+    r"
+-- siftr 0.1.0 stored credentials verbatim, which no SQL can find: `scrub::credentials` runs right after this, in the
+-- same transaction. It redacts templates (ids kept), kept lines, commands, contexts, notes and exceptions, and
+-- deletes raw captures.
+",
 ];
+
+/// Index of the migration [`scrub::credentials`] completes.
+const SCRUB: i64 = 9;
 
 /// The schema version this siftr reads and writes.
 pub(crate) fn supported() -> i64 {
@@ -230,6 +238,9 @@ pub(crate) fn migrate(conn: &mut Connection, lock: &Path) -> Result<()> {
     let version = checked_version(&tx)?;
     for (applied, migration) in (0..).zip(MIGRATIONS).skip(version.unsigned_abs() as usize) {
         tx.execute_batch(migration)?;
+        if applied == SCRUB {
+            scrub::credentials(&tx, lock.parent().unwrap_or(Path::new(".")))?;
+        }
         tx.pragma_update(None, "user_version", applied + 1_i64)?;
     }
     tx.commit()?;
@@ -358,6 +369,67 @@ mod tests {
             first("b"),
             (None, None),
             "no exemplar kept, no first occurrence"
+        );
+    }
+
+    #[test]
+    fn credentials_an_older_siftr_stored_are_redacted_in_place_and_its_captures_removed() {
+        let home = tempfile::tempdir().unwrap();
+        let mut conn = at_version(home.path(), SCRUB as usize);
+        let ghp = concat!("ghp_", "Q7m2Xk9Lp4Rz8Wv1Tn6Ys3Hb5Jd0Fc2GaK8x");
+        conn.execute_batch(&format!(
+            "INSERT INTO runs (id, project, context, command, cwd, started_at_ms)
+                 VALUES (1, 'p', 'deploy --token={ghp}', 'deploy --token={ghp}', '/', 0);
+             INSERT INTO behaviors (id, kind, template) VALUES ('a', 'log', 'Authorization: Bearer {ghp}'), ('b', 'log', 'plain');
+             INSERT INTO aggregates (run_id, behavior_id, count, errors) VALUES (1, 'a', 1, 0), (1, 'b', 1, 0);
+             INSERT INTO exemplars (run_id, behavior_id, position, stream, seq, line)
+                 VALUES (1, 'a', 0, 'stdout', 1, 'Authorization: Bearer {ghp}'), (1, 'b', 0, 'stdout', 2, 'plain');
+             INSERT INTO feedback (at_ms, kind, command, interface, run_id, behavior_id, note)
+                 VALUES (0, 'acked', 'ack', 'human', 1, 'a', 'leaked {ghp}');"
+        ))
+        .unwrap();
+        let run_dir = home.path().join("runs/r1");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(
+            run_dir.join("stdout.log"),
+            format!("Authorization: Bearer {ghp}\n"),
+        )
+        .unwrap();
+        std::fs::write(run_dir.join(crate::store::RECORDING_LOCK), "").unwrap();
+
+        migrate(&mut conn, &home.path().join("siftr.lock")).unwrap();
+
+        let rows = |sql: &str| -> Vec<String> {
+            conn.prepare(sql)
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        assert_eq!(
+            rows("SELECT id || ' ' || template FROM behaviors ORDER BY id"),
+            ["a Authorization: Bearer <TOKEN>", "b plain"],
+            "ids kept, templates unnumbered"
+        );
+        assert_eq!(
+            rows("SELECT line FROM exemplars ORDER BY behavior_id"),
+            ["Authorization: Bearer <TOKEN_1>", "plain"]
+        );
+        assert_eq!(
+            rows("SELECT command || ' | ' || context FROM runs"),
+            ["deploy --token=<TOKEN_1> | deploy --token=<TOKEN_1>"]
+        );
+        assert_eq!(rows("SELECT note FROM feedback"), ["leaked <TOKEN_1>"]);
+        assert!(
+            !run_dir.join("stdout.log").exists(),
+            "the raw capture is gone"
+        );
+        assert!(run_dir.join(crate::store::RECORDING_LOCK).exists());
+        assert_eq!(
+            crate::context::Context::named("p", "deploy --token=".to_owned() + ghp).name(),
+            rows("SELECT context FROM runs")[0],
+            "a scrubbed run stays in the baseline of the same command run again"
         );
     }
 }

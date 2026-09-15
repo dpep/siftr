@@ -1,5 +1,5 @@
 //! Siftr persistence: runs, behaviors, aggregates, exemplars and signals in SQLite at `<home>/siftr.db`,
-//! plus each run's raw capture, byte for byte, under `<home>/runs/<run>/`.
+//! plus each run's raw capture, line for line with credentials masked, under `<home>/runs/<run>/`.
 
 mod capture;
 mod feedback;
@@ -7,6 +7,7 @@ mod ids;
 mod read;
 mod retention;
 mod schema;
+mod scrub;
 mod write;
 
 use std::cell::RefCell;

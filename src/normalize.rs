@@ -13,6 +13,7 @@
 mod hash;
 mod path;
 mod recognize;
+pub mod secrets;
 mod stats;
 
 pub use hash::fnv1a64;
@@ -247,6 +248,13 @@ impl Normalizer {
                     0x1b => skip_ansi(line, i),
                     b'\'' => self.single_quote(line, i),
                     b'"' => self.double_quote(line, i),
+                    b'<' if let Some((kind, end)) = secrets::placeholder(line, i) => {
+                        // Numbered per run, so the number must not reach identity.
+                        self.template.push(b'<');
+                        self.template.extend_from_slice(kind.name().as_bytes());
+                        self.template.push(b'>');
+                        end
+                    }
                     _ => {
                         self.template.push(b);
                         i + 1

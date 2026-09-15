@@ -1,5 +1,9 @@
 //! What makes runs comparable: the same project and the same command.
 
+use std::borrow::Cow;
+
+use crate::normalize::secrets::redact_text;
+
 /// Baselines only ever compare runs with an equal `Context`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Context {
@@ -13,10 +17,15 @@ impl Context {
         Self::named(project, shell_join(argv))
     }
 
+    /// A credential in the name is masked, the same way every time, so the name stays a stable key.
     pub fn named(project: impl Into<String>, name: impl Into<String>) -> Self {
+        let mut name = name.into();
+        if let Cow::Owned(redacted) = redact_text(&name) {
+            name = redacted;
+        }
         Context {
             project: project.into(),
-            name: name.into(),
+            name,
         }
     }
 
@@ -67,5 +76,20 @@ mod tests {
         for (argv, expected) in cases {
             assert_eq!(shell_join(argv), expected);
         }
+    }
+
+    #[test]
+    fn a_credential_in_the_command_is_masked_and_still_a_stable_key() {
+        let argv = [
+            "env",
+            concat!("API_KEY=", "Zq8vN2kLp4RxQm7Tz9Lw"),
+            "bundle",
+            "exec",
+            "rspec",
+        ];
+        let context = Context::for_command("/app", &argv);
+        assert_eq!(context.name(), "env API_KEY=<SECRET_1> bundle exec rspec");
+        assert_eq!(context, Context::named("/app", context.name()));
+        assert_eq!(context, Context::for_command("/app", &argv));
     }
 }

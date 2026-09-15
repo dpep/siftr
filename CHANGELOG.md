@@ -4,10 +4,14 @@
 
 - A path in a log line no longer ties a behavior to the machine or directory it ran in. Where the path lives is canonicalized: the project root to `<root>/`, a home to `~/`, a temp dir to `<tmp>/` (with the names generated in it as `<tmpname>`), an installed gem, crate or npm package to `<gem:name>/`, `<crate:name>/` or `<npm:pkg>/`. What it names stays, so one deprecation warning on a laptop and in CI is one behavior, and upgrading a gem doesn't make its backtrace lines new.
 - Behaviors carry what their paths are (database, lock, manifest, log, test, source, view, config, dependency, temp), in `summary` and `explain` and as `behavior.roles` in `-j`. Nothing is signalled on them.
+- **Security:** siftr 0.1.0 stored credentials from a command's output verbatim: in behavior templates (never pruned), kept lines and raw captures. siftr now masks every credential it recognizes before anything reaches disk: GitHub, GitLab, AWS, Google, Slack, Stripe, npm, SendGrid and OpenAI-style tokens, JWTs, private keys, `Authorization` values, URL passwords, cookie values, and high-entropy values under keys like `password`, `api_key`, `access_token` or `SECRET_KEY_BASE`, including Rails SQL binds and JSON. Placeholders are numbered per run (`<TOKEN_1>`, the same number for the same value); templates drop the number, so a behavior doesn't change with the credential. The command's own output still passes through unchanged. Commands, contexts and `ack`/`dismiss` notes are masked too.
+- `SIFTR_REDACT=pii` also masks emails, public IPs and home directories in raw captures and kept lines; `SIFTR_REDACT=off` keeps raw captures as they were (the database still never holds a credential). `SIFTR_CAPTURE=off` writes no raw capture; `explain` and `evidence` then show kept lines instead of a failure's whole message. Behavior ids don't depend on either setting.
+- A raw capture keeps a line over 1 MiB only up to 1 MiB, as siftr analyzes it.
 
 ### Upgrading
 
 - Baselines reset once for commands whose output contains absolute paths: the first run after upgrading may report those behaviors as NEW and their old spellings as DISAPPEARED. The run after compares normally.
+- The first siftr to open an existing data directory redacts what it holds in place (templates, kept lines, commands, notes) and **deletes every raw capture recorded before**. Old runs keep their numbers and kept lines; `explain` on them shows kept lines instead of whole messages. It takes about 1 µs per kept line, once: 0.23 s for a store of 200,000 (`docs/findings/redaction.md`); another siftr opening the store meanwhile waits up to 2 s, then runs its command unrecorded. Behaviors whose template held a credential are NEW once, and their old ids DISAPPEARED. SQLite may keep freed pages holding old text until `siftr gc` vacuums it; to be sure, run `siftr gc` after upgrading. Anything copied out of the data directory before is not touched.
 
 ## 0.1.0 — 2026-09-15
 

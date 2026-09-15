@@ -34,8 +34,9 @@
 //!   `investigated` (an explain, evidence or ack on its behavior before it resolved), `dismissed`, `feedback`
 //!   (on its behavior, from its run until the run it resolved in, oldest first).
 //! - exemplar (`explain`, `evidence`): `stream`, `seq` (line number in the run's capture of that stream), `line`
-//!   (the kept line, cut at 1024 bytes), `exception` ({`class`, `message`}, the message whole, read from the
-//!   capture, when the line is a test listener event that carries one; else null).
+//!   (the kept line, cut at 1024 bytes, credentials masked as `<TOKEN_1>` and, under `SIFTR_REDACT=pii`, emails, IPs
+//!   and home directories too), `exception` ({`class`, `message`}, the message whole, read from the capture, when the
+//!   line is a test listener event that carries one; else null).
 //! - explain (`explain -j`): `signal`, `rule`, `runs` [{`run`, `value`}], `scope` (behavior or null), `scope_runs`,
 //!   `evidence` {`run` (this run, or for a disappearance the latest baseline run that had the behavior; null when none
 //!   did), `pruned` (null, or the retention setting that pruned that run's lines, e.g. `SIFTR_KEEP_EVIDENCE`),

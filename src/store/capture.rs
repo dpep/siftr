@@ -9,6 +9,9 @@ use anyhow::{Context as _, Result};
 use crate::observation::Stream;
 use crate::store::{RunId, Store};
 
+/// As large as the chunks the capture used to receive whole.
+const CAPTURE_BUFFER: usize = 256 * 1024;
+
 pub struct Capture {
     dir: PathBuf,
     files: Vec<(Stream, BufWriter<File>)>,
@@ -39,15 +42,28 @@ impl Store {
 
 impl Capture {
     pub fn write(&mut self, stream: &Stream, bytes: &[u8]) -> io::Result<()> {
+        self.file(stream)?.write_all(bytes)
+    }
+
+    /// One line, then its ending: `\n`, `\r\n`, or nothing for a stream's unterminated last line.
+    pub fn write_line(&mut self, stream: &Stream, line: &[u8], ending: &[u8]) -> io::Result<()> {
+        let file = self.file(stream)?;
+        file.write_all(line)?;
+        file.write_all(ending)
+    }
+
+    fn file(&mut self, stream: &Stream) -> io::Result<&mut BufWriter<File>> {
         let index = match self.files.iter().position(|(s, _)| s == stream) {
             Some(index) => index,
             None => {
                 let file = File::create(self.dir.join(file_name(stream)))?;
-                self.files.push((stream.clone(), BufWriter::new(file)));
+                // Lines arrive one at a time; a small buffer would turn each run into many more writes.
+                let file = BufWriter::with_capacity(CAPTURE_BUFFER, file);
+                self.files.push((stream.clone(), file));
                 self.files.len() - 1
             }
         };
-        self.files[index].1.write_all(bytes)
+        Ok(&mut self.files[index].1)
     }
 
     pub fn finish(self) -> io::Result<()> {
