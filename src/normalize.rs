@@ -8,13 +8,15 @@
 //! merges with `Post Load`.
 //!
 //! A filesystem path's machine-specific prefix is canonicalized first (`path`):
-//! where a run happened is not part of a behavior, what the path names is.
+//! where a run happened is not part of a behavior, what the path names is. So is
+//! a syslog header's time and host (`syslog`).
 
 mod hash;
 mod path;
 mod recognize;
 pub mod secrets;
 mod stats;
+mod syslog;
 
 pub use hash::fnv1a64;
 pub use path::{PathRole, PathRoles, Roots, UnknownPathRole};
@@ -47,6 +49,8 @@ pub enum SlotKind {
     Path,
     /// A temp dir or file stem something generated (`d20260915-123-abc`).
     TempName,
+    /// The host field of a syslog header.
+    Host,
 }
 
 impl SlotKind {
@@ -67,6 +71,7 @@ impl SlotKind {
             SlotKind::Quoted => "<quoted>",
             SlotKind::Path => "<path>",
             SlotKind::TempName => "<tmpname>",
+            SlotKind::Host => "<host>",
         }
     }
 }
@@ -232,6 +237,12 @@ impl Normalizer {
         self.roles = PathRoles::default();
 
         let mut i = 0;
+        while line.get(i) == Some(&0x1b) {
+            i = skip_ansi(line, i);
+        }
+        if let Some(header) = syslog::header(line, i) {
+            i = self.syslog_header(line, i, header);
+        }
         while i < line.len() {
             let b = line[i];
             let class = CLASS[b as usize];
@@ -346,8 +357,7 @@ impl Normalizer {
     /// level's separators, or fall through to the next level if it has none.
     fn split(&mut self, line: &[u8], s: usize, e: usize, level: usize) {
         let Some(&sep) = SPLIT_LEVELS.get(level) else {
-            self.template.extend_from_slice(&line[s..e]);
-            return;
+            return self.dotted_hex(line, s, e);
         };
         if !line[s..e].iter().any(|&b| CLASS[b as usize] & sep != 0) {
             return self.split(line, s, e, level + 1);
@@ -387,6 +397,38 @@ impl Normalizer {
             i += 1;
         }
         self.piece(line, piece, e, level);
+    }
+
+    /// Writes an unsplittable piece literally, except `0x` hex a dot glues on
+    /// (`peer[3].0x7fa1c2`): `.` is a token byte, so no other rule sees it.
+    fn dotted_hex(&mut self, line: &[u8], s: usize, e: usize) {
+        let (mut from, mut i) = (s, s);
+        while let Some(dot) = line[i..e].iter().position(|&b| b == b'.') {
+            let at = i + dot + 1;
+            i = at;
+            if e - at <= 2 || line[at] != b'0' || line[at + 1] | 0x20 != b'x' {
+                continue;
+            }
+            let end = at + 2 + leading_hex(&line[at + 2..e]);
+            if end > at + 2 && (end == e || line[end] == b'.') {
+                self.template.extend_from_slice(&line[from..at]);
+                self.slot(SlotKind::Hex, at, end);
+                (from, i) = (end, end);
+            }
+        }
+        self.template.extend_from_slice(&line[from..e]);
+    }
+
+    /// When and where a syslog line was written are slots; the process is who
+    /// wrote it, so its name stays literal whatever it spells (`postgres-14`).
+    fn syslog_header(&mut self, line: &[u8], start: usize, header: syslog::Header) -> usize {
+        self.slot(SlotKind::Timestamp, start, header.time_end);
+        self.template.push(b' ');
+        self.slot(SlotKind::Host, header.time_end + 1, header.host_end);
+        self.template.push(b' ');
+        self.template
+            .extend_from_slice(&line[header.host_end + 1..header.proc_end]);
+        header.proc_end
     }
 
     fn piece(&mut self, line: &[u8], s: usize, e: usize, level: usize) {
@@ -590,6 +632,10 @@ fn path_span(line: &[u8], start: usize, end: usize, flags: u8) -> Option<(usize,
     }
     let ats = flags & AT == 0 || path::ats_open_segments(&line[ps..pe]);
     (slash && ats).then_some((ps, pe))
+}
+
+fn leading_hex(t: &[u8]) -> usize {
+    t.iter().take_while(|b| b.is_ascii_hexdigit()).count()
 }
 
 fn span_flags(t: &[u8]) -> u8 {
