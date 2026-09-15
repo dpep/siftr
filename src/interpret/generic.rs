@@ -17,9 +17,28 @@ impl Interpreter for Generic {
         normalizer: &mut Normalizer,
         sink: &mut Aggregator,
     ) -> Claim {
-        log(obs, None, normalizer, &mut |event| sink.record(event));
+        if !is_log_show_header(obs.line) {
+            log(obs, None, normalizer, &mut |event| sink.record(event));
+        }
         Claim::Claimed
     }
+}
+
+/// The column headers macOS `log show` and `log stream` print per `--style`, as words.
+const LOG_SHOW_HEADERS: [&[&str]; 3] = [
+    &["Timestamp", "Thread", "Type", "Activity", "PID", "TTL"],
+    &["Timestamp", "Ty", "Process[PID:TID]"],
+    &["Timestamp", "(process)[PID]"],
+];
+
+/// `log show`'s column header: printed even when nothing matched, so it would be a behavior in every run.
+fn is_log_show_header(line: &[u8]) -> bool {
+    line.starts_with(b"Timestamp ")
+        && LOG_SHOW_HEADERS.iter().any(|header| {
+            line.split(u8::is_ascii_whitespace)
+                .filter(|word| !word.is_empty())
+                .eq(header.iter().map(|word| word.as_bytes()))
+        })
 }
 
 /// Emits `obs` as a `log` event. Interpreters that claim a whole stream use it for the lines they don't recognize.
@@ -72,6 +91,43 @@ mod tests {
         for (line, expected) in cases {
             assert_eq!(has_error_level(line.as_bytes()), expected, "{line}");
         }
+    }
+
+    fn templates(lines: &[&str]) -> Vec<String> {
+        let stream = crate::observation::Stream::Stdout;
+        let mut aggregator = Aggregator::new();
+        let mut normalizer = Normalizer::new();
+        for (seq, line) in lines.iter().enumerate() {
+            let obs = Observation {
+                stream: &stream,
+                seq: seq as u64 + 1,
+                line: line.as_bytes(),
+                raw_len: line.len() as u64 + 1,
+            };
+            let _ = Generic.observe(obs, &mut normalizer, &mut aggregator);
+        }
+        aggregator
+            .finish()
+            .iter()
+            .map(|b| b.behavior.template.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_log_show_column_header_is_not_a_behavior() {
+        let headers = [
+            "Timestamp                       Thread     Type        Activity             PID    TTL  ",
+            "Timestamp               Ty Process[PID:TID]",
+            "Timestamp                       (process)[PID]    ",
+        ];
+        for header in headers {
+            assert_eq!(templates(&[header]), Vec::<String>::new(), "{header:?}");
+        }
+        assert_eq!(
+            templates(&["Timestamp Thread drift detected"]).len(),
+            1,
+            "a line that merely starts with the word stays"
+        );
     }
 
     #[test]

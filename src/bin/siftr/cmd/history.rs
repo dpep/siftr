@@ -77,11 +77,13 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     output::emit(globals.json, as_json, |w| {
         writeln!(w, "runs in {project}")?;
         for (run, &(changes, _, complete)) in runs.iter().zip(&counts) {
+            // Not `plural`: the count stays right-aligned in its own column.
+            let lines = |n: u64| format!("{n:>8} {:<5}", if n == 1 { "line" } else { "lines" });
             let status = match run.end {
                 Some(end) if run.interrupted.is_some() => format!(
-                    "interrupted (signal {}) {:>8} lines",
+                    "interrupted (signal {}) {}",
                     run.interrupted.unwrap_or_default(),
-                    end.lines
+                    lines(end.lines).trim_end()
                 ),
                 Some(end) => {
                     let exit = end
@@ -90,8 +92,8 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                     // Its changes don't mean what a whole run's do.
                     let marker = if complete { "" } else { "  incomplete" };
                     format!(
-                        "exit {exit:<3} {:>8} lines  {:<10}{marker}",
-                        end.lines,
+                        "exit {exit:<3} {}  {:<10}{marker}",
+                        lines(end.lines),
                         plural(changes as u64, "change")
                     )
                 }

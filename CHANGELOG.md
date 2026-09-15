@@ -6,6 +6,8 @@
 - `siftr cron` shows what runs on a schedule (your crontab, `/etc/crontab`, `/etc/cron.d`, and launchd user agents on a calendar or interval) and where cron's output goes (the mail spool, `/var/log/cron`, syslog, the macOS unified log), with the line that records each crontab job through `siftr --`. It's read-only: it edits no crontab or agent, runs no job, and records nothing. Exits 0 when it found a job or cron output, 1 when it found neither. A wrapped job's report goes to stderr, so cron mails it after every run.
 - System logs no longer split one message into a behavior per day, host or connection. A syslog line's header (`Sep 14 10:21:07 mbp-a backupd[412]:`) becomes `<timestamp> <host> backupd[<int>]:`, so a new month or another machine is the same behavior; the process name stays as written. A month word anywhere else (`Scheduled for May`) is untouched. A `0x` pointer glued on by a dot (`peer[3].0x7fa1c2`) is masked like any other `0x` value.
   - Upgrading: behaviors from syslog lines, and from lines with a dot-glued `0x` value, get new ids. The first run after upgrading reports them NEW and their old spellings DISAPPEARED; the run after compares normally.
+- macOS `log show` and `log stream` column headers (`Timestamp  Thread  Type …`, in the default, compact and syslog styles) are no longer a behavior, which appeared in every run even when nothing matched. The first run after upgrading compares normally: a behavior present in every baseline run and absent now needs n ≥ 2, so expect one DISAPPEARED on that header in a context with 2 or more earlier runs.
+- `siftr history` says `1 line`, not `1 lines`.
 
 ## 0.1.1 — 2026-09-15
 

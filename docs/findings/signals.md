@@ -331,3 +331,84 @@ binary:
 `script/verify` runs them end to end: the full gate, then `dogfood/rails_demo`
 through an N+1, an unfixed rerun, a load error, a raise after describe, and
 recovery.
+
+## 8. Persistent failures in generic logs: don't ship yet (2026-09-15)
+
+A failure that is in every run is in every baseline, so no rule fires on it.
+Dogfooding found one: backupd's `Snapshot deletion failed … Code=<int>`, in
+every window, never signalled. Should siftr say "still failing"? Only if the
+lines it would surface are mostly worth acting on.
+
+**Corpus.** This Mac, read-only, one context per source, windows ingested as
+successive runs. The four sources, runs and lines:
+
+- backupd, every level, 6 hourly windows: 4,048 lines
+- imagent and contactsd, every level, 2 minutes of each hour: 14,740 lines in
+  6 runs, one of them empty
+- every process at error or fault level only, 3 minutes of each hour: 14,046
+  lines in 6 runs
+- `/var/log/system.log`, 8 daily rotations: 13,622 lines
+
+`log show` style was the default. The normalizer doesn't yet mask thread and
+activity ids (`0x<hex>`), so the same message split per thread: 358 changes in
+one chatty run, 35 with the ids masked. The corpus was measured with those ids
+masked first, as that fix will do.
+
+**Detection comes first.** `has_error_level` marked **0** of these 46k lines.
+macOS writes the level as `Error`/`Fault` in the `Type` column (`E`/`F` in
+compact style), and syslog writes none. So no persistent-failure rule has
+anything to read until the interpreter parses `log show`'s level. The
+measurement below takes the level from that column instead.
+
+**Behaviors present in every run** (the chatty source counts its 5 non-empty
+runs):
+
+| source | persistent | error level | actionable |
+|---|---|---|---|
+| backupd | 8 | 5 | 2 |
+| imagent + contactsd | 7 | 0 | 0 |
+| every process, error/fault only | 15 | 15 | 0 |
+| system.log | 16 | 0 (ASL configuration boilerplate) | 0 |
+| **total** | 46 | **20** | **2 (10%)** |
+
+The `log show` column header is left out of the counts. It was persistent in
+every source until this revision dropped it.
+
+A behavior was judged **actionable** only if its line names an operation that
+failed and its owner could do something about it: a disk, a configuration or a
+permission they control. It was judged **chatter** if the failure is expected
+or internal. That covers a capability probe (`… failed: Operation not
+supported`), a connection torn down because the client exited (logged at
+Error beside a Default line saying so), an entitlement or sandbox denial
+between system daemons, or a state message logged at Error. By that test the
+two actionable behaviors are one failure: Time Machine's snapshot deletion,
+on two volumes.
+
+**What might tell them apart**, among the 20 error-level persistent behaviors:
+
+| candidate rule | surfaced | actionable | precision |
+|---|---|---|---|
+| any error level | 20 | 2 | 10% |
+| a failure word plus an error code (`failed … Code=`, `error: <int>`, `failed with error 0x…`) | 4 | 2 | 50% |
+| count above every earlier run (volume grows) | 13 | 1 | 8% |
+| NSError shape (`Error Domain=… Code=`) | 2 | 2 | 1 failure: fitted to the example |
+
+Volume says nothing. The actionable failure was constant at 2 per window on
+one volume, while chatter ranged from 1 to 151. A missing success line can't
+be judged from a generic log: nothing says which line would be the success.
+
+**Decision.** The bar was ≥ 90% of surfaced items actionable, over more than
+one distinct failure. The best general rule reaches 50%, and the only rule
+above it is fitted to the one example. So nothing ships: no "still failing"
+line, no persistent-errors section. What would change the answer:
+
+- logs whose level is the owner's own: an app's `production.log`, a cron job's
+  output, a service's error log. The corpus here is all Apple daemons, whose
+  Error level is mostly diagnostics;
+- more than one real persistent failure across machines, so a rule can be
+  checked against failures it wasn't fitted to;
+- `dismiss`/`ack` feedback on persistent errors surfaced behind an opt-in
+  context flag, which would label the data instead of judging it by hand.
+
+Shipped from this: `log show`/`log stream` column headers (default, compact
+and syslog styles) are no longer a behavior, in `interpret::generic`.
