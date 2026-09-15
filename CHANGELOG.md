@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `siftr` without a subcommand does the obvious thing, and never guesses. `siftr -- CMD` is `siftr run -- CMD`. `siftr FILE` (or `siftr -`) ingests it, compared only with earlier ingests of that file; `--context NAME` still wins, for dated or rotated files. A bare `siftr` ingests stdin when it's piped or redirected, and prints help otherwise. A subcommand or preset always wins over a file of the same name (`./cron` names the file). Any other word is an error with a "did you mean", exit 2, never read as a file. `siftr ingest FILE` is unchanged and still compares within the `ingest` context.
+- `siftr cron` shows what runs on a schedule (your crontab, `/etc/crontab`, `/etc/cron.d`, and launchd user agents on a calendar or interval) and where cron's output goes (the mail spool, `/var/log/cron`, syslog, the macOS unified log), with the line that records each crontab job through `siftr --`. It's read-only: it edits no crontab or agent, runs no job, and records nothing. Exits 0 when it found a job or cron output, 1 when it found neither. A wrapped job's report goes to stderr, so cron mails it after every run.
+
 ## 0.1.1 — 2026-09-15
 
 - A path in a log line no longer ties a behavior to the machine or directory it ran in. Where the path lives is canonicalized: the project root to `<root>/`, a home to `~/`, a temp dir to `<tmp>/` (with the names generated in it as `<tmpname>`), an installed gem, crate or npm package to `<gem:name>/`, `<crate:name>/` or `<npm:pkg>/`. What it names stays, so one deprecation warning on a laptop and in CI is one behavior, and upgrading a gem doesn't make its backtrace lines new.

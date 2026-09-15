@@ -1,6 +1,7 @@
 //! One module per subcommand, plus what they share.
 
 pub mod changes;
+pub mod cron;
 pub mod evidence;
 pub mod explain;
 pub mod feedback;

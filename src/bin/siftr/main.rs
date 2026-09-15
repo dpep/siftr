@@ -1,6 +1,7 @@
 //! `siftr`: wrap a command, record its behaviors, and surface what changed since recent runs.
 
 mod cmd;
+mod dispatch;
 mod home;
 mod output;
 mod privacy;
@@ -9,16 +10,23 @@ mod record;
 mod sidechannel;
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use siftr::store::FeedbackKind;
 
 const AFTER_HELP: &str = "\
+Without a subcommand:
+  siftr -- CMD…    same as siftr run -- CMD…
+  siftr FILE       same as siftr ingest FILE, compared with earlier ingests of that file (./cron for a file named like a preset)
+  siftr -          ingest stdin; a bare siftr does too when stdin is piped
+  Any other word is an error, never a file name.
+
 Exit codes:
   run      the command's own code; 125 if siftr fails before starting it, 126 if it can't be executed, 127 if not found
   ingest   0 recorded, 2 error
+  cron     0 found jobs or cron output, 1 nothing found, 2 error
   queries  0 results, 1 nothing found, 2 error
   status   0 healthy, 1 something needs attention, 2 error
   ack      0 recorded, 2 error
@@ -33,6 +41,8 @@ What siftr stores (the command's own output always passes through unchanged):
 
 Examples:
   siftr run -- bundle exec rspec
+  siftr log/production.log
+  siftr cron
   siftr changes
   siftr explain s3
   siftr ack s3 -m 'fixing the N+1'";
@@ -42,7 +52,8 @@ Examples:
     name = "siftr",
     version,
     about = "Record a command's behaviors and surface what changed since its recent runs.",
-    after_help = AFTER_HELP
+    after_help = AFTER_HELP,
+    arg_required_else_help = true
 )]
 struct Cli {
     /// Data directory [default: $XDG_DATA_HOME/siftr, else ~/.local/share/siftr]
@@ -63,6 +74,8 @@ enum Command {
     Run(cmd::run::Args),
     /// Record a file or stdin as if it were a command's output
     Ingest(cmd::ingest::Args),
+    /// Preset: what runs on a schedule here, where cron's output goes, and how to record a job. Read-only
+    Cron(cmd::cron::Args),
     /// Behavioral changes in a run
     Changes(cmd::changes::Args),
     /// A run's top behaviors by count or time
@@ -84,10 +97,24 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    let cli = match Cli::try_parse() {
+    let raw: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let json = json_requested(raw.iter().cloned());
+    let env = dispatch::Env {
+        stdin_piped: stdin_piped(),
+        path_kind: &path_kind,
+        context_for: &ingest_context,
+    };
+    let args = match dispatch::dispatch(raw, &env) {
+        Ok(args) => args,
+        Err(error) => {
+            output::error(&error, json);
+            return ExitCode::from(2);
+        }
+    };
+    let cli = match Cli::try_parse_from(std::iter::once(OsString::from("siftr")).chain(args)) {
         Ok(cli) => cli,
         // Help and --version aren't errors; an argument error under -j is still one JSON document.
-        Err(error) if error.use_stderr() && json_requested(std::env::args_os().skip(1)) => {
+        Err(error) if error.use_stderr() && json => {
             output::report_error(output::ErrorCode::Usage, &clap_message(&error), true);
             return ExitCode::from(2);
         }
@@ -101,6 +128,7 @@ fn main() -> ExitCode {
         // `run` owns its exit code: the child's, or siftr's own 125/126/127.
         Command::Run(args) => return cmd::run::run(args, &globals),
         Command::Ingest(args) => cmd::ingest::run(args, &globals),
+        Command::Cron(args) => cmd::cron::run(args, &globals),
         Command::Changes(args) => cmd::changes::run(args, &globals),
         Command::Summary(args) => cmd::summary::run(args, &globals),
         Command::Evidence(args) => cmd::evidence::run(args, &globals),
@@ -131,6 +159,44 @@ fn json_requested(args: impl IntoIterator<Item = OsString>) -> bool {
                     flags.bytes().all(|b| b.is_ascii_alphabetic()) && flags.contains('j')
                 })
         })
+}
+
+/// Piped or redirected from a file. A terminal, or `/dev/null` (a character device), isn't input.
+fn stdin_piped() -> bool {
+    use std::os::fd::AsFd as _;
+    use std::os::unix::fs::FileTypeExt as _;
+    let Ok(fd) = std::io::stdin().as_fd().try_clone_to_owned() else {
+        return false;
+    };
+    std::fs::File::from(fd).metadata().is_ok_and(|meta| {
+        let kind = meta.file_type();
+        kind.is_fifo() || kind.is_file() || kind.is_socket()
+    })
+}
+
+fn path_kind(path: &Path) -> Option<dispatch::PathKind> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(match meta.is_dir() {
+        true => dispatch::PathKind::Dir,
+        false => dispatch::PathKind::File,
+    })
+}
+
+/// A file ingested by path compares with earlier ingests of the same file, however it was spelled: its path under
+/// the project, else its absolute path. One shared context would compare unrelated files with each other.
+fn ingest_context(path: &Path) -> String {
+    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    project::current()
+        .ok()
+        .and_then(|here| {
+            absolute
+                .strip_prefix(&here.project)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or(absolute)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// clap's message, one line, without its `error:` prefix and usage footer.

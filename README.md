@@ -37,6 +37,22 @@ Or from a clone: `cargo install --path .`
 
 ## Usage
 
+### Without a subcommand
+
+```
+siftr -- CMD…     same as siftr run -- CMD…
+siftr FILE        same as siftr ingest FILE, compared only with earlier ingests of that file
+siftr -           ingest stdin; so does a bare siftr when stdin is piped or redirected
+```
+
+A subcommand or a preset always wins over a file of the same name: `siftr status` is the command, `siftr ./status` the file. A dated or rotated file compares with nothing until you name its context: `siftr app-0915.log --context app`. Any other word is an error, never a file name:
+
+```
+$ siftr statu; echo "exit=$?"
+siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, changes, summary, evidence, explain, ack, dismiss, history, status, gc; presets: cron
+exit=2
+```
+
 ### `siftr run -- CMD…`
 
 Runs `CMD`, passes its output through, records the run, and prints changes to stderr. Exits with `CMD`'s exit code.
@@ -248,6 +264,33 @@ r15 vs 2 baseline runs (r13 r14): 1 change
 next: siftr explain s9
 ```
 
+### `siftr cron`
+
+What runs on a schedule here, where cron's output goes, and the line that records each crontab job through `siftr --`. It reads your crontab, `/etc/crontab`, `/etc/cron.d`, launchd user agents on a calendar or interval, the mail spool, `/var/log/cron`, syslog and the macOS unified log. It edits nothing, runs no job and records nothing. With a synthetic crontab and agent:
+
+```
+$ siftr cron
+scheduled jobs
+  crontab -l               2 jobs
+    0 3 * * *  /usr/local/bin/backup.sh --full
+      record it: 0 3 * * * /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/readme-cron/bin/siftr -- /usr/local/bin/backup.sh --full
+    */15 * * * *  cd ~/notes && git pull -q
+      record it: */15 * * * * /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/readme-cron/bin/siftr -- sh -c 'cd ~/notes && git pull -q'
+  /etc/crontab             absent
+  /etc/cron.d              absent
+  ~/Library/LaunchAgents   1 job
+    StartCalendarInterval  com.example.sync
+where cron's output goes
+  /var/mail/me             absent
+  /var/log/cron            absent
+  /var/log/syslog          absent
+  unified log, last 7d     no lines from cron
+note: a wrapped job's report goes to stderr, so cron mails it after every run
+next: crontab -e, and replace a job with its record-it line
+```
+
+A job that needs a shell (`cd`, `&&`, `~`, `%`, redirections) keeps it through `sh -c`. siftr names itself by absolute path because cron's `PATH` is minimal. A launchd agent gets no line: only its plist could change, and siftr doesn't touch it.
+
 ### Common flags and exit codes
 
 - `-j` prints exactly one JSON document on stdout, on every command. Empty results are still that command's document (exit 1). Errors, argument errors included, are `{"error": {"code", "message"}}` (exit 2), where `code` is `usage`, `not_found`, `busy` (another siftr held the data directory too long; retry) or `failed`.
@@ -258,6 +301,7 @@ next: siftr explain s9
 |---|---|
 | `run` | the command's own code; 125 if siftr fails before starting it, 126 if it can't be executed, 127 if not found |
 | `ingest` | 0 recorded, 2 error |
+| `cron` | 0 found a job or cron output, 1 found neither, 2 error |
 | `changes`, `explain`, `evidence`, `summary`, `history` | 0 results, 1 nothing found, 2 error |
 | `status` | 0 healthy, 1 something needs attention, 2 error |
 | `ack`, `dismiss` | 0 recorded, 2 error |
