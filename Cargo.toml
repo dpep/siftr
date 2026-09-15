@@ -11,6 +11,8 @@ homepage = "https://github.com/dpep/siftr"
 readme = "README.md"
 keywords = ["rspec", "rails", "regression", "telemetry", "cli"]
 categories = ["command-line-utilities", "development-tools::testing"]
+# tests/ and examples/ need fixtures/ and local logs, which stay in the repo.
+include = ["/src", "/assets", "/Cargo.toml", "/README.md", "/CHANGELOG.md", "/LICENSE.txt"]
 
 [[bin]]
 name = "siftr"

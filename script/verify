@@ -25,13 +25,13 @@ git -C "$ROOT" worktree add --detach "$WT" "$SHA" >/dev/null
 echo "== verify $SHA"
 if [ -z "${SKIP_GATE:-}" ]; then
   export CARGO_TARGET_DIR=$SCRATCH/target
-  cargo test --workspace --no-fail-fast --manifest-path "$WT/Cargo.toml" >"$SCRATCH/test.log" 2>&1 || true
+  cargo test --no-fail-fast --manifest-path "$WT/Cargo.toml" >"$SCRATCH/test.log" 2>&1 || true
   failed=$(grep -c '^test result: FAILED' "$SCRATCH/test.log" || true)
   ok=$(grep -c '^test result: ok' "$SCRATCH/test.log" || true)
   echo "tests: $ok binaries ok, $failed failed (log: $SCRATCH/test.log)"
-  cargo clippy --workspace --all-targets --manifest-path "$WT/Cargo.toml" -- -D warnings >"$SCRATCH/clippy.log" 2>&1 \
+  cargo clippy --all-targets --manifest-path "$WT/Cargo.toml" -- -D warnings >"$SCRATCH/clippy.log" 2>&1 \
     && echo "clippy: ok" || echo "clippy: FAILED (log: $SCRATCH/clippy.log)"
-  cargo fmt --all --check --manifest-path "$WT/Cargo.toml" >/dev/null 2>&1 && echo "fmt: ok" || echo "fmt: FAILED"
+  cargo fmt --check --manifest-path "$WT/Cargo.toml" >/dev/null 2>&1 && echo "fmt: ok" || echo "fmt: FAILED"
   [ "$failed" = 0 ] || exit 1
 fi
 
