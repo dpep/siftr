@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
+use siftr::normalize::Roots;
 
 pub struct Location {
     pub cwd: String,
@@ -15,6 +16,18 @@ pub fn current() -> Result<Location> {
         project: root_of(&cwd).to_string_lossy().into_owned(),
         cwd: cwd.to_string_lossy().into_owned(),
     })
+}
+
+/// What a run's paths are canonicalized under: its project root, and this user's home and temp dir.
+pub fn roots(project: &str) -> Roots {
+    let mut roots = Roots::default().project(project);
+    if let Ok(home) = std::env::var("HOME") {
+        roots = roots.home(&home);
+    }
+    if let Ok(tmp) = std::env::var("TMPDIR") {
+        roots = roots.tmp(&tmp);
+    }
+    roots
 }
 
 /// Files a build or test tool treats as the top of its project.

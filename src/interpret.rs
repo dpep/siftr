@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use crate::aggregate::Aggregator;
 use crate::behavior::{BehaviorId, Kind};
-use crate::normalize::{Normalized, Normalizer, fnv1a64};
+use crate::normalize::{Normalized, Normalizer, PathRoles, fnv1a64};
 use crate::observation::Observation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,5 +76,6 @@ fn literal(template: &[u8]) -> Normalized<'_> {
         template,
         template_hash: fnv1a64(template),
         slots: &[],
+        roles: PathRoles::default(),
     }
 }

@@ -103,8 +103,10 @@ impl Store {
             ],
         )?;
         {
+            // A behavior recorded before roles existed gains them.
             let mut behavior = tx.prepare(
-                "INSERT OR IGNORE INTO behaviors (id, kind, template) VALUES (?1, ?2, ?3)",
+                "INSERT INTO behaviors (id, kind, template, roles) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (id) DO UPDATE SET roles = excluded.roles WHERE roles <> excluded.roles",
             )?;
             let mut aggregate = tx.prepare(
                 "INSERT INTO aggregates (run_id, behavior_id, count, errors, duration_count, duration_total_us, p50_us, p95_us, max_us, unattributed, first_stream, first_seq)
@@ -127,7 +129,8 @@ impl Store {
                 behavior.execute(params![
                     id,
                     agg.behavior.kind.as_str(),
-                    agg.behavior.template
+                    agg.behavior.template,
+                    agg.behavior.roles.to_string(),
                 ])?;
                 let Stats {
                     count,

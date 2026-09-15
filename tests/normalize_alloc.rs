@@ -4,7 +4,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use siftr::normalize::{Normalizer, SlotKind, SlotStats};
+use siftr::normalize::{Normalizer, Roots, SlotKind, SlotStats};
 
 struct Counting;
 
@@ -34,12 +34,21 @@ fn steady_state_does_not_allocate() {
         "Started GET \"/users/85320\" for 10.0.24.37 at 2024-01-15 10:00:00 +0000",
         "SELECT \"posts\".* FROM \"posts\" WHERE \"posts\".\"id\" IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)",
         "Finished in 1 minute 3.5 seconds (files took 0.24948 seconds to load)",
+        "DEPRECATION WARNING: old (called from /Users/alice/code/app/app/views/users/show.html.erb:12)",
+        "Wrote /var/folders/yr/gngx90zx/T/d20260915-4821-abc/cache.bin",
+        "/Users/alice/.rvm/gems/ruby-3.4.9/gems/activerecord-7.1.3/lib/active_record/base.rb:42:in 'find'",
+        "could not obtain lock on tmp/pids/server.pid",
     ]
     .iter()
     .map(|l| l.as_bytes().to_vec())
     .collect();
 
-    let mut n = Normalizer::new();
+    let mut n = Normalizer::with_roots(
+        Roots::default()
+            .project("/Users/alice/code/app")
+            .home("/Users/alice")
+            .tmp("/tmp"),
+    );
     let mut stats = SlotStats::new(SlotKind::Int);
     for line in &lines {
         n.normalize(line);

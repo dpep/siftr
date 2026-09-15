@@ -3,6 +3,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::normalize::PathRoles;
+
 /// The semantic kind of an event. Its name is part of every behavior id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
@@ -134,6 +136,8 @@ pub struct Behavior {
     pub kind: Kind,
     /// Lossy UTF-8 of the template bytes; `id` is derived from the bytes.
     pub template: String,
+    /// What the paths in its template are. Follows from the template, so it never enters `id`.
+    pub roles: PathRoles,
 }
 
 impl Behavior {
@@ -142,6 +146,7 @@ impl Behavior {
             id: BehaviorId::of(kind, template),
             kind,
             template: String::from_utf8_lossy(template).into_owned(),
+            roles: PathRoles::default(),
         }
     }
 }

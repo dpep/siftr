@@ -102,7 +102,7 @@ fn table() {
         // Synthetic survey shapes.
         (
             "2026-09-13T12:00:00.003Z WARN /Users/alice/code/app/models/user.rb:115:in 'save' job=a09f76b5a170b338",
-            "<timestamp> WARN /Users/alice/code/app/models/user.rb:<int>:in 'save' job=<hex>",
+            "<timestamp> WARN ~/code/app/models/user.rb:<int>:in 'save' job=<hex>",
         ),
         (
             "deploy sha=6595e60af5 by alice@example.com version v1.3.1 status=complete",

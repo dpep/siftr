@@ -72,13 +72,14 @@ impl Begun {
 
 impl From<Begun> for Recording {
     fn from(begun: Begun) -> Self {
+        let roots = crate::project::roots(begun.context.project());
         Recording {
             store: begun.store,
             run: begun.run,
             context: begun.context,
             capture: Some(begun.capture),
             streams: Vec::new(),
-            analyzer: Analyzer::new(),
+            analyzer: Analyzer::with_roots(roots),
             started: begun.started,
         }
     }

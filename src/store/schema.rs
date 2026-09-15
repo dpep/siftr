@@ -201,6 +201,10 @@ UPDATE runs SET interrupted = exit_code - 128
 WHERE interrupted IS NULL AND wall_ms IS NOT NULL AND exit_code BETWEEN 129 AND 159
   AND command NOT LIKE 'siftr ingest%';
 ",
+    r"
+-- What a behavior's paths are (database, lock, temp, …), comma-separated; empty when it has none.
+ALTER TABLE behaviors ADD COLUMN roles TEXT NOT NULL DEFAULT '';
+",
 ];
 
 /// The schema version this siftr reads and writes.

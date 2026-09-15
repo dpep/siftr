@@ -6,14 +6,20 @@
 //! `:`, then `-_+`, and each piece is classified. Words are never masked, so a
 //! path keeps its literal segments (`/users/<int>`) and `User Load` never
 //! merges with `Post Load`.
+//!
+//! A filesystem path's machine-specific prefix is canonicalized first (`path`):
+//! where a run happened is not part of a behavior, what the path names is.
 
 mod hash;
+mod path;
 mod recognize;
 mod stats;
 
 pub use hash::fnv1a64;
+pub use path::{PathRole, PathRoles, Roots, UnknownPathRole};
 pub use stats::{DEFAULT_MAX_TRACKED_VALUES, SlotClass, SlotStats, classify};
 
+use path::Prefix;
 use recognize::{
     duration_ms, is_date_only, is_time, is_zone_word, leading_digits, recognize, size_bytes,
     spaced_unit,
@@ -35,10 +41,15 @@ pub enum SlotKind {
     Url,
     Version,
     Quoted,
+    /// A filesystem path. It annotates rather than masks: the template keeps the
+    /// path's canonical text, and the slots inside the path mask as usual.
+    Path,
+    /// A temp dir or file stem something generated (`d20260915-123-abc`).
+    TempName,
 }
 
 impl SlotKind {
-    /// Placeholder text written into the template.
+    /// Placeholder text written into the template. `Path` never writes its own.
     pub fn placeholder(self) -> &'static str {
         match self {
             SlotKind::Int => "<int>",
@@ -53,6 +64,8 @@ impl SlotKind {
             SlotKind::Url => "<url>",
             SlotKind::Version => "<version>",
             SlotKind::Quoted => "<quoted>",
+            SlotKind::Path => "<path>",
+            SlotKind::TempName => "<tmpname>",
         }
     }
 }
@@ -78,6 +91,8 @@ pub struct Normalized<'n> {
     /// FNV-1a 64 of `template`; stable across processes and machines.
     pub template_hash: u64,
     pub slots: &'n [Slot],
+    /// What this line's paths are. A function of `template`, never part of its hash.
+    pub roles: PathRoles,
 }
 
 /// Numeric value of a slot: `Int`/`Float` as written, `Duration` in
@@ -137,6 +152,7 @@ const SEP_WORD: u8 = 8;
 const DIGIT: u8 = 16;
 const SPACE: u8 = 32;
 const AT: u8 = 64;
+const SLASH: u8 = 128;
 
 /// Split levels tried in order once a chunk fails whole-token recognition.
 const SPLIT_LEVELS: [u8; 3] = [SEP_PATH, SEP_COLON, SEP_WORD];
@@ -165,6 +181,9 @@ static CLASS: [u8; 256] = {
         if b == b'@' {
             c |= AT;
         }
+        if b == b'/' {
+            c |= SLASH;
+        }
         if matches!(b, b' ' | b'\t' | b'\r' | b'\n') {
             c |= SPACE;
         }
@@ -182,14 +201,23 @@ pub struct Normalizer {
     slots: Vec<Slot>,
     /// Template length just after the last placeholder, for list collapsing.
     last_slot_end: usize,
+    roots: Roots,
+    roles: PathRoles,
 }
 
 impl Normalizer {
     pub fn new() -> Self {
+        Self::with_roots(Roots::default())
+    }
+
+    /// Also canonicalizes paths under this machine's project, home and temp dir.
+    pub fn with_roots(roots: Roots) -> Self {
         Self {
             template: Vec::with_capacity(256),
             slots: Vec::with_capacity(16),
             last_slot_end: 0,
+            roots,
+            roles: PathRoles::default(),
         }
     }
 
@@ -200,12 +228,14 @@ impl Normalizer {
         self.template.clear();
         self.slots.clear();
         self.last_slot_end = 0;
+        self.roles = PathRoles::default();
 
         let mut i = 0;
         while i < line.len() {
             let b = line[i];
             let class = CLASS[b as usize];
-            i = if class & TOKEN != 0 {
+            // `~/` opens a path, though `~` isn't a token byte.
+            i = if class & TOKEN != 0 || (b == b'~' && line.get(i + 1) == Some(&b'/')) {
                 self.chunk(line, i)
             } else if class & SPACE != 0 {
                 if self.template.last().is_some_and(|&l| l != b' ') {
@@ -231,16 +261,51 @@ impl Normalizer {
             template: &self.template,
             template_hash: fnv1a64(&self.template),
             slots: &self.slots,
+            roles: self.roles,
         }
     }
 
+    /// `start` is a token byte, or the `~` of `~/`.
     fn chunk(&mut self, line: &[u8], start: usize) -> usize {
-        let mut end = start;
+        let mut end = start + usize::from(line[start] == b'~');
         let mut flags = 0;
         while end < line.len() && CLASS[line[end] as usize] & TOKEN != 0 {
             flags |= CLASS[line[end] as usize];
             end += 1;
         }
+        if flags & SLASH != 0
+            && let Some(next) = self.path(line, start, end, flags)
+        {
+            return next;
+        }
+        self.token(line, start, end, flags)
+    }
+
+    /// A path in the chunk `line[start..end]`, canonicalized: where masking resumes.
+    /// `None` leaves the chunk to `token`, a path in it only annotated, so its
+    /// template can't change.
+    fn path(&mut self, line: &[u8], start: usize, end: usize, flags: u8) -> Option<usize> {
+        let (ps, pe) = path_span(line, start, end, flags)?;
+        let path = &line[ps..pe];
+        let Some((prefix, tail)) = path::canonical(path, &self.roots) else {
+            if let Some(roles) = path::file_path_roles(path) {
+                self.roles |= roles;
+                self.path_slot(ps, pe);
+            }
+            return None;
+        };
+        if ps > start {
+            self.token(line, start, ps, span_flags(&line[start..ps]));
+        }
+        self.canonical_path(line, ps, pe, prefix, ps + tail);
+        Some(match pe < end {
+            true => self.token(line, pe, end, span_flags(&line[pe..end])),
+            false => end,
+        })
+    }
+
+    /// Masks `line[start..end]`, a run of token bytes whose classes OR to `flags`.
+    fn token(&mut self, line: &[u8], start: usize, end: usize, flags: u8) -> usize {
         if flags & (DIGIT | AT) == 0 {
             self.template.extend_from_slice(&line[start..end]);
             return end;
@@ -325,6 +390,65 @@ impl Normalizer {
         } else {
             self.split(line, s, e, level + 1);
         }
+    }
+
+    /// Writes a path's canonical prefix, then its tail masked as any other text,
+    /// except that a temp dir's generated names become one slot each.
+    fn canonical_path(
+        &mut self,
+        line: &[u8],
+        ps: usize,
+        pe: usize,
+        prefix: Prefix<'_>,
+        tail: usize,
+    ) {
+        self.path_slot(ps, pe);
+        prefix.write(&mut self.template);
+        self.roles |= path::roles(prefix, &line[tail..pe]);
+        if prefix == Prefix::Tmp {
+            self.temp_tail(line, tail, pe);
+        } else if tail < pe {
+            self.split(line, tail, pe, 0);
+        }
+    }
+
+    /// `line[at..pe]` is empty or starts at a `/`.
+    fn temp_tail(&mut self, line: &[u8], mut at: usize, pe: usize) {
+        while at < pe {
+            self.template.push(b'/');
+            let start = at + 1;
+            let end = start
+                + line[start..pe]
+                    .iter()
+                    .position(|&b| b == b'/')
+                    .unwrap_or(pe - start);
+            let segment = &line[start..end];
+            // A file keeps its extension: `<tmpname>.bin`.
+            let stem = match end == pe {
+                true => segment
+                    .iter()
+                    .skip(1)
+                    .position(|&b| b == b'.')
+                    .map_or(segment.len(), |p| p + 1),
+                false => segment.len(),
+            };
+            if path::is_generated(&segment[..stem]) {
+                self.slot(SlotKind::TempName, start, start + stem);
+                self.template.extend_from_slice(&segment[stem..]);
+            } else {
+                self.piece(line, start, end, 0);
+            }
+            at = end;
+        }
+    }
+
+    /// Paths annotate: no placeholder, and never a neighbour to collapse with.
+    fn path_slot(&mut self, start: usize, end: usize) {
+        self.slots.push(Slot {
+            kind: SlotKind::Path,
+            start: start as u32,
+            end: end as u32,
+        });
     }
 
     fn slot(&mut self, kind: SlotKind, start: usize, end: usize) {
@@ -438,6 +562,30 @@ fn next_word(line: &[u8], at: usize) -> Option<(usize, usize)> {
         end -= 1;
     }
     (end > start).then_some((start, end))
+}
+
+/// The path in the chunk `line[start..end]`: after any `key=`, before a `:12`
+/// line suffix, without a sentence's trailing dots. A query means a URL.
+fn path_span(line: &[u8], start: usize, end: usize, flags: u8) -> Option<(usize, usize)> {
+    let (mut ps, mut pe, mut slash) = (start, end, false);
+    for (i, &b) in (start..).zip(&line[start..end]) {
+        match b {
+            b'?' | b'&' => return None,
+            b'=' => (ps, pe, slash) = (i + 1, end, false),
+            b':' if pe == end => pe = i,
+            b'/' if pe == end => slash = true,
+            _ => {}
+        }
+    }
+    while pe > ps && line[pe - 1] == b'.' {
+        pe -= 1;
+    }
+    let ats = flags & AT == 0 || path::ats_open_segments(&line[ps..pe]);
+    (slash && ats).then_some((ps, pe))
+}
+
+fn span_flags(t: &[u8]) -> u8 {
+    t.iter().fold(0, |flags, &b| flags | CLASS[b as usize])
 }
 
 /// Length of the `_` run starting `t` when an all-digit piece follows it, else 0.

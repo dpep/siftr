@@ -36,6 +36,8 @@ fn run_columns() -> String {
         overflow_behavior().id
     )
 }
+/// What [`behavior`] reads, from `behaviors b`.
+const BEHAVIOR_COLUMNS: &str = "b.id, b.kind, b.template, b.roles";
 const STATS_COLUMNS: &str =
     "a.count, a.errors, a.duration_count, a.duration_total_us, a.p50_us, a.p95_us, a.max_us";
 
@@ -195,26 +197,26 @@ impl Store {
         }
 
         let sql = format!(
-            "SELECT b.id, b.kind, b.template, {STATS_COLUMNS}, a.unattributed, a.first_stream, a.first_seq
+            "SELECT {BEHAVIOR_COLUMNS}, {STATS_COLUMNS}, a.unattributed, a.first_stream, a.first_seq
              FROM aggregates a JOIN behaviors b ON b.id = a.behavior_id
              WHERE a.run_id = ?1"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([run.0], |row| {
             let behavior = behavior(row, 0)?;
-            let first = match row.get::<_, Option<String>>(11)? {
+            let first = match row.get::<_, Option<String>>(12)? {
                 Some(_) => Some((
-                    parsed::<Stream>(row, 11)?,
-                    row.get::<_, i64>(12)?.unsigned_abs(),
+                    parsed::<Stream>(row, 12)?,
+                    row.get::<_, i64>(13)?.unsigned_abs(),
                 )),
                 None => None,
             };
             Ok(BehaviorStats {
                 first,
-                stats: stats(row, 3)?,
+                stats: stats(row, 4)?,
                 measures: Vec::new(),
                 scopes: Vec::new(),
-                unattributed: row.get::<_, i64>(10)?.unsigned_abs(),
+                unattributed: row.get::<_, i64>(11)?.unsigned_abs(),
                 behavior,
             })
         })?;
@@ -274,12 +276,12 @@ impl Store {
             Order::Time => "COALESCE(a.duration_total_us, 0) DESC, a.count DESC",
         };
         let sql = format!(
-            "SELECT b.id, b.kind, b.template, {STATS_COLUMNS} FROM aggregates a JOIN behaviors b ON b.id = a.behavior_id
+            "SELECT {BEHAVIOR_COLUMNS}, {STATS_COLUMNS} FROM aggregates a JOIN behaviors b ON b.id = a.behavior_id
              WHERE a.run_id = ?1 ORDER BY {order_by}, b.id LIMIT ?2"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![run.0, int(limit as u64)], |row| {
-            Ok((behavior(row, 0)?, stats(row, 3)?))
+            Ok((behavior(row, 0)?, stats(row, 4)?))
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
@@ -292,7 +294,7 @@ impl Store {
         }
         let pattern = format!("{}%", prefix.to_ascii_lowercase());
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, template FROM behaviors WHERE id LIKE ?1 ORDER BY id LIMIT 2",
+            "SELECT id, kind, template, roles FROM behaviors WHERE id LIKE ?1 ORDER BY id LIMIT 2",
         )?;
         let mut matches = stmt
             .query_map([pattern], |row| behavior(row, 0))?
@@ -365,16 +367,16 @@ impl Store {
 const SIGNAL_SELECT: &str = "SELECT s.id, s.run_id, s.kind, s.measure, s.current, s.baseline_runs, s.present_in,
     s.baseline_median, s.baseline_min, s.baseline_max, s.baseline_failures, s.exception,
     s.attributed, s.scope_id, s.scope_current, s.scope_baseline, s.confidence, s.tier, s.group_rank, s.headline,
-    b.id, b.kind, b.template,
-    sb.id, sb.kind, sb.template,
+    b.id, b.kind, b.template, b.roles,
+    sb.id, sb.kind, sb.template, sb.roles,
     (SELECT COUNT(*) FROM exemplars e WHERE e.run_id = s.run_id AND e.behavior_id = s.behavior_id)
     FROM signals s JOIN behaviors b ON b.id = s.behavior_id
     LEFT JOIN behaviors sb ON sb.id = s.scope_id";
 
 fn stored_signal(row: &Row<'_>) -> rusqlite::Result<StoredSignal> {
     let behavior = behavior(row, 20)?;
-    let scope = match row.get::<_, Option<String>>(23)? {
-        Some(_) => Some(self::behavior(row, 23)?),
+    let scope = match row.get::<_, Option<String>>(24)? {
+        Some(_) => Some(self::behavior(row, 24)?),
         None => None,
     };
     let attribution = match row.get::<_, bool>(12)? {
@@ -413,7 +415,7 @@ fn stored_signal(row: &Row<'_>) -> rusqlite::Result<StoredSignal> {
         },
         behavior,
         scope,
-        exemplars: row.get::<_, i64>(26)?.unsigned_abs(),
+        exemplars: row.get::<_, i64>(28)?.unsigned_abs(),
     })
 }
 
@@ -444,6 +446,7 @@ fn behavior(row: &Row<'_>, at: usize) -> rusqlite::Result<Behavior> {
         id: parsed(row, at)?,
         kind: parsed(row, at + 1)?,
         template: row.get(at + 2)?,
+        roles: parsed(row, at + 3)?,
     })
 }
 

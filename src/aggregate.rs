@@ -213,6 +213,7 @@ impl Aggregator {
                     id,
                     kind: event.kind,
                     template: String::from_utf8_lossy(event.template.template).into_owned(),
+                    roles: event.template.roles,
                 })
             })
         } else {

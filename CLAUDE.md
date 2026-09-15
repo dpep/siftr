@@ -46,7 +46,9 @@ Source ──Observation──▶ Interpreter ──Event──▶ Aggregator �
   `file:<name>`) and per-stream line number (= its line in the run's capture of
   that stream).
 - **Template** — an observation with incidental variation masked into typed
-  slots (`<uuid>`, `<int>`, `<duration>`, `<path>`, …) plus the slot values.
+  slots (`<uuid>`, `<int>`, `<duration>`, …) plus the slot values. A path is
+  never masked whole: where it lives is canonicalized (`<root>/`, `~/`,
+  `<tmp>/`, `<gem:name>/`) and what it names stays, marked by a `Path` slot.
 - **Event** — an interpreted observation: semantic kind (`test.example`,
   `test.summary`, `db.query`, `http.request`, `exception`, `log`), template,
   duration, outcome, named measures (`queries`), and **scope** — the enclosing
@@ -154,6 +156,9 @@ share.
 
 - Rails logs carry ANSI color codes (`\e[1m\e[36m (0.3ms)\e[0m`); strip before
   templating or identical queries split into two behaviors.
+- A route and a path read alike (`/home/posts/5`, `/users/new` vs `/etc/hosts`):
+  canonicalize only prefixes no route uses, and annotate an uncanonicalized
+  path only when it names a file.
 - Private logs on this machine (anything outside this repository)
   are fine as local benchmark inputs but must never be committed, excerpted into
   fixtures, or quoted in docs.

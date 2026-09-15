@@ -9,7 +9,7 @@ use siftr::store::{Order, RunId};
 
 use super::{Globals, found, no_runs, resolve_run};
 use crate::output::{
-    self, behavior_json, duration, exact, plural, printable, run_json, stats_json,
+    self, behavior_json, duration, exact, plural, printable, roles_label, run_json, stats_json,
 };
 
 #[derive(clap::Args)]
@@ -86,7 +86,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             };
             writeln!(
                 w,
-                "  {:>7} {:>6} {:>8} {:>8} {:>8}  {}  {}  {}",
+                "  {:>7} {:>6} {:>8} {:>8} {:>8}  {}  {}{}  {}",
                 stats.count,
                 stats.errors,
                 time(|d| d.p50),
@@ -94,6 +94,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                 time(|d| d.total),
                 behavior.id.short(),
                 behavior.kind,
+                roles_label(behavior.roles),
                 printable(&behavior.template, 100),
             )?;
         }

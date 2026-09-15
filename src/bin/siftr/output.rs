@@ -6,7 +6,8 @@
 //!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap), `interrupted`
 //!   (the signal number, or null; interrupted runs are never compared or used as a baseline), `complete` (false
 //!   when the run is unfinished, interrupted, or signalled INCOMPLETE: it didn't run what its baseline runs did).
-//! - behavior: `id` (16 hex), `kind`, `template`.
+//! - behavior: `id` (16 hex), `kind`, `template`, `roles` (what its paths are, from their names and where they lie:
+//!   database|lock|manifest|log|test|source|view|config|dependency|temp; information, no signal reads them).
 //! - signal: `id`, `run`, `kind` (error|new|disappeared|frequency|latency|incomplete), `confidence` (number in
 //!   [0, 1)), `measure` (count|queries|duration_ms|failed|examples|errors_outside_of_examples), `current`,
 //!   `baseline` {`runs`, `present_in`, `median`, `min`, `max`, `failures`}, `exception`, `attribution`
@@ -58,6 +59,7 @@ use serde_json::{Value, json};
 use siftr::aggregate::{DurationSummary, Exemplar, MAX_BEHAVIORS, Phase, Stats};
 use siftr::baseline::Ineligible;
 use siftr::behavior::{Behavior, Kind};
+use siftr::normalize::{PathRole, PathRoles};
 use siftr::num::round_sig;
 use siftr::signal::{MIN_BASELINE_RUNS, Signal, SignalKind, disappeared_examples};
 use siftr::store::{Feedback, RunId, RunRecord, StoredSignal};
@@ -722,7 +724,17 @@ pub fn behavior_json(behavior: &Behavior) -> Value {
         "id": behavior.id.to_string(),
         "kind": behavior.kind.as_str(),
         "template": behavior.template,
+        "roles": behavior.roles.iter().map(PathRole::as_str).collect::<Vec<_>>(),
     })
+}
+
+/// ` [database, temp]` after a behavior's kind, or nothing when its paths have no role.
+pub fn roles_label(roles: PathRoles) -> String {
+    if roles.is_empty() {
+        return String::new();
+    }
+    let names: Vec<&str> = roles.iter().map(PathRole::as_str).collect();
+    format!(" [{}]", names.join(", "))
 }
 
 /// A single occurrence's percentiles are its own duration: the histogram's rounded estimate would disagree with

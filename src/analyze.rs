@@ -2,7 +2,7 @@
 
 use crate::aggregate::{Aggregate, Aggregator, RunStats};
 use crate::interpret::{Claim, Interpreter, default_interpreters};
-use crate::normalize::Normalizer;
+use crate::normalize::{Normalizer, Roots};
 use crate::observation::Observation;
 
 pub struct Analyzer {
@@ -34,6 +34,14 @@ impl Default for Analyzer {
 impl Analyzer {
     pub fn new() -> Self {
         Self::with_interpreters(default_interpreters())
+    }
+
+    /// Canonicalizes paths under `roots`, so a behavior doesn't depend on the machine or directory it ran in.
+    pub fn with_roots(roots: Roots) -> Self {
+        Analyzer {
+            normalizer: Normalizer::with_roots(roots),
+            ..Self::new()
+        }
     }
 
     /// Interpreters are offered each observation in order until one claims it.

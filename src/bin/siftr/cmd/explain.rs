@@ -10,8 +10,8 @@ use siftr::store::{Feedback, FeedbackKind, Pruned, RunId, SignalId};
 
 use super::{Globals, record_feedback};
 use crate::output::{
-    self, behavior_json, change, exception, exemplar_json, groups, label, printable, rule,
-    signal_json,
+    self, behavior_json, change, exception, exemplar_json, groups, label, printable, roles_label,
+    rule, signal_json,
 };
 
 #[derive(clap::Args)]
@@ -133,9 +133,10 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         )?;
         writeln!(
             w,
-            "behavior  {}  {}  {}",
+            "behavior  {}  {}{}  {}",
             behavior.id.short(),
             behavior.kind,
+            roles_label(behavior.roles),
             printable(&behavior.template, 160)
         )?;
         writeln!(w, "change    {}", change(&stored))?;
