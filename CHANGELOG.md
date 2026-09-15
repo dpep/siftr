@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-09-15
 
 First version. If you ran a pre-release build, see **Upgrading** below.
 
