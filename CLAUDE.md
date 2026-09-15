@@ -71,20 +71,28 @@ Source ──Observation──▶ Interpreter ──Event──▶ Aggregator �
 ## Layout
 
 ```
-crates/
-  siftr-normalize  per-line masker → template + typed slots; slot stats + identifier/enum classification. Zero deps.
-  siftr-core    pure: domain types, interpret, aggregate, baseline, signal. No I/O.
-  siftr-store   one concrete `Store` over SQLite (rusqlite, bundled); a trait arrives with a second backend.
-  siftr         the `siftr` binary: capture, commands, rendering.
+src/
+  lib.rs        the library the binary and tests/ build on; no stability promise
+  normalize     per-line masker → template + typed slots; slot stats + identifier/enum classification. std only.
+  observation, interpret, aggregate, analyze, baseline, signal, behavior, context, num
+                pure domain: no I/O.
+  store         one concrete `Store` over SQLite (rusqlite, bundled); a trait arrives with a second backend.
+  bin/siftr/    the `siftr` binary: capture, commands, rendering.
+assets/         the RSpec listener the binary embeds
+tests/          integration tests: the library API and the built binary
+examples/       normalizer probes on a log file (throughput, template families)
 dogfood/        real projects/scripts used to exercise siftr end to end
 fixtures/       committed captured outputs used by tests (no private data)
 docs/findings/  measurements and experiments that justified a design choice
 ```
 
-Split a crate only at a real boundary (a heavy dependency, a separately
-consumable surface). `siftr-normalize` (the per-line masker, zero runtime
-deps, own benchmarks) is one: it is the hot path and a candidate to share with
-iriq later.
+One package, so crates.io carries one name. The old crate boundaries are module
+rules the compiler no longer enforces; `tests/module_boundaries.rs` does.
+`normalize` uses only `std` and itself: it is the hot path and a candidate to
+share with iriq later, so it must stay liftable into its own crate. The domain
+modules never reach `store` or a dependency beyond serde. Split a crate out
+only at a real boundary: a second consumer, or a heavy dependency worth
+isolating.
 
 ## Reuse of sibling projects
 
@@ -92,7 +100,7 @@ iriq later.
   dependency for URL/route shaping only, in the HTTP interpreter on request
   lines — never on the per-line hot path (regex-based, ~µs per URL). Its
   identifier-vs-enum slot rules (`cluster.rs` `is_enum`, `corpus.rs`
-  `classify_segment`) are *ported* into `siftr-normalize`, not depended on:
+  `classify_segment`) are *ported* into `normalize`, not depended on:
   `PositionStats::observe` allocates per observation and its `SegmentType` is
   URL-specific. Its `SegmentClassifier` misfires on bare log words (`ms` →
   locale), so never apply it to them.
@@ -123,9 +131,9 @@ logging to stderr, flag > env > XDG for paths).
 Before every commit:
 
 ```
-cargo test --workspace --no-fail-fast
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all --check
+cargo test --no-fail-fast
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 ```
 
 `script/verify [SHA]` runs that gate in a throwaway worktree, then drives the
@@ -133,7 +141,7 @@ real loop on `dogfood/rails_demo` (N+1, unfixed rerun, load error, raise after
 describe, recovery) — run it before calling a change done.
 
 `--no-fail-fast` matters: without it cargo stops at the first failing test
-binary, so one known failure hides whether every later crate's tests pass.
+binary, so one known failure hides whether every later test binary passes.
 Prove a test fails before its fix in a throwaway `git worktree add --detach`
 with its own `CARGO_TARGET_DIR` — never `git stash` in a tree other agents
 share.
@@ -163,7 +171,7 @@ share.
   Plain RSpec exits **1** after one Ctrl-C, so pass the child's code through
   rather than assuming 130. Interrupted runs must never enter a baseline: a
   partial run reads as mass DISAPPEARED.
-- The embedded RSpec listener (`crates/siftr/assets/`) is the source of
+- The embedded RSpec listener (`assets/`) is the source of
   truth; siftr rebases its absolute log offsets (checked by `log_ino`) onto the
   captured slice.
 - Test timing is noisy (the same demo example varied 9x across two baseline

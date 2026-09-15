@@ -60,7 +60,7 @@ warm run was identical again.
 `_app_views_users_show_html_erb__3584299121442748424_5232` vs
 `…erb___129572542000730357_5232`. A digits-only mask produced **3 templates for
 1 warning** across 5 runs, which would mean a NEW and a DISAPPEARED on every
-run. The fix is to mask `_+\d+` as one slot. `siftr-normalize` needs a test for
+run. The fix is to mask `_+\d+` as one slot. The normalizer needs a test for
 this.
 
 ## 2. Rules
@@ -235,8 +235,8 @@ Latency values are in ms. "n/a" means no signal.
 §2's thresholds and confidence formulas stand. What changed is everything
 around them, once real suites broke two assumptions the backtest never tested:
 every run ran the whole suite, and one group per example suits every change.
-Sections 1–6 are left as measured. Code: `crates/siftr-core/src/baseline.rs`,
-`crates/siftr-core/src/signal.rs`, `crates/siftr/src/cmd/history.rs`.
+Sections 1–6 are left as measured. Code: `src/baseline.rs`, `src/signal.rs`,
+`src/bin/siftr/cmd/history.rs`.
 
 **Baseline eligibility, v2** (3586139, replacing 2ac34c9). §3 only ever used
 clean runs as a baseline. v1 dropped a recent run by counts: no test summary,
@@ -321,7 +321,7 @@ baselines, but the backtest wasn't re-run to confirm it. The revisions are
 checked instead by fixture tests that replay captured RSpec runs through the
 binary:
 
-- `crates/siftr/tests/core_hunt.rs`: grown, shrunk and red `--fail-fast`
+- `tests/core_hunt.rs`: grown, shrunk and red `--fail-fast`
   suites; fixing a file that never loaded; a deleted spec file as one change
   and never a reminder; focus and load-error runs resolving nothing.
 - `core_reminders.rs`: a reminder keeps the DISAPPEARED query that supports its
