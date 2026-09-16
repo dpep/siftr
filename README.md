@@ -373,6 +373,34 @@ $ siftr explain s99 -j; echo "exit=$?"
 exit=2
 ```
 
+## Configuration
+
+There are two or three things worth setting per project, so the file stays that small. `.siftr.toml`, found by walking up from where you run siftr and stopping at the project root, says which of siftr's **sources** run:
+
+```toml
+# This app's log/test.log is shared with a dev server, so don't read a run's lines out of it.
+[sources.rails_log]
+enabled = false
+```
+
+| Source | What it reads |
+|---|---|
+| `rspec` | per-example results, from the reporter listener siftr adds through `SPEC_OPTS` |
+| `rails_log` | the slice of `log/test.log` the run appended: SQL and request lines |
+
+Both are on until a file turns one off. `~/.config/siftr/config.toml` (or `$XDG_CONFIG_HOME/siftr/config.toml`) takes the same keys for every project, and the project file wins.
+
+That is the whole language. Retention (`SIFTR_KEEP_*`) and privacy (`SIFTR_REDACT`, `SIFTR_CAPTURE`) stay environment-only: they're about your machine and the data directory every project shares, not about one project, and two projects can't give one data directory two answers.
+
+A file siftr can't understand never stops your command. An unknown key, an unknown source, a value that isn't `true` or `false`, or a file that isn't TOML at all warns once on stderr and leaves the default standing:
+
+```
+siftr: warning: ~/code/app/.siftr.toml: rspce is not a source (rails_log, rspec); ignoring it
+siftr: warning: ~/code/app/.siftr.toml: sources.rspec.enabled is not true or false (integer); using the default
+```
+
+`siftr status` says what each source is set to, which file set it, and which files siftr looked for — so a file that isn't taking effect says so instead of being quietly ignored.
+
 ## Data and retention
 
 The data directory holds `siftr.db` and each run's raw capture under `runs/<run>/`. The database also records how signals get used (shown, explained, acked, dismissed). Nothing leaves the machine.
@@ -392,13 +420,16 @@ Past those limits it still keeps a run that is recording, and whatever the lates
 
 ```
 $ siftr status
-data      /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/scribe3-home
+data      ~/.local/share/siftr
 database  388 KB, schema 8
 captures  337 KB for 11 runs
 runs      11 runs of 1 command; oldest r1 39s ago, newest r11 0s ago
 keep      stats of the last 100 runs of each command (default; set SIFTR_KEEP_RUNS)
           evidence, raw lines and captures, of the last 20 (default; set SIFTR_KEEP_EVIDENCE)
           nothing of a command not run for 30 days (default; set SIFTR_KEEP_DAYS)
+config    rails_log off (~/code/app/.siftr.toml)
+          rspec on (default)
+          files ~/code/app/.siftr.toml, ~/.config/siftr/config.toml (not read)
     RUNS  STATS  EVIDENCE  CAPTURES  NEWEST    COMMAND
       11     11        11    337 KB  0s ago    bundle exec rspec
 next: siftr history

@@ -2,7 +2,6 @@
 //! neither migrates nor creates anything. Exits 1 when something needs attention.
 
 use std::io::{self, Write};
-use std::path::Path;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,6 +11,7 @@ use siftr::store::{ContextRuns, Inspection, Retention, RunId, Setting, Source, S
 
 use super::Globals;
 use super::gc::{bytes, worth_vacuuming};
+use crate::config::{Config, tilde};
 use crate::home;
 use crate::output::{self, age, plural, printable};
 
@@ -25,11 +25,12 @@ pub struct Args {
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let home = home::resolve(globals.home.clone())?;
     let inspection = Store::inspect(&home, Retention::from_env())?;
+    let config = Config::load();
     let problems = problems(&inspection);
     output::emit(
         globals.json,
-        || as_json(&inspection, &problems, args.limit),
-        |w| human(w, &inspection, &problems, args.limit),
+        || as_json(&inspection, &config, &problems, args.limit),
+        |w| human(w, &inspection, &config, &problems, args.limit),
     )?;
     Ok(match problems.is_empty() {
         true => ExitCode::SUCCESS,
@@ -71,6 +72,7 @@ fn problems(inspection: &Inspection) -> Vec<String> {
 fn human(
     w: &mut dyn Write,
     inspection: &Inspection,
+    config: &Config,
     problems: &[String],
     limit: usize,
 ) -> io::Result<()> {
@@ -79,6 +81,7 @@ fn human(
     let Some(db) = &inspection.database else {
         writeln!(w, "database  none yet")?;
         keep(w, &inspection.retention)?;
+        configured(w, config)?;
         for problem in problems {
             writeln!(w, "problem   {problem}")?;
         }
@@ -121,6 +124,7 @@ fn human(
         )?;
     }
     keep(w, &inspection.retention)?;
+    configured(w, config)?;
     let (stats, evidence) = pending(inspection);
     if stats + evidence > 0 {
         writeln!(
@@ -188,12 +192,56 @@ fn keep(w: &mut dyn Write, retention: &Retention) -> io::Result<()> {
     )
 }
 
-fn source(setting: &Setting) -> String {
-    match &setting.source {
-        Source::Default => format!("default; set {}", setting.env),
-        Source::Env => setting.env.to_owned(),
-        Source::Adjusted { given, .. } => format!("{}={given}, adjusted", setting.env),
+/// What the config files set, and where siftr looked for them, so a file that isn't taking effect says so.
+fn configured(w: &mut dyn Write, config: &Config) -> io::Result<()> {
+    let mut label = "config";
+    for (name, resolved) in config.sources() {
+        let on = if resolved.value { "on" } else { "off" };
+        writeln!(
+            w,
+            "{label:<10}{name} {on} ({})",
+            origin(&resolved.source, None)
+        )?;
+        label = "";
     }
+    let files: Vec<String> = config
+        .files()
+        .iter()
+        .map(|file| match file.read {
+            true => tilde(&file.path),
+            false => format!("{} (not read)", tilde(&file.path)),
+        })
+        .collect();
+    if files.is_empty() {
+        return Ok(());
+    }
+    writeln!(w, "{:<10}files {}", "", files.join(", "))
+}
+
+/// Where a setting's value came from, as `status` shows it. `env` is the variable that sets it, when one does.
+fn origin(source: &Source, env: Option<&str>) -> String {
+    match (source, env) {
+        (Source::Default, Some(env)) => format!("default; set {env}"),
+        (Source::Default, None) => "default".to_owned(),
+        (Source::Env, _) => env.unwrap_or("the environment").to_owned(),
+        (Source::File { path }, _) => tilde(path),
+        (Source::Adjusted { given, .. }, Some(env)) => format!("{env}={given}, adjusted"),
+        (Source::Adjusted { given, .. }, None) => format!("{given}, adjusted"),
+    }
+}
+
+/// A setting's origin in `-j`: what kind it is, and the file when one set it.
+fn origin_json(source: &Source) -> (&'static str, Option<String>) {
+    match source {
+        Source::Default => ("default", None),
+        Source::Env => ("env", None),
+        Source::File { path } => ("file", Some(tilde(path))),
+        Source::Adjusted { .. } => ("adjusted", None),
+    }
+}
+
+fn source(setting: &Setting) -> String {
+    origin(&setting.source, Some(setting.env))
 }
 
 /// Runs past the limits whose (stats, evidence) are due to be pruned.
@@ -219,12 +267,14 @@ fn span(contexts: &[ContextRuns]) -> Option<(At, At)> {
     Some((oldest, newest))
 }
 
-fn as_json(inspection: &Inspection, problems: &[String], limit: usize) -> Value {
+fn as_json(inspection: &Inspection, config: &Config, problems: &[String], limit: usize) -> Value {
     let at = |(id, time): At| json!({ "id": id.to_string(), "started_at_ms": unix_ms(time) });
     let setting = |s: &Setting| {
         let (source, given, why) = match &s.source {
             Source::Default => ("default", None, None),
             Source::Env => ("env", None, None),
+            // Retention is environment-only; no config file sets it.
+            Source::File { .. } => ("file", None, None),
             Source::Adjusted { given, why } => ("adjusted", Some(given), Some(why)),
         };
         json!({ "env": s.env, "value": s.value, "source": source, "given": given, "why": why })
@@ -254,6 +304,15 @@ fn as_json(inspection: &Inspection, problems: &[String], limit: usize) -> Value 
             "evidence": setting(&retention.evidence),
             "days": setting(&retention.days),
         },
+        "config": {
+            "sources": config.sources().map(|(name, resolved)| {
+                let (source, path) = origin_json(&resolved.source);
+                (name.to_owned(), json!({ "value": resolved.value, "source": source, "path": path }))
+            }).collect::<serde_json::Map<String, Value>>(),
+            "files": config.files().iter()
+                .map(|file| json!({ "path": tilde(&file.path), "read": file.read }))
+                .collect::<Vec<_>>(),
+        },
         "pending": { "stats": stats, "evidence": evidence },
         "commands_total": contexts.clone().count(),
         "commands": contexts.take(limit).map(|c| json!({
@@ -270,16 +329,6 @@ fn as_json(inspection: &Inspection, problems: &[String], limit: usize) -> Value 
             .map(|path| path.display().to_string()).collect::<Vec<_>>(),
         "problems": problems,
     })
-}
-
-/// The data dir as the user would type it: `~` stays unexpanded.
-fn tilde(path: &Path) -> String {
-    let rest = std::env::var_os("HOME").and_then(|home| path.strip_prefix(home).ok());
-    match rest {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    }
 }
 
 fn unix_ms(time: SystemTime) -> u64 {

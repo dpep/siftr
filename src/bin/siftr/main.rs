@@ -1,6 +1,7 @@
 //! `siftr`: wrap a command, record its behaviors, and surface what changed since recent runs.
 
 mod cmd;
+mod config;
 mod dispatch;
 mod home;
 mod output;

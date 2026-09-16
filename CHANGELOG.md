@@ -5,6 +5,16 @@
 - `siftr sources` says what siftr can read here: the command's own output, and the side channels a command writes somewhere else — RSpec's per-example events (`rspec`) and the slice of `log/test.log` a run appends (`rails_log`). Each row gives the source's name, whether it's on, whether it applies to the command you name, and why either way (`the command isn't an rspec run`, `no log/test.log, and no Gemfile naming rails`). A source is named by its configuration key, so the word you read is the word you set. What applies depends on the command as much as on the directory, so `siftr sources -- bundle exec rspec` answers precisely; with no command it judges the directory alone and says so. Read-only: it prepares nothing, runs nothing and records nothing. Exits 0.
 - `run -j` and `ingest -j` carry `streams`: what the run actually captured, spelled as an exemplar's `stream` is (`stdout`, `stderr`, `file:rspec-events`, `file:log/test.log`), so a piece of evidence joins straight to it. A stream opens on its first byte, so a command that wrote nothing to stderr doesn't list it. `changes -j` reports `streams: null`, since the store doesn't hold what a run read.
 - A run that worked still says nothing about its own plumbing. A source that was expected and failed warns as before, now naming itself — `rspec skipped: …` rather than `side channel skipped: …`.
+- A project can turn siftr's sources off in a file. `.siftr.toml`, found by walking up from where you run siftr and stopping at the project root, then `~/.config/siftr/config.toml` (`$XDG_CONFIG_HOME` honored). It holds one thing:
+
+  ```toml
+  [sources.rails_log]
+  enabled = false
+  ```
+
+  `rspec` is the listener siftr adds through `SPEC_OPTS`; `rails_log` is the slice of `log/test.log` a run appends. Both are on unless a file says otherwise, and the project file wins over the user file. Nothing else goes in the file: retention (`SIFTR_KEEP_*`) and privacy (`SIFTR_REDACT`, `SIFTR_CAPTURE`) stay environment-only, since they're about your machine and the data dir every project shares, not about one project.
+- `siftr status` has a `config` block: what each source is set to, which file set it (or `default`), and which files siftr looked for — so a file that isn't taking effect says so instead of being silently ignored. In `-j` it's `config.sources` and `config.files`.
+- An unknown key, an unknown source name, a value of the wrong type, or a file that isn't valid TOML warns once on stderr and leaves the default standing. Your command still runs and still exits with its own code.
 
 ## 0.1.2 — 2026-09-15
 

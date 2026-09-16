@@ -61,6 +61,10 @@ pub struct Setting {
 pub enum Source {
     Default,
     Env,
+    /// Read from a config file.
+    File {
+        path: PathBuf,
+    },
     /// Set, but unusable as given: `value` is what siftr uses instead.
     Adjusted {
         given: String,
