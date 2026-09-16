@@ -183,6 +183,7 @@ behavior  f035378415  http.request  GET UsersController#show 2xx
 change    queries 3 → 10
 rule      identical in all 3 baseline runs, so any change counts; confidence (n+1)/(n+2) = 0.80
 queries   r4 10  |  baseline r3 3  r2 3  r1 3
+resources cpu 0.878s (0.604s user, 0.274s sys), max rss 104 MB, 0 voluntary and 506 involuntary switches  |  baseline cpu 0.87s (0.601s user, 0.269s sys), max rss 104 MB, 0 voluntary and 334 involuntary switches
 scope     872cda219e  ./spec/requests/users_spec.rb # Users shows a user with posts and comments
           r4 10  |  baseline r3 3  r2 3  r1 3
 evidence  r4
@@ -195,7 +196,7 @@ next: siftr evidence f035378415 --run r4
 
 If retention has pruned the run's lines, `explain` still shows the numbers and says so: `evidence  r22 pruned (SIFTR_KEEP_EVIDENCE)`.
 
-A `resources` line follows the measure, for any run that recorded what the kernel charged it: this run's CPU, peak memory and context switches beside the median of its baseline runs. No rule reads them — they're there to tell a loaded machine from a code change.
+The `resources` line appears for any run that recorded what the kernel charged it, the baseline being the median of its baseline runs. No rule reads those numbers — they are there to tell a loaded machine from a code change.
 
 ### `siftr evidence <BEHAVIOR>`
 
