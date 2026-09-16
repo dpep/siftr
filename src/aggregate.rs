@@ -203,9 +203,14 @@ impl Aggregator {
     pub fn record(&mut self, event: &Event<'_>) {
         let id = BehaviorId::of(event.kind, event.template.template);
         // Examples and summaries are exempt: the suite bounds them, and they are what everything else is scoped to.
+        // So is the run's own resource usage: exactly one event, and losing it to a chatty run is losing the
+        // evidence that says the run was chatty.
         let admitted = self.behaviors.contains_key(&id)
             || self.behaviors.len() < MAX_BEHAVIORS
-            || matches!(event.kind, Kind::TestExample | Kind::TestSummary);
+            || matches!(
+                event.kind,
+                Kind::TestExample | Kind::TestSummary | Kind::Resources
+            );
         let overflow = self.overflow;
         let acc = if admitted {
             self.behaviors.entry(id).or_insert_with(|| {

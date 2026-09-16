@@ -1,12 +1,14 @@
 //! Where a run's lines come from: the command's own stdout and stderr always, plus the side channels it writes
-//! somewhere else — an RSpec listener's events, the slice of `log/test.log` a run appended.
+//! somewhere else — an RSpec listener's events, the slice of `log/test.log` a run appended — and what the kernel
+//! charged the run, which it writes nowhere at all.
 //!
 //! A source is named by its configuration key, so the word read in `siftr sources` is the word typed in
 //! `.siftr.toml`. What it feeds is a stream, named separately: interpreters match on stream labels, and a run's
-//! `-j` `streams` reports the ones that arrived.
+//! `-j` `streams` reports the ones that arrived. A source that reads no bytes feeds no stream, and says so.
 
 mod rails_log;
 mod rspec;
+mod rusage;
 
 use std::path::Path;
 use std::process::Command;
@@ -18,14 +20,16 @@ use siftr::observation::Stream;
 use crate::record::Recording;
 use rails_log::RailsLog;
 use rspec::Rspec;
+use rusage::Rusage;
 
 /// A source's name, which is also its configuration key.
 pub const RSPEC: &str = "rspec";
 pub const RAILS_LOG: &str = "rails_log";
+pub const RUSAGE: &str = "rusage";
 
 /// Every source configuration can switch, in listing order. The command's own output isn't one of them: siftr
 /// always reads it. Configuration validates its keys against this list.
-pub const SOURCES: &[&str] = &[RSPEC, RAILS_LOG];
+pub const SOURCES: &[&str] = &[RSPEC, RAILS_LOG, RUSAGE];
 
 /// The command's own output, which every run reads.
 const STDOUT: &str = "stdout";
@@ -49,7 +53,8 @@ pub trait Source {
     /// Before spawning: set or append env vars (e.g. `SPEC_OPTS`), note pre-run state such as a log's length.
     fn prepare(&mut self, command: &mut Command) -> Result<()>;
 
-    /// After the child exits: feed what was captured into the same recording, as `Stream::File` streams.
+    /// After the child exits and is reaped: feed what was captured into the same recording, as `Stream::File`
+    /// streams, or record what the kernel said about the run.
     fn collect(&mut self, recording: &mut Recording) -> Result<()>;
 }
 
@@ -58,6 +63,7 @@ pub trait Source {
 pub struct Enabled {
     pub rspec: bool,
     pub rails_log: bool,
+    pub rusage: bool,
 }
 
 impl Default for Enabled {
@@ -65,6 +71,7 @@ impl Default for Enabled {
         Enabled {
             rspec: true,
             rails_log: true,
+            rusage: true,
         }
     }
 }
@@ -75,31 +82,40 @@ pub fn enabled() -> Enabled {
     Enabled {
         rspec: config.source_enabled(RSPEC),
         rails_log: config.source_enabled(RAILS_LOG),
+        rusage: config.source_enabled(RUSAGE),
     }
 }
 
 /// The sources that apply to this command in `dir`, ready to prepare.
 pub fn for_command(argv: &[String], dir: &Path, on: &Enabled) -> Vec<Box<dyn Source>> {
-    let Some(suite) = suite(argv) else {
-        return Vec::new();
+    let mut sources: Vec<Box<dyn Source>> = match suite(argv) {
+        None => Vec::new(),
+        Some(suite) => {
+            let log = on.rails_log.then(|| RailsLog::detect(dir)).flatten();
+            match suite {
+                // The listener's events carry offsets into the log, so one source owns both and feeds them in order.
+                Suite::Rspec if on.rspec => vec![Box::new(Rspec::new(log))],
+                _ => log
+                    .into_iter()
+                    .map(|log| Box::new(log) as Box<dyn Source>)
+                    .collect(),
+            }
+        }
     };
-    let log = on.rails_log.then(|| RailsLog::detect(dir)).flatten();
-    match suite {
-        // The listener's events carry offsets into the log, so one source owns both and feeds them in order.
-        Suite::Rspec if on.rspec => vec![Box::new(Rspec::new(log))],
-        _ => log
-            .into_iter()
-            .map(|log| Box::new(log) as Box<dyn Source>)
-            .collect(),
+    // Every run has a child to measure, whatever the command turns out to be.
+    if on.rusage {
+        sources.push(Box::new(Rusage));
     }
+    sources
 }
 
 /// One source as `siftr sources` lists it.
 pub struct Listed {
     /// Its name and configuration key.
     pub name: &'static str,
-    /// The stream it feeds, as an exemplar's `stream` and a run's `streams` spell it.
-    pub stream: Stream,
+    /// The stream it feeds, as an exemplar's `stream` and a run's `streams` spell it. `None` for a source that
+    /// reads no bytes: it opens no stream and appears in no run's `streams`.
+    pub stream: Option<Stream>,
     /// What it reads.
     pub about: &'static str,
     pub on: bool,
@@ -117,7 +133,7 @@ pub fn survey(argv: &[String], dir: &Path, on: &Enabled) -> Vec<Listed> {
     let log = RailsLog::detect(dir);
     let passthrough = |name, stream| Listed {
         name,
-        stream,
+        stream: Some(stream),
         about: "the command's own output",
         on: true,
         applies: true,
@@ -140,7 +156,7 @@ pub fn survey(argv: &[String], dir: &Path, on: &Enabled) -> Vec<Listed> {
         passthrough(STDERR, Stream::Stderr),
         Listed {
             name: RSPEC,
-            stream: rspec_events(),
+            stream: Some(rspec_events()),
             about: "RSpec's per-example results, from a listener added to SPEC_OPTS",
             on: on.rspec,
             applies: rspec_applies,
@@ -148,11 +164,21 @@ pub fn survey(argv: &[String], dir: &Path, on: &Enabled) -> Vec<Listed> {
         },
         Listed {
             name: RAILS_LOG,
-            stream: rails_log(),
+            stream: Some(rails_log()),
             about: "the SQL and request lines the run appends to the Rails test log",
             on: on.rails_log,
             applies: log_applies,
             why: log_why,
+        },
+        Listed {
+            name: RUSAGE,
+            // Read from the wait, not from a file: it opens no stream, so it joins no run's `streams`.
+            stream: None,
+            about: "the CPU, peak memory and context switches the kernel charged the run (evidence, never a signal)",
+            on: on.rusage,
+            // It needs nothing of the command or the directory, so it never has to be judged against either.
+            applies: true,
+            why: "every run siftr wraps has a child to measure",
         },
     ]
 }
@@ -242,7 +268,10 @@ mod tests {
         let dir = rails_project();
         let argv = rspec_argv();
         let all = Enabled::default();
-        assert_eq!(names(&for_command(&argv, dir.path(), &all)), [RSPEC]);
+        assert_eq!(
+            names(&for_command(&argv, dir.path(), &all)),
+            [RSPEC, RUSAGE]
+        );
 
         // The rspec source owns the log slice its offsets index, so without it the log is read on its own.
         let no_rspec = Enabled {
@@ -251,7 +280,7 @@ mod tests {
         };
         assert_eq!(
             names(&for_command(&argv, dir.path(), &no_rspec)),
-            [RAILS_LOG]
+            [RAILS_LOG, RUSAGE]
         );
         assert!(
             for_command(
@@ -259,7 +288,8 @@ mod tests {
                 dir.path(),
                 &Enabled {
                     rspec: false,
-                    rails_log: false
+                    rails_log: false,
+                    rusage: false,
                 }
             )
             .is_empty()
@@ -274,6 +304,29 @@ mod tests {
         );
     }
 
+    /// A command that isn't a test suite still gets measured: rusage needs nothing of the command.
+    #[test]
+    fn the_kernels_accounting_is_collected_whatever_the_command_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let argv = ["ls".to_owned()];
+        assert_eq!(
+            names(&for_command(&argv, dir.path(), &Enabled::default())),
+            [RUSAGE]
+        );
+        assert!(
+            for_command(
+                &argv,
+                dir.path(),
+                &Enabled {
+                    rusage: false,
+                    ..Enabled::default()
+                }
+            )
+            .is_empty(),
+            "and nothing is collected once it's switched off"
+        );
+    }
+
     /// The config lane reads [`SOURCES`], so a source added to [`Enabled`] and left out of it would be
     /// unswitchable. With everything off, exactly the listed keys read off.
     #[test]
@@ -282,6 +335,7 @@ mod tests {
         let off = Enabled {
             rspec: false,
             rails_log: false,
+            rusage: false,
         };
         let switched: Vec<&str> = survey(&rspec_argv(), dir.path(), &off)
             .into_iter()
@@ -295,17 +349,19 @@ mod tests {
     fn a_source_is_named_by_its_key_and_says_which_stream_it_feeds() {
         let dir = rails_project();
         let listed = survey(&rspec_argv(), dir.path(), &Enabled::default());
-        let named: Vec<(&str, String)> = listed
+        let named: Vec<(&str, Option<String>)> = listed
             .iter()
-            .map(|s| (s.name, s.stream.to_string()))
+            .map(|s| (s.name, s.stream.as_ref().map(Stream::to_string)))
             .collect();
         assert_eq!(
             named,
             [
-                ("stdout", "stdout".to_owned()),
-                ("stderr", "stderr".to_owned()),
-                ("rspec", "file:rspec-events".to_owned()),
-                ("rails_log", "file:log/test.log".to_owned()),
+                ("stdout", Some("stdout".to_owned())),
+                ("stderr", Some("stderr".to_owned())),
+                ("rspec", Some("file:rspec-events".to_owned())),
+                ("rails_log", Some("file:log/test.log".to_owned())),
+                // Nothing was read from anywhere, so there is no stream to point evidence at.
+                ("rusage", None),
             ],
             "the key is what configuration takes; the stream is what evidence points at"
         );
@@ -326,23 +382,27 @@ mod tests {
         };
         assert_eq!(
             applies(&["bundle", "exec", "rspec"], rails.path()),
-            [STDOUT, STDERR, RSPEC, RAILS_LOG]
+            [STDOUT, STDERR, RSPEC, RAILS_LOG, RUSAGE]
         );
         assert_eq!(
             applies(&["bundle", "exec", "rspec"], bare.path()),
-            [STDOUT, STDERR, RSPEC],
+            [STDOUT, STDERR, RSPEC, RUSAGE],
             "no Rails log outside a Rails project"
         );
         assert_eq!(
             applies(&["bin/rails", "test"], rails.path()),
-            [STDOUT, STDERR, RAILS_LOG],
+            [STDOUT, STDERR, RAILS_LOG, RUSAGE],
             "only the log can see into a non-rspec suite"
         );
         assert_eq!(
             applies(&["ls"], rails.path()),
-            [STDOUT, STDERR],
+            [STDOUT, STDERR, RUSAGE],
             "another command's lines are never attributed to this run"
         );
-        assert_eq!(applies(&[], rails.path()), [STDOUT, STDERR]);
+        assert_eq!(
+            applies(&[], rails.path()),
+            [STDOUT, STDERR, RUSAGE],
+            "what the kernel charges needs no command to be judged"
+        );
     }
 }

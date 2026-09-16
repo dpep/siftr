@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use serde_json::{Value, json};
 use siftr::aggregate::{Phase, RunStats};
+use siftr::interpret::resources::Resources;
 use siftr::signal::{self, measure};
 use siftr::store::{Feedback, FeedbackKind, Pruned, RunId, SignalId};
 
@@ -22,6 +23,20 @@ pub struct Args {
 
 const EXEMPLARS: usize = 5;
 
+/// Whole milliseconds, the precision the measures were built with: the kernel reports microseconds but
+/// accounts in ticks, so finer digits would be noise dressed as evidence.
+fn resources_json(r: &Resources) -> Value {
+    let ms = |d: std::time::Duration| d.as_millis() as u64;
+    json!({
+        "cpu_ms": ms(r.cpu()),
+        "cpu_user_ms": ms(r.cpu_user),
+        "cpu_system_ms": ms(r.cpu_system),
+        "max_rss_bytes": r.max_rss_bytes,
+        "voluntary_switches": r.voluntary_switches,
+        "involuntary_switches": r.involuntary_switches,
+    })
+}
+
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let store = globals.open_store()?;
     let stored = store.signal(args.signal)?.ok_or_else(|| {
@@ -36,6 +51,15 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     for run in store.baseline_of(stored.run)? {
         runs.push((run, store.run_stats(run)?));
     }
+    // What the kernel charged this run, beside what it typically charged its baseline runs. Evidence only: no
+    // rule reads these, so they can't raise or strengthen a signal — but a slowdown on a run that also burned
+    // far more CPU, or was preempted far more often, is a loaded machine before it is a code change.
+    let resources = Resources::of(&runs[0].1);
+    let resources_baseline = Resources::median(
+        runs[1..]
+            .iter()
+            .filter_map(|(_, stats)| Resources::of(stats)),
+    );
     let rounded = |v: f64| siftr::num::round_sig(v, 3);
     // Absent is zero for counts; for other measures there is no number to show.
     let per_run: Vec<(RunId, Option<f64>)> = runs
@@ -118,6 +142,10 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                     .collect::<Vec<_>>(),
             },
             "group": group.iter().map(|m| m.id.to_string()).collect::<Vec<_>>(),
+            "resources": resources.map(|now| json!({
+                "current": resources_json(&now),
+                "baseline": resources_baseline.as_ref().map(resources_json),
+            })),
         })
     };
     output::emit(globals.json, as_json, |w| {
@@ -153,6 +181,12 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             format!("{}  |  baseline {}", cell(now), baseline.join("  "))
         };
         writeln!(w, "{:<9} {}", s.measure, show(&per_run))?;
+        if let Some(now) = resources {
+            match &resources_baseline {
+                Some(then) => writeln!(w, "resources {now}  |  baseline {then}")?,
+                None => writeln!(w, "resources {now}")?,
+            }
+        }
         if let (Some(rows), Some(phase)) = (&per_scope, scope) {
             let rows: Vec<(RunId, Option<f64>)> =
                 rows.iter().map(|(r, v)| (*r, Some(*v))).collect();

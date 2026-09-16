@@ -261,7 +261,10 @@ mod tests {
     #[test]
     fn every_source_runs_until_a_file_turns_one_off() {
         let (config, warnings) = read(&[]);
-        assert_eq!(enabled(&config), [("rails_log", true), ("rspec", true)]);
+        assert_eq!(
+            enabled(&config),
+            [("rails_log", true), ("rspec", true), ("rusage", true)]
+        );
         assert_eq!(warnings, Vec::<String>::new());
         assert!(config.source_enabled("rspec"));
         assert!(
@@ -270,7 +273,10 @@ mod tests {
         );
 
         let (config, warnings) = read(&["[sources.rspec]\nenabled = false\n"]);
-        assert_eq!(enabled(&config), [("rails_log", true), ("rspec", false)]);
+        assert_eq!(
+            enabled(&config),
+            [("rails_log", true), ("rspec", false), ("rusage", true)]
+        );
         assert_eq!(warnings, Vec::<String>::new());
     }
 
@@ -280,7 +286,10 @@ mod tests {
             "[sources.rspec]\nenabled = true\n",
             "[sources.rspec]\nenabled = false\n[sources.rails_log]\nenabled = false\n",
         ]);
-        assert_eq!(enabled(&config), [("rails_log", false), ("rspec", true)]);
+        assert_eq!(
+            enabled(&config),
+            [("rails_log", false), ("rspec", true), ("rusage", true)]
+        );
         assert_eq!(warnings, Vec::<String>::new());
 
         let origin = |name| match &config.sources().find(|(n, _)| *n == name).unwrap().1.source {
@@ -304,7 +313,7 @@ mod tests {
             );
         assert_eq!(
             enabled(&config),
-            [("rails_log", true), ("rspec", true)],
+            [("rails_log", true), ("rspec", true), ("rusage", true)],
             "nothing understood, nothing changed"
         );
         let warnings: Vec<&str> = warnings
@@ -317,7 +326,7 @@ mod tests {
             [
                 "retention is not a setting; siftr reads [sources.<name>]",
                 "sources.rails_log.enabled is not true or false (integer); using the default",
-                "rspce is not a source (rspec, rails_log); ignoring it",
+                "rspce is not a source (rspec, rails_log, rusage); ignoring it",
                 "sources.rspec.enable is not a setting (enabled); ignoring it",
             ]
         );
@@ -326,7 +335,10 @@ mod tests {
     #[test]
     fn a_file_that_isnt_toml_is_ignored_whole() {
         let (config, warnings) = read(&["[sources.rspec\nenabled = ", ""]);
-        assert_eq!(enabled(&config), [("rails_log", true), ("rspec", true)]);
+        assert_eq!(
+            enabled(&config),
+            [("rails_log", true), ("rspec", true), ("rusage", true)]
+        );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("not valid TOML"), "{warnings:?}");
         assert!(!config.files()[0].read, "status can say it wasn't used");

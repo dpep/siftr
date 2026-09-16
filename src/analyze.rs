@@ -1,6 +1,7 @@
 //! The streaming pipeline for one run: observations in, aggregates out.
 
 use crate::aggregate::{Aggregate, Aggregator, RunStats};
+use crate::interpret::resources::Resources;
 use crate::interpret::{Claim, Interpreter, default_interpreters};
 use crate::normalize::{Normalizer, Roots};
 use crate::observation::Observation;
@@ -52,6 +53,12 @@ impl Analyzer {
             aggregator: Aggregator::new(),
             observations: 0,
         }
+    }
+
+    /// An event with no line behind it: what the kernel charged the run, which arrives once from the
+    /// wait rather than from any stream. It adds no observation, so the run's line count is unchanged.
+    pub fn record_resources(&mut self, resources: &Resources) {
+        resources.record(&mut self.aggregator);
     }
 
     pub fn observe(&mut self, obs: Observation<'_>) {

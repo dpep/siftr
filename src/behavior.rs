@@ -14,16 +14,20 @@ pub enum Kind {
     HttpRequest,
     Exception,
     Log,
+    /// What the kernel charged the run: CPU, peak memory, context switches. The one kind the signal
+    /// rules never judge — see `signal::Comparison::class` and [`crate::interpret::resources`].
+    Resources,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [
+    pub const ALL: [Kind; 7] = [
         Kind::TestExample,
         Kind::TestSummary,
         Kind::DbQuery,
         Kind::HttpRequest,
         Kind::Exception,
         Kind::Log,
+        Kind::Resources,
     ];
 
     /// Hashed into behavior ids and persisted: renaming one orphans every stored behavior of that kind.
@@ -35,6 +39,7 @@ impl Kind {
             Kind::HttpRequest => "http.request",
             Kind::Exception => "exception",
             Kind::Log => "log",
+            Kind::Resources => "run.resources",
         }
     }
 }

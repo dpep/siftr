@@ -6,7 +6,9 @@
 //!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap), `interrupted`
 //!   (the signal number, or null; interrupted runs are never compared or used as a baseline), `complete` (false
 //!   when the run is unfinished, interrupted, or signalled INCOMPLETE: it didn't run what its baseline runs did).
-//! - behavior: `id` (16 hex), `kind`, `template`, `roles` (what its paths are, from their names and where they lie:
+//! - behavior: `id` (16 hex), `kind` (test.example|test.summary|db.query|http.request|exception|log|run.resources,
+//!   the last being the one run-level behavior no signal rule judges), `template`, `roles` (what its paths are,
+//!   from their names and where they lie:
 //!   database|lock|manifest|log|test|source|view|config|dependency|temp; information, no signal reads them).
 //! - signal: `id`, `run`, `kind` (error|new|disappeared|frequency|latency|incomplete), `confidence` (number in
 //!   [0, 1)), `measure` (count|queries|duration_ms|failed|examples|errors_outside_of_examples), `current`,
@@ -45,7 +47,11 @@
 //! - explain (`explain -j`): `signal`, `rule`, `runs` [{`run`, `value`}], `scope` (behavior or null), `scope_runs`,
 //!   `evidence` {`run` (this run, or for a disappearance the latest baseline run that had the behavior; null when none
 //!   did), `pruned` (null, or the retention setting that pruned that run's lines, e.g. `SIFTR_KEEP_EVIDENCE`),
-//!   `exemplars`}, `group` (signal ids).
+//!   `exemplars`}, `group` (signal ids), `resources` (null, or {`current`, `baseline` (the median across the
+//!   baseline runs, or null when none recorded it)}, each {`cpu_ms`, `cpu_user_ms`, `cpu_system_ms`,
+//!   `max_rss_bytes`, `voluntary_switches`, `involuntary_switches`}: what the kernel charged the run, in whole
+//!   milliseconds and bytes on every platform. Evidence only — no signal rule reads them, so they never raise
+//!   or strengthen a change; they say whether the machine was loaded while it happened).
 //! - nothing found (exit 1) is still the command's document: `changes` with `run` null and empty arrays,
 //!   `summary` with `run` null, `evidence` with `run` null, `history` an empty array.
 //! - not recorded (`run -j` when the store was unusable or busy, or analysis failed; the exit code is still the

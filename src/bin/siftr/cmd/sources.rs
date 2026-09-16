@@ -9,6 +9,7 @@ use std::process::ExitCode;
 use anyhow::{Context as _, Result};
 use serde_json::{Value, json};
 use siftr::context::shell_join;
+use siftr::observation::Stream;
 
 use super::Globals;
 use crate::output;
@@ -48,7 +49,7 @@ fn document(listed: &[Listed], command: Option<&str>, here: &Path) -> Value {
         "command": command,
         "sources": listed.iter().map(|source| json!({
             "name": source.name,
-            "stream": source.stream.to_string(),
+            "stream": source.stream.as_ref().map(Stream::to_string),
             "about": source.about,
             "on": source.on,
             "applies": source.applies,
@@ -68,10 +69,13 @@ fn human(
         None => writeln!(w, "sources in {}", here.display())?,
     }
     for source in listed {
-        // The command's own output is named after its stream, so naming it twice would say nothing.
-        let stream = match source.stream.to_string() {
-            same if same == source.name => String::new(),
-            stream => format!("{stream} — "),
+        // The command's own output is named after its stream, so naming it twice would say nothing; a source
+        // that reads no bytes has no stream for evidence to point at, and an em dash says so rather than
+        // naming a file that doesn't exist.
+        let stream = match source.stream.as_ref().map(Stream::to_string) {
+            None => "— ".to_owned(),
+            Some(same) if same == source.name => String::new(),
+            Some(stream) => format!("{stream} — "),
         };
         writeln!(
             w,

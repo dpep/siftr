@@ -21,6 +21,9 @@ path = "src/bin/siftr/main.rs"
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive", "env"] }
+# getrusage(2) only: rustix 1.1 exposes no rusage call. Already built for this target — rustix's own
+# macOS backend links it — so it adds a name here, not a dependency to the tree.
+libc = "0.2.189"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 # PTY, termios and process groups, without unsafe; already in the tree through tempfile.
 rustix = { version = "1.1.4", features = ["pty", "termios", "process"] }

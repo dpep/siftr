@@ -88,6 +88,13 @@ FREQUENCY measures: count per template per run, query count per request action
 Only the log bytes between an example's `example_started` and finish offsets
 are attributed to it.
 
+Measures no rule reads: the `run.resources` behavior's CPU, peak RSS and
+context switches (2026-09-15). §1's noise makes them a varying measure that
+would leave its range on most runs, so they are excluded by kind rather than by
+threshold — `signal::Comparison::class` returns `None`, and `judge` stops there
+before any rule runs. They are kept as evidence and shown by `explain` beside
+the baseline's, which is what tells a slow run from a loaded machine.
+
 **Ranking.** Tiers, lowest first: 1 ERROR; 2 FREQUENCY on a request's query
 count, NEW stderr line, LATENCY on an example; 3 FREQUENCY on an SQL template,
 an example's query total, or a stderr count; 4 NEW/DISAPPEARED of an SQL

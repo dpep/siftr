@@ -234,7 +234,8 @@ fn run_passes_output_through_and_exits_with_the_childs_code() {
     let stderr = stderr(&output);
     assert!(stderr.starts_with("oops\n"), "{stderr}");
     assert!(
-        stderr.contains("r1: 2 lines, 2 behaviors; no earlier runs"),
+        // Three, not two: every run also carries what the kernel charged it, which costs no line.
+        stderr.contains("r1: 2 lines, 3 behaviors; no earlier runs"),
         "{stderr}"
     );
 

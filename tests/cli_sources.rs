@@ -54,7 +54,7 @@ fn a_rails_project_running_rspec_has_every_source_apply() {
     assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
     let doc = document(&output);
     assert_eq!(doc["command"], "bundle exec rspec");
-    for name in ["stdout", "stderr", "rspec", "rails_log"] {
+    for name in ["stdout", "stderr", "rspec", "rails_log", "rusage"] {
         let source = row(&doc, name);
         assert_eq!(source["on"], true, "{name} is on by default");
         assert_eq!(source["applies"], true, "{name} applies: {source}");
@@ -63,6 +63,8 @@ fn a_rails_project_running_rspec_has_every_source_apply() {
     assert_eq!(row(&doc, "rspec")["stream"], "file:rspec-events");
     assert_eq!(row(&doc, "rails_log")["stream"], "file:log/test.log");
     assert_eq!(row(&doc, "stdout")["stream"], "stdout");
+    // What the kernel charged the run is read from the wait, not from a stream, and says so.
+    assert_eq!(row(&doc, "rusage")["stream"], Value::Null);
 }
 
 #[test]
@@ -151,7 +153,7 @@ fn the_human_listing_reads_as_a_table() {
         "{text}"
     );
     let rows: Vec<&str> = lines.filter(|line| line.starts_with("  ")).collect();
-    assert_eq!(rows.len(), 4, "{text}");
+    assert_eq!(rows.len(), 5, "{text}");
     assert!(
         rows[2].contains("rspec") && rows[2].contains("applies"),
         "{text}"

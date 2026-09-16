@@ -2,11 +2,15 @@
 //!
 //! Each interpreter lives in its own submodule and is registered in [`default_interpreters`].
 //! Numeric slot values (durations in ms, sizes in bytes) come from [`crate::normalize::slot_value_f64`].
+//!
+//! [`resources`] is the exception: its event comes from the kernel rather than from a line, so it has
+//! no interpreter and isn't in the chain. It lives here because what the measures mean is domain, not I/O.
 
 #[cfg(test)]
 mod fixtures;
 pub mod generic;
 mod rails;
+pub mod resources;
 pub mod rspec;
 
 use std::time::Duration;

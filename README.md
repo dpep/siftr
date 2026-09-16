@@ -324,10 +324,11 @@ sources for bundle exec rspec in ~/src/siftr/dogfood/rails_demo
   stderr     on   applies         the command's own output (always read)
   rspec      on   applies         file:rspec-events — RSpec's per-example results, from a listener added to SPEC_OPTS (the command runs rspec)
   rails_log  on   applies         file:log/test.log — the SQL and request lines the run appends to the Rails test log (log/test.log is there)
+  rusage     on   applies         — the CPU, peak memory and context switches the kernel charged the run (evidence, never a signal) (every run siftr wraps has a child to measure)
 next: siftr run -- bundle exec rspec
 ```
 
-After the name comes the stream it feeds, which is what a piece of evidence points at: an exemplar's `stream` and a run's `streams` use that spelling.
+After the name comes the stream it feeds, which is what a piece of evidence points at: an exemplar's `stream` and a run's `streams` use that spelling. A source that reads no bytes shows an em dash instead: `rusage` takes its numbers from the wait rather than from a file, so it opens no stream and joins no run's `streams`.
 
 What applies depends on the command as much as on the directory, so name the command you'd wrap. Elsewhere, or for a command that isn't a test run:
 
@@ -338,6 +339,7 @@ sources for make test in ~/src/notes
   stderr     on   applies         the command's own output (always read)
   rspec      on   does not apply  file:rspec-events — RSpec's per-example results, from a listener added to SPEC_OPTS (the command isn't an rspec run)
   rails_log  on   does not apply  file:log/test.log — the SQL and request lines the run appends to the Rails test log (the command isn't a Ruby test run)
+  rusage     on   applies         — the CPU, peak memory and context switches the kernel charged the run (evidence, never a signal) (every run siftr wraps has a child to measure)
 next: siftr run -- make test
 ```
 
@@ -387,8 +389,9 @@ enabled = false
 |---|---|
 | `rspec` | per-example results, from the reporter listener siftr adds through `SPEC_OPTS` |
 | `rails_log` | the slice of `log/test.log` the run appended: SQL and request lines |
+| `rusage` | what the kernel charged the run: CPU time, peak memory, context switches |
 
-Both are on until a file turns one off. `~/.config/siftr/config.toml` (or `$XDG_CONFIG_HOME/siftr/config.toml`) takes the same keys for every project, and the project file wins.
+All three are on until a file turns one off. `~/.config/siftr/config.toml` (or `$XDG_CONFIG_HOME/siftr/config.toml`) takes the same keys for every project, and the project file wins.
 
 That is the whole language. Retention (`SIFTR_KEEP_*`) and privacy (`SIFTR_REDACT`, `SIFTR_CAPTURE`) stay environment-only: they're about your machine and the data directory every project shares, not about one project, and two projects can't give one data directory two answers.
 
@@ -557,13 +560,14 @@ Trimmed with `jq '{run: {id: .run.id, complete: .run.complete}, changes, baselin
 
 ## What it captures (RSpec + Rails)
 
-`siftr run -- bundle exec rspec` reads three channels:
+`siftr run -- bundle exec rspec` reads three channels, and measures the run itself:
 
 - **Per-example results** from an RSpec reporter listener, added by appending `--require` to `SPEC_OPTS`. It isn't a formatter, so your `.rspec` formatters and any `SPEC_OPTS` you've set keep working. It also sees errors outside examples, such as a spec file that fails to load or a hook that raises.
 - **SQL and request lines** from the bytes the run appended to `log/test.log`. Each line is attributed to the example that was running when it was written, or to before, between or after examples. One log rotation during a run is handled exactly. With two or more, bytes are lost.
 - **stdout and stderr**. When siftr's stdout is a terminal, the child gets a PTY, so RSpec's colours survive. stderr stays a separate pipe, because deprecation warnings land there.
+- **What the kernel charged the run** — CPU time, peak memory, and voluntary and involuntary context switches, from one `getrusage` of the reaped child. It costs ~0.19µs, needs no sampler, and doesn't touch how your command runs or exits. This is **evidence only**: no signal ever fires on it, because CPU and memory vary far too much run to run to judge. `siftr explain` shows it beside the baseline's, so you can tell a slower run from a busier machine. On macOS the kernel leaves the disk-I/O counters at zero, so siftr reports none.
 
-`siftr sources` says which of these apply to a command here; a run's `-j` `streams` says which it actually captured.
+`siftr sources` says which of these apply to a command here; a run's `-j` `streams` says which it actually captured. `rusage` is in that listing but never in `streams`: it reads no bytes.
 
 Why it works this way: [docs/findings/capture.md](docs/findings/capture.md).
 

@@ -413,6 +413,10 @@ impl<'a> Comparison<'a> {
             Kind::HttpRequest => Some(Class::Request),
             Kind::DbQuery => Some(Class::Sql),
             Kind::TestSummary => None,
+            // Evidence, never a signal. CPU and peak RSS vary run to run (§1: a suite's wall time spans 10x),
+            // so judging them would raise a FREQUENCY on nearly every run. `judge` returns on None, so this
+            // arm is the whole gate: no presence, frequency, error or latency rule ever sees these measures.
+            Kind::Resources => None,
             Kind::Log | Kind::Exception if id == overflow_behavior().id => None,
             // Seen on the reporter's own event stream, so the rule below would drop it; RSpec exits 1 on it.
             Kind::Exception if error_outside_examples(b) => Some(Class::OutsideExamples),

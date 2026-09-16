@@ -8,6 +8,7 @@ use anyhow::{Context as _, Result};
 use siftr::analyze::{Analysis, Analyzer};
 use siftr::baseline::{Baseline, Ineligible, MAX_RUNS};
 use siftr::context::Context;
+use siftr::interpret::resources::Resources;
 use siftr::normalize::secrets::{Mode, Redactor, Scanner};
 use siftr::observation::{LineSplitter, Observation, RawLine, Stream};
 use siftr::signal::detect;
@@ -110,6 +111,12 @@ impl Recording {
         started: Instant,
     ) -> Result<Self> {
         Begun::new(store, context, command, cwd, started).map(Recording::from)
+    }
+
+    /// What the kernel charged the run, as one run-level behavior with count 1. Evidence only: the signal
+    /// rules never judge `run.resources`, so this raises nothing however far the numbers move.
+    pub fn resources(&mut self, resources: &Resources) {
+        self.analyzer.record_resources(resources);
     }
 
     /// Raw bytes from `stream`, in arrival order.
