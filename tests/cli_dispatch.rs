@@ -155,6 +155,47 @@ fn a_bare_siftr_ingests_piped_stdin_and_otherwise_prints_help() {
 }
 
 #[test]
+fn an_unknown_flag_before_the_double_dash_is_a_usage_error_never_the_command() {
+    let sandbox = Sandbox::new();
+    // Explicit `run`, the bare spelling that implies it, and `sources`, which wraps a command the same way.
+    for args in [
+        &["run", "--qiet", "--", "echo", "hi"][..],
+        &["--qiet", "--", "echo", "hi"][..],
+        &["sources", "--qiet", "--", "echo", "hi"][..],
+    ] {
+        let out = sandbox.output(args);
+        let message = stderr(&out);
+        assert_eq!(code(&out), 2, "{args:?}: {message}");
+        assert!(message.contains("'--qiet'"), "{args:?} names it: {message}");
+    }
+    let near = stderr(&sandbox.output(&["run", "--qiet", "--", "echo", "hi"]));
+    assert!(
+        near.contains("'--quiet'"),
+        "suggests the near match: {near}"
+    );
+
+    let as_json = sandbox.output(&["-j", "run", "--qiet", "--", "echo", "hi"]);
+    assert_eq!(
+        (code(&as_json), &json(&as_json)["error"]["code"]),
+        (2, &"usage".into())
+    );
+    assert!(sandbox.recorded().is_empty(), "nothing was ever run");
+}
+
+#[test]
+fn a_flag_after_the_double_dash_is_the_wrapped_command_s_own() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.output(&["--", "sh", "-c", r#"printf %s "$1""#, "sh", "--qiet"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "--qiet",
+        "passed through untouched"
+    );
+    assert_eq!(sandbox.recorded().len(), 1);
+}
+
+#[test]
 fn an_unknown_word_is_an_error_with_suggestions_even_with_stdin_piped() {
     let sandbox = Sandbox::new();
     let typo = sandbox.piped(&["statu"], "a line\n");

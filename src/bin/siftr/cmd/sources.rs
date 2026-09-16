@@ -18,11 +18,8 @@ use crate::sources::{Listed, enabled, survey};
 #[derive(clap::Args)]
 pub struct Args {
     /// The command to judge, as `siftr run` would wrap it [default: judge the directory alone]
-    #[arg(
-        trailing_var_arg = true,
-        allow_hyphen_values = true,
-        value_name = "CMD"
-    )]
+    // `last`, as `run` does: a flag siftr doesn't know is a usage error, not the first word of the command.
+    #[arg(last = true, allow_hyphen_values = true, value_name = "CMD")]
     command: Vec<OsString>,
 }
 

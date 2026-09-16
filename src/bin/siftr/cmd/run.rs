@@ -34,9 +34,11 @@ pub struct Args {
     report: Report,
 
     /// The command and its arguments
+    // `last`, not `trailing_var_arg`: only what follows `--` is the command, so a flag siftr doesn't know is a
+    // usage error rather than a program name it tries to execute.
     #[arg(
         required = true,
-        trailing_var_arg = true,
+        last = true,
         allow_hyphen_values = true,
         value_name = "CMD"
     )]
