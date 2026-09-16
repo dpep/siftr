@@ -81,8 +81,19 @@ fn a_reader_that_goes_away_stops_the_command_as_it_would_unwrapped() {
 /// it costs ~0.9s on a loaded machine against ~0.1s of propagation, so a clock spanning both times the store, not
 /// siftr. Propagation measured ~11ms idle and ~137ms at 6x oversubscription; the bound is `run`'s `ORPHAN_GRACE`,
 /// the shortest wait a regression here could park on.
+///
+/// The status is compared with an unwrapped run rather than named: whether a shell whose reader went away dies by
+/// SIGPIPE or reports 128+SIGPIPE is the platform's `/bin/sh` deciding whether it exec'd the command or waited on
+/// it, which siftr has no part in. Parity is also the stronger claim — it is what fails if a store that can't open
+/// ever does change the command's result.
 #[test]
 fn getting_out_of_the_way_waits_for_nothing() {
+    let mut bare = Command::new("sh");
+    bare.args(["-c", "yes"]).stdin(Stdio::null());
+    let (line, bare, _) = first_line_then_close(bare);
+    assert_eq!(line, "y\n");
+    let bare = bare.expect("bare `yes` stops once its reader is gone");
+
     let home = tempfile::tempdir().unwrap();
     let not_a_dir = home.path().join("file");
     std::fs::write(&not_a_dir, "").unwrap();
@@ -92,7 +103,11 @@ fn getting_out_of_the_way_waits_for_nothing() {
     let (line, wrapped, elapsed) = first_line_then_close(command);
     assert_eq!(line, "y\n");
     let wrapped = wrapped.expect("siftr kept the command running after its reader went away");
-    assert_eq!(wrapped.signal(), Some(13), "SIGPIPE, as it would unwrapped");
+    assert_eq!(
+        (wrapped.code(), wrapped.signal()),
+        (bare.code(), bare.signal()),
+        "same status as unwrapped, though the store never opened"
+    );
     assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
 }
 
