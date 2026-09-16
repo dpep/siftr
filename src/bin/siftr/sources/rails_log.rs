@@ -235,7 +235,9 @@ impl Source for RailsLog {
     fn collect(&mut self, recording: &mut Recording) -> Result<()> {
         self.measure()
             .context("log/test.log skipped")?
-            .feed(recording)
+            .feed(recording)?;
+        recording.read_source(super::RAILS_LOG, Some(super::rails_log()));
+        Ok(())
     }
 }
 

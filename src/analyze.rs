@@ -4,7 +4,7 @@ use crate::aggregate::{Aggregate, Aggregator, RunStats};
 use crate::interpret::resources::Resources;
 use crate::interpret::{Claim, Interpreter, default_interpreters};
 use crate::normalize::{Normalizer, Roots};
-use crate::observation::Observation;
+use crate::observation::{Observation, Stream};
 
 pub struct Analyzer {
     normalizer: Normalizer,
@@ -13,16 +13,29 @@ pub struct Analyzer {
     observations: u64,
 }
 
+/// A source the run read, as the recording declared it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunSource {
+    /// Its configuration key, as `siftr sources` lists it.
+    pub name: String,
+    /// The stream it fed; `None` for a source that opens none, which no comparison can turn on.
+    pub stream: Option<Stream>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Analysis {
     pub observations: u64,
     /// Most frequent first.
     pub aggregates: Vec<Aggregate>,
+    /// What the run read, which only the recording knows: the analyzer is handed lines, not sources. Empty
+    /// for a run that didn't record it, and an empty list claims nothing.
+    pub sources: Vec<RunSource>,
 }
 
 impl Analysis {
     pub fn stats(&self) -> RunStats {
         RunStats::from_aggregates(&self.aggregates)
+            .reading(self.sources.iter().filter_map(|s| s.stream.clone()))
     }
 }
 
@@ -79,6 +92,7 @@ impl Analyzer {
         Analysis {
             observations: self.observations,
             aggregates: self.aggregator.finish(),
+            sources: Vec::new(),
         }
     }
 }

@@ -9,6 +9,7 @@ use rusqlite::params;
 use crate::aggregate::Stats;
 use crate::analyze::Analysis;
 use crate::normalize::secrets::redact_text;
+use crate::observation::Stream;
 use crate::signal::Signal;
 use crate::store::{BUSY_WAIT, NewRun, RECORDING_LOCK, RunEnd, RunId, Store, busy, lock_within};
 
@@ -186,6 +187,16 @@ impl Store {
                 tx.prepare("INSERT INTO run_baselines (run_id, baseline_run_id) VALUES (?1, ?2)")?;
             for baseline_run in finished.baseline_runs {
                 baseline.execute(params![run.0, baseline_run.0])?;
+            }
+            // In the same transaction as the aggregates: what was read and what it produced are one fact.
+            let mut source =
+                tx.prepare("INSERT INTO run_sources (run_id, name, stream) VALUES (?1, ?2, ?3)")?;
+            for s in &finished.analysis.sources {
+                source.execute(params![
+                    run.0,
+                    s.name,
+                    s.stream.as_ref().map(Stream::to_string)
+                ])?;
             }
             let mut signal = tx.prepare(
                 "INSERT INTO signals (run_id, behavior_id, kind, measure, current, baseline_runs, present_in,

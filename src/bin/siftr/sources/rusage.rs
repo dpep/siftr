@@ -41,6 +41,8 @@ impl Source for Rusage {
 
     fn collect(&mut self, recording: &mut Recording) -> Result<()> {
         recording.resources(&children()?);
+        // It opens no stream, so no comparison turns on it; the run still records that it ran.
+        recording.read_source(super::RUSAGE, None);
         Ok(())
     }
 }

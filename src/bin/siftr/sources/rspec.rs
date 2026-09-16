@@ -81,18 +81,37 @@ impl Source for Rspec {
                 .ok()
         });
         let dir = self.dir.take().context("the listener was never prepared")?;
-        match File::open(dir.path().join(EVENTS)) {
-            Ok(file) => {
-                if let Err(error) = feed_events(BufReader::new(file), slice.as_ref(), recording) {
+        let events = match File::open(dir.path().join(EVENTS)) {
+            Ok(file) => match feed_events(BufReader::new(file), slice.as_ref(), recording) {
+                Ok(()) => true,
+                Err(error) => {
                     output::warn(format_args!("rspec events incomplete: {error}"));
+                    false
                 }
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                output::warn(
+                    "no rspec events: the suite didn't start, or a preloader such as spring ignored SPEC_OPTS",
+                );
+                false
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => output::warn(
-                "no rspec events: the suite didn't start, or a preloader such as spring ignored SPEC_OPTS",
-            ),
-            Err(error) => output::warn(format_args!("rspec events lost: {error}")),
+            Err(error) => {
+                output::warn(format_args!("rspec events lost: {error}"));
+                false
+            }
+        };
+        // Only a clean read counts as having read it: half an event stream would read as the rest of the
+        // suite's examples disappearing.
+        if events {
+            recording.read_source(super::RSPEC, Some(super::rspec_events()));
         }
-        slice.map_or(Ok(()), |slice| slice.feed(recording))
+        // This source owns the log slice its offsets index, so it declares that source too.
+        let Some(slice) = slice else {
+            return Ok(());
+        };
+        slice.feed(recording)?;
+        recording.read_source(super::RAILS_LOG, Some(super::rails_log()));
+        Ok(())
     }
 }
 

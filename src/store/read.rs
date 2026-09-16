@@ -13,6 +13,7 @@ use crate::aggregate::{
     BehaviorStats, DurationSummary, Exemplar, Measure, MeasureStats, Phase, RunStats, ScopeStats,
     Stats, overflow_behavior,
 };
+use crate::analyze::RunSource;
 use crate::behavior::{Behavior, BehaviorId};
 use crate::context::Context;
 use crate::observation::Stream;
@@ -220,13 +221,35 @@ impl Store {
                 behavior,
             })
         })?;
-        rows.map(|row| {
-            let mut b = row?;
-            b.measures = measures.remove(&b.behavior.id).unwrap_or_default();
-            b.scopes = scopes.remove(&b.behavior.id).unwrap_or_default();
-            Ok(b)
-        })
-        .collect()
+        let stats = rows
+            .map(|row| {
+                let mut b = row?;
+                b.measures = measures.remove(&b.behavior.id).unwrap_or_default();
+                b.scopes = scopes.remove(&b.behavior.id).unwrap_or_default();
+                Ok(b)
+            })
+            .collect::<Result<RunStats>>()?;
+        let streams = self.run_sources(run)?.into_iter().filter_map(|s| s.stream);
+        Ok(stats.reading(streams))
+    }
+
+    /// The sources `run` recorded reading. Empty for a run that didn't record them, which says nothing about
+    /// what it read: only that it couldn't say.
+    pub fn run_sources(&self, run: RunId) -> Result<Vec<RunSource>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, stream FROM run_sources WHERE run_id = ?1 ORDER BY name")?;
+        let rows = stmt.query_map([run.0], |row| {
+            let stream = match row.get::<_, Option<String>>(1)? {
+                Some(_) => Some(parsed::<Stream>(row, 1)?),
+                None => None,
+            };
+            Ok(RunSource {
+                name: row.get(0)?,
+                stream,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     /// The runs `run`'s signals were judged against, newest first.

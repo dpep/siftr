@@ -150,6 +150,7 @@ fn scoped_analysis(events: &[(Kind, &str, Option<&str>, Option<f64>)]) -> Analys
     Analysis {
         observations: events.len() as u64,
         aggregates: aggregator.finish(),
+        sources: Vec::new(),
     }
 }
 

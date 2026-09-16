@@ -5,7 +5,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context as _, Result};
-use siftr::analyze::{Analysis, Analyzer};
+use siftr::analyze::{Analysis, Analyzer, RunSource};
 use siftr::baseline::{Baseline, Ineligible, MAX_RUNS};
 use siftr::context::Context;
 use siftr::interpret::resources::Resources;
@@ -23,6 +23,9 @@ pub struct Recording {
     context: Context,
     capture: Option<Capture>,
     streams: Vec<(Stream, LineSplitter, Scanner)>,
+    /// What the run read, as each source declared it: the durable counterpart of `streams`, which is only
+    /// what arrived.
+    sources: Vec<RunSource>,
     redactor: Redactor,
     redact: Mode,
     analyzer: Analyzer,
@@ -85,7 +88,15 @@ impl Begun {
 }
 
 impl From<Begun> for Recording {
+    /// `run` always reads the command's own output, whatever configuration says about the side channels;
+    /// each side channel declares itself as it is collected.
     fn from(begun: Begun) -> Self {
+        Recording::new(begun, crate::sources::always_read().to_vec())
+    }
+}
+
+impl Recording {
+    fn new(begun: Begun, sources: Vec<RunSource>) -> Self {
         let roots = crate::project::roots(begun.context.project());
         let home = std::env::var_os("HOME");
         Recording {
@@ -94,15 +105,16 @@ impl From<Begun> for Recording {
             context: begun.context,
             capture: begun.capture,
             streams: Vec::new(),
+            sources,
             redactor: Redactor::new(home.as_ref().map(|home| home.as_bytes())),
             redact: begun.redact,
             analyzer: Analyzer::with_roots(roots),
             started: begun.started,
         }
     }
-}
 
-impl Recording {
+    /// `ingest` replays a capture rather than choosing sources, so it records none. That reads as unknown,
+    /// not as none: a replayed run never explains away another run's change.
     pub fn begin(
         store: Store,
         context: Context,
@@ -110,7 +122,20 @@ impl Recording {
         cwd: &str,
         started: Instant,
     ) -> Result<Self> {
-        Begun::new(store, context, command, cwd, started).map(Recording::from)
+        Begun::new(store, context, command, cwd, started)
+            .map(|begun| Recording::new(begun, Vec::new()))
+    }
+
+    /// A source declaring it read this run, called from its `collect` once it has fed what it found. What the
+    /// source read, not what arrived: a source that was on and found an empty log did read it, and the
+    /// behaviors it feeds really are gone.
+    pub fn read_source(&mut self, name: &'static str, stream: Option<Stream>) {
+        if !self.sources.iter().any(|source| source.name == name) {
+            self.sources.push(RunSource {
+                name: name.to_owned(),
+                stream,
+            });
+        }
     }
 
     /// What the kernel charged the run, as one run-level behavior with count 1. Evidence only: the signal
@@ -205,6 +230,7 @@ impl Recording {
             context,
             mut capture,
             mut streams,
+            sources,
             mut redactor,
             redact,
             mut analyzer,
@@ -227,6 +253,7 @@ impl Recording {
             output::warn(format_args!("raw capture incomplete: {error}"));
         }
         let mut analysis = analyzer.finish();
+        analysis.sources = sources;
         // Kept lines come from the masked view templates need, so pii's extra masking reaches them here.
         if redact == Mode::Pii {
             let exemplars = analysis

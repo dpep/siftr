@@ -210,6 +210,20 @@ ALTER TABLE behaviors ADD COLUMN roles TEXT NOT NULL DEFAULT '';
 -- same transaction. It redacts templates (ids kept), kept lines, commands, contexts, notes and exceptions, and
 -- deletes raw captures.
 ",
+    r"
+-- What a run read: each source that was on in `.siftr.toml` AND applied to its command, so turning one off reads
+-- as a change to what siftr looked at rather than as the behaviors it fed disappearing. No rows means the run
+-- didn't record it — one from before this migration, or `ingest`, which replays a capture instead of choosing
+-- sources — and that is unknown, not none: it suppresses nothing.
+CREATE TABLE run_sources (
+    run_id INTEGER NOT NULL REFERENCES runs (id),
+    -- Its configuration key, as `siftr sources` lists it.
+    name   TEXT NOT NULL,
+    -- The stream it fed, as an exemplar's `stream` spells it; NULL for a source that opens none (rusage).
+    stream TEXT,
+    PRIMARY KEY (run_id, name)
+) WITHOUT ROWID;
+",
 ];
 
 /// Index of the migration [`scrub::credentials`] completes.

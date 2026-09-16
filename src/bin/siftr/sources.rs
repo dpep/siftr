@@ -14,6 +14,7 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::Result;
+use siftr::analyze::RunSource;
 use siftr::interpret::rspec::{EVENTS_STREAM, LOG_STREAM};
 use siftr::observation::Stream;
 
@@ -43,6 +44,15 @@ pub fn rspec_events() -> Stream {
 /// The bytes a run appended to `log/test.log`.
 pub fn rails_log() -> Stream {
     Stream::File(LOG_STREAM.into())
+}
+
+/// The command's own output, which a wrapped run reads whatever configuration says about the side channels.
+/// Recorded up front, so a run that printed nothing to stderr still recorded that it was listening.
+pub fn always_read() -> [RunSource; 2] {
+    [(STDOUT, Stream::Stdout), (STDERR, Stream::Stderr)].map(|(name, stream)| RunSource {
+        name: name.to_owned(),
+        stream: Some(stream),
+    })
 }
 
 /// What a wrapped command produces somewhere other than stdout and stderr.

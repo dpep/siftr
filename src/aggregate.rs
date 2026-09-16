@@ -2,7 +2,7 @@
 
 mod histogram;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -407,6 +407,8 @@ impl XorShift {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RunStats {
     behaviors: HashMap<BehaviorId, BehaviorStats>,
+    /// The streams the run could read. `None` when it didn't record them, which is not the same as none.
+    sources: Option<HashSet<Stream>>,
 }
 
 /// An [`Aggregate`] without its exemplars, but with where it first occurred.
@@ -481,12 +483,27 @@ impl RunStats {
     pub fn count(&self, id: BehaviorId) -> u64 {
         self.get(id).map_or(0, |b| b.stats.count)
     }
+
+    /// Records which streams the run could read, so a comparison can tell a behavior that stopped happening
+    /// from one whose source was switched off. An empty set records nothing: it reads as never recorded.
+    pub fn reading(mut self, streams: impl IntoIterator<Item = Stream>) -> Self {
+        let streams: HashSet<Stream> = streams.into_iter().collect();
+        self.sources = (!streams.is_empty()).then_some(streams);
+        self
+    }
+
+    /// Whether the run read `stream`; `None` when it didn't record what it read, so its silence about a
+    /// behavior means nothing either way.
+    pub fn read(&self, stream: &Stream) -> Option<bool> {
+        Some(self.sources.as_ref()?.contains(stream))
+    }
 }
 
 impl FromIterator<BehaviorStats> for RunStats {
     fn from_iter<I: IntoIterator<Item = BehaviorStats>>(iter: I) -> Self {
         RunStats {
             behaviors: iter.into_iter().map(|b| (b.behavior.id, b)).collect(),
+            sources: None,
         }
     }
 }
