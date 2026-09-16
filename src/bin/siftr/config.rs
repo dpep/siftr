@@ -25,9 +25,7 @@ use siftr::store::Source;
 use crate::output;
 use crate::project;
 
-/// The sources a file may turn off. Belongs to the module that owns the side channels; passed nowhere, so
-/// `Config` itself knows nothing about what a source does.
-pub const SOURCES: [&str; 2] = ["rails_log", "rspec"];
+use crate::sources::SOURCES;
 
 const PROJECT_FILE: &str = ".siftr.toml";
 const USER_FILE: &str = "siftr/config.toml";
@@ -99,9 +97,6 @@ impl Config {
 
     /// Whether `name`'s source runs. A name no file mentions — or that no siftr knows — runs: a typo must never
     /// silently turn a source off.
-    // Called by the module that owns the sources; until then only the tests below reach it. `expect` errors
-    // once the wiring lands, so this line goes away with it.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn source_enabled(&self, name: &str) -> bool {
         self.sources.get(name).is_none_or(|source| source.value)
     }
@@ -322,7 +317,7 @@ mod tests {
             [
                 "retention is not a setting; siftr reads [sources.<name>]",
                 "sources.rails_log.enabled is not true or false (integer); using the default",
-                "rspce is not a source (rails_log, rspec); ignoring it",
+                "rspce is not a source (rspec, rails_log); ignoring it",
                 "sources.rspec.enable is not a setting (enabled); ignoring it",
             ]
         );

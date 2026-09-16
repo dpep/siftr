@@ -24,9 +24,7 @@ pub const RSPEC: &str = "rspec";
 pub const RAILS_LOG: &str = "rails_log";
 
 /// Every source configuration can switch, in listing order. The command's own output isn't one of them: siftr
-/// always reads it.
-// Configuration validates its keys against this list; nothing inside the binary reads it.
-#[allow(dead_code)]
+/// always reads it. Configuration validates its keys against this list.
 pub const SOURCES: &[&str] = &[RSPEC, RAILS_LOG];
 
 /// The command's own output, which every run reads.
@@ -71,9 +69,13 @@ impl Default for Enabled {
     }
 }
 
-/// The one place a source is switched on or off; configuration replaces this body.
+/// The one place a source is switched on or off: what `.siftr.toml` says, defaulting to on.
 pub fn enabled() -> Enabled {
-    Enabled::default()
+    let config = crate::config::Config::load();
+    Enabled {
+        rspec: config.source_enabled(RSPEC),
+        rails_log: config.source_enabled(RAILS_LOG),
+    }
 }
 
 /// The sources that apply to this command in `dir`, ready to prepare.
