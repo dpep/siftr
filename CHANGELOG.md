@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A run records which sources it actually read, and a behavior whose source was absent from one side of a comparison no longer raises NEW or DISAPPEARED. Turning `[sources.rails_log] enabled = false` on or off in `.siftr.toml` changes what siftr looked at, not what your command did, and siftr no longer reports the difference as behavior appearing or disappearing. The migration runs automatically and runs recorded before it compare exactly as they did: DISAPPEARED is protected from the first run after upgrading, NEW once the baseline window has been re-recorded. A count that moves because a source was switched off is still reported, since attributing part of a count to one source would be a guess.
+- `siftr run` and `siftr sources` no longer run a flag you mistyped. An unknown flag before `--` filled the wrapped command instead of failing to parse, so `siftr run --qiet -- rspec` tried to execute `--qiet` and exited 127 — pointing you at your command rather than at your typo. It is now a usage error, exit 2, naming the flag and suggesting the near match, as an unknown word has been since 0.1.2. Everything after `--` is still the wrapped command's own: `siftr run -- ls --typo` still passes `--typo` to `ls`.
+
 ## 0.1.3 — 2026-09-16
 
 - `siftr sources` says what siftr can read here: the command's own output, and everything else a run produces — RSpec's per-example events (`rspec`), the slice of `log/test.log` a run appends (`rails_log`), and what the kernel charged the run (`rusage`). Each row gives the source's name, whether it's on, whether it applies to the command you name, and why either way (`the command isn't an rspec run`, `no log/test.log, and no Gemfile naming rails`). A source is named by its configuration key, so the word you read is the word you set. What applies depends on the command as much as on the directory, so `siftr sources -- bundle exec rspec` answers precisely; with no command it judges the directory alone and says so. Read-only: it prepares nothing, runs nothing and records nothing. Exits 0.

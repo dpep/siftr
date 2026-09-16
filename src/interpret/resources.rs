@@ -2,9 +2,12 @@
 //!
 //! One event per run, count 1, on a single behavior: no per-line cost and no unbounded behaviors.
 //!
-//! **Evidence, never a signal.** CPU and RSS vary run to run — a suite's wall time spans 10x
-//! (`docs/findings/signals.md` §1) — so a measure rule reading them would grow a FREQUENCY on
-//! nearly every run. [`Kind::Resources`] is the one kind the rules never judge:
+//! **Evidence, never a signal.** No threshold over these numbers works: against a two-run baseline a
+//! measure rule fires on ~37% of runs, but by five it has gone blind instead — the noise floor is
+//! 20–43% of median CPU, so a regression adding a fifth of a suite's CPU passes unremarked. Peak RSS
+//! fails the opposite way: baseline windows are often exactly equal, which lands it in the rule's
+//! exact branch, where any change at all fires (`docs/findings/resources.md` §3).
+//! [`Kind::Resources`] is the one kind the rules never judge:
 //! `signal::Comparison::class` maps it to `None`, and `judge` returns there before any rule runs.
 //! That one arm is what keeps these numbers out of every rule; `explain` and `-j` show them instead.
 
