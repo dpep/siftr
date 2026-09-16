@@ -403,6 +403,28 @@ impl<'a> Comparison<'a> {
         }
     }
 
+    /// Whether the compared runs disagreeing about a source accounts for `id` being present now and absent
+    /// then, or the reverse. A behavior is attributed to the stream it was first seen on, the only source
+    /// evidence an aggregate carries; a run that didn't record what it read answers `None` and explains
+    /// nothing. Deliberately narrow: it fires only when the difference accounts for the whole absence.
+    fn configuration_explains(&self, id: BehaviorId, kind: SignalKind) -> bool {
+        let streams = || {
+            std::iter::once(self.current)
+                .chain(self.runs.iter().copied())
+                .filter_map(|run| run.get(id))
+                .filter_map(|b| b.first.as_ref().map(|(stream, _)| stream))
+        };
+        match kind {
+            // Absent now because this run never read the stream it comes from.
+            SignalKind::Disappeared => streams().any(|s| self.current.read(s) == Some(false)),
+            // Absent from the baseline because not one of its runs read that stream.
+            SignalKind::New => {
+                streams().any(|s| self.runs.iter().all(|run| run.read(s) == Some(false)))
+            }
+            _ => false,
+        }
+    }
+
     fn class(&self, id: BehaviorId) -> Option<Class> {
         let b = self
             .current
@@ -454,16 +476,20 @@ impl<'a> Comparison<'a> {
                 max: counts.iter().copied().reduce(f64::max),
                 failures: None,
             };
-            self.push(
-                found,
-                id,
-                class,
-                kind,
-                measure::COUNT,
-                current,
-                baseline,
-                confidence,
-            );
+            // A source switched on or off since the baseline accounts for this by itself: it is a change to
+            // what siftr read, not to what the command did, and no verdict beats a confident wrong one.
+            if !self.configuration_explains(id, kind) {
+                self.push(
+                    found,
+                    id,
+                    class,
+                    kind,
+                    measure::COUNT,
+                    current,
+                    baseline,
+                    confidence,
+                );
+            }
         }
         let Some(now) = now else {
             return;
