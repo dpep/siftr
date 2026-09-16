@@ -191,3 +191,11 @@ share.
   GitHub push protection rejects literal tokens even in tests, and
   allow-listing them in a public repo is not the fix. `script/verify` runs
   gitleaks to catch regressions.
+- Clippy's verdict is platform-dependent and `script/verify` only runs here, so
+  a green local gate says nothing about the Linux lint set. `timeval.tv_usec` is
+  `i32` on macOS and `i64` on Linux: `.into()` is required here and
+  `useless_conversion` there, while `as i64` merely trades that for
+  `unnecessary_cast`. Convert behind a generic (`T: Into<i64>`) so neither
+  platform sees an identity conversion, and watch the push's CI. Cross-checking
+  locally with `--target x86_64-unknown-linux-gnu` does not work on this machine:
+  `libsqlite3-sys` is bundled, so it would need a C cross-compiler.

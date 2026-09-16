@@ -70,14 +70,14 @@ fn children() -> Result<Resources> {
 }
 
 fn elapsed(time: libc::timeval) -> Duration {
-    Duration::from_secs(nonnegative(time.tv_sec))
-        + Duration::from_micros(nonnegative(time.tv_usec.into()))
+    Duration::from_secs(nonnegative(time.tv_sec)) + Duration::from_micros(nonnegative(time.tv_usec))
 }
 
 /// A kernel counter is never negative; a platform that returns one has said nothing, not less
-/// than nothing.
-fn nonnegative(value: i64) -> u64 {
-    u64::try_from(value).unwrap_or(0)
+/// than nothing. Generic because `timeval` microseconds are `i32` on macOS and `i64` on Linux:
+/// converting at the call site is required on one and a clippy error on the other.
+fn nonnegative<T: Into<i64>>(value: T) -> u64 {
+    u64::try_from(value.into()).unwrap_or(0)
 }
 
 #[cfg(test)]
