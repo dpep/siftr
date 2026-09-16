@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
-use siftr::interpret::rspec::LOG_STREAM;
 
 use super::Source;
 use crate::record::Recording;
@@ -226,7 +225,7 @@ impl Slice {
 
 impl Source for RailsLog {
     fn name(&self) -> &'static str {
-        LOG_STREAM
+        super::RAILS_LOG
     }
 
     fn prepare(&mut self, _command: &mut Command) -> Result<()> {

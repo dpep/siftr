@@ -7,7 +7,6 @@ use std::process::Command;
 
 use anyhow::{Context as _, Result};
 use siftr::context::shell_join;
-use siftr::interpret::rspec::EVENTS_STREAM;
 use tempfile::TempDir;
 
 use super::Source;
@@ -37,7 +36,7 @@ impl Rspec {
 
 impl Source for Rspec {
     fn name(&self) -> &'static str {
-        EVENTS_STREAM
+        super::RSPEC
     }
 
     fn prepare(&mut self, command: &mut Command) -> Result<()> {

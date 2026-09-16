@@ -315,31 +315,33 @@ A job that needs a shell (`cd`, `&&`, `~`, `%`, redirections) keeps it through `
 
 ### `siftr sources`
 
-What siftr can read here: the command's own output, plus the side channels a command writes somewhere else. Each row says whether the source is on, whether it applies to the command you name, and why either way. Read-only — it prepares nothing, runs nothing and records nothing.
+What siftr can read here: the command's own output, plus the side channels a command writes somewhere else. Each row gives the source's name, whether it's on, whether it applies to the command you name, and why either way. Read-only — it prepares nothing, runs nothing and records nothing.
 
 ```
 $ siftr sources -- bundle exec rspec
 sources for bundle exec rspec in ~/src/siftr/dogfood/rails_demo
-  stdout        on   applies         the command's own output (always read)
-  stderr        on   applies         the command's own output (always read)
-  rspec-events  on   applies         RSpec's per-example results, from a listener added to SPEC_OPTS (the command runs rspec)
-  log/test.log  on   applies         the SQL and request lines the run appends to the Rails test log (log/ is there and the Gemfile names rails)
+  stdout     on   applies         the command's own output (always read)
+  stderr     on   applies         the command's own output (always read)
+  rspec      on   applies         file:rspec-events — RSpec's per-example results, from a listener added to SPEC_OPTS (the command runs rspec)
+  rails_log  on   applies         file:log/test.log — the SQL and request lines the run appends to the Rails test log (log/test.log is there)
 next: siftr run -- bundle exec rspec
 ```
+
+After the name comes the stream it feeds, which is what a piece of evidence points at: an exemplar's `stream` and a run's `streams` use that spelling.
 
 What applies depends on the command as much as on the directory, so name the command you'd wrap. Elsewhere, or for a command that isn't a test run:
 
 ```
 $ siftr sources -- make test
 sources for make test in ~/src/notes
-  stdout        on   applies         the command's own output (always read)
-  stderr        on   applies         the command's own output (always read)
-  rspec-events  on   does not apply  RSpec's per-example results, from a listener added to SPEC_OPTS (the command isn't an rspec run)
-  log/test.log  on   does not apply  the SQL and request lines the run appends to the Rails test log (the command isn't a Ruby test run)
+  stdout     on   applies         the command's own output (always read)
+  stderr     on   applies         the command's own output (always read)
+  rspec      on   does not apply  file:rspec-events — RSpec's per-example results, from a listener added to SPEC_OPTS (the command isn't an rspec run)
+  rails_log  on   does not apply  file:log/test.log — the SQL and request lines the run appends to the Rails test log (the command isn't a Ruby test run)
 next: siftr run -- make test
 ```
 
-With no command it judges the directory alone, and says that's what it did. A run that worked says nothing about its own plumbing; to see what one actually captured, read `sources` in `run -j` or `ingest -j`.
+With no command it judges the directory alone, and says that's what it did. This is what siftr *can* read; to see what a run actually did read, use `streams` in `run -j` or `ingest -j`.
 
 ### Common flags and exit codes
 
@@ -435,7 +437,7 @@ Run the suite through siftr, read the first line of the report, and drill down o
 The `-j` fields that matter (full schema: top of [`src/bin/siftr/output.rs`](src/bin/siftr/output.rs)):
 
 - `run.complete`: false when the run was unfinished, interrupted, or INCOMPLETE.
-- `sources`: what this run captured — `stdout`, `stderr`, `rspec-events`, `log/test.log` — in `run -j` and `ingest -j`. A stream opens on its first byte, so a command that wrote nothing to stderr doesn't list it. `changes -j` reports null: the store doesn't hold what a run read. `siftr sources` says what could apply here.
+- `streams`: what this run actually captured — `stdout`, `stderr`, `file:rspec-events`, `file:log/test.log` — in `run -j` and `ingest -j`, spelled as an exemplar's `stream` is, so evidence joins straight to it. A stream opens on its first byte, so a command that wrote nothing to stderr doesn't list it. `changes -j` reports null: the store doesn't hold what a run read. `siftr sources` says what *could* apply here.
 - `changes`: number of code-level groups. `baseline_runs`: the run ids compared against. `skipped_runs[]`: {`run`, `reason`}, where `reason` is `no_test_summary`, `errors_outside_examples`, `stopped` or `subset`.
 - `groups[]`: `rank` (1 is most important), `headline` (a signal id), `signals` (ids in the group), `setup` (true when the change happened outside every example: the environment or suite hooks, not the code), `disappeared_examples` (null, or {`file`, `examples`} for a deleted spec file's examples collapsed into one group).
 - `signals[]`, in rank order:
@@ -530,7 +532,7 @@ Trimmed with `jq '{run: {id: .run.id, complete: .run.complete}, changes, baselin
 - **SQL and request lines** from the bytes the run appended to `log/test.log`. Each line is attributed to the example that was running when it was written, or to before, between or after examples. One log rotation during a run is handled exactly. With two or more, bytes are lost.
 - **stdout and stderr**. When siftr's stdout is a terminal, the child gets a PTY, so RSpec's colours survive. stderr stays a separate pipe, because deprecation warnings land there.
 
-`siftr sources` says which of these apply to a command here; a run's `-j` `sources` says which it actually captured.
+`siftr sources` says which of these apply to a command here; a run's `-j` `streams` says which it actually captured.
 
 Why it works this way: [docs/findings/capture.md](docs/findings/capture.md).
 

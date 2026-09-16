@@ -15,10 +15,12 @@
 //!   before the first example, in one, between two, after the last), `setup` (phase is setup), `current`,
 //!   `baseline`} or null, `tier` (1 error … 5 outside examples), `group` (rank), `headline`, `evidence_lines`,
 //!   `behavior`.
-//! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `sources` (what the run captured, as
-//!   `siftr sources` names them: `stdout`, `stderr`, `rspec-events`, `log/test.log`; an exemplar's `stream` tags
-//!   a side channel with `file:`, a source name never does. Only a run as it is recorded knows what it read, so
-//!   `changes` reports null), `baseline_runs`, `skipped_runs` [{`run`,
+//! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `streams` (what arrived: every stream the
+//!   run captured, spelled as an exemplar's `stream` is — `stdout`, `stderr`, `file:rspec-events`,
+//!   `file:log/test.log` — the command's own output first, then each side channel as it was fed. A stream opens
+//!   on its first byte, so one that stayed empty isn't listed. What siftr *can* read, and what configuration can
+//!   switch, is `siftr sources` instead. Only a run as it is recorded knows, so `changes` reports null),
+//!   `baseline_runs`, `skipped_runs` [{`run`,
 //!   `reason` (no_test_summary|errors_outside_examples|stopped|subset)}] (recent runs of the context left out of
 //!   the baseline because they didn't run what this run did, most recent first), `changes` (code-level groups),
 //!   `groups` [{`rank`, `setup` (changed outside every example), `headline` (signal id), `signals` (ids),
@@ -293,8 +295,8 @@ fn open_groups(open: &[StoredSignal]) -> Vec<Vec<&StoredSignal>> {
 pub struct Changes<'a> {
     pub run: &'a RunRecord,
     pub behaviors: u64,
-    /// What the run captured, or None for a run read back from the store, which doesn't hold it.
-    pub sources: Option<&'a [String]>,
+    /// Every stream the run captured, or None for a run read back from the store, which doesn't hold it.
+    pub streams: Option<&'a [String]>,
     pub baseline_runs: &'a [RunId],
     /// Recent runs left out of the baseline, and why, most recent first.
     pub skipped_runs: &'a [(RunId, Ineligible)],
@@ -309,7 +311,7 @@ impl Changes<'_> {
         json!({
             "run": run_json(self.run, complete(self.run, self.signals)),
             "behaviors": self.behaviors,
-            "sources": self.sources,
+            "streams": self.streams,
             "baseline_runs": ids(self.baseline_runs),
             "skipped_runs": self.skipped_runs.iter().map(|(run, why)| json!({
                 "run": run.to_string(),
@@ -334,7 +336,7 @@ impl Changes<'_> {
         json!({
             "run": null,
             "behaviors": 0,
-            "sources": null,
+            "streams": null,
             "baseline_runs": [],
             "skipped_runs": [],
             "changes": 0,

@@ -540,7 +540,7 @@ fn report(recorded: &Recorded, open: &[siftr::store::StoredSignal], json: bool) 
     let changes = Changes {
         run: &recorded.run,
         behaviors: recorded.behaviors,
-        sources: Some(&recorded.sources),
+        streams: Some(&recorded.streams),
         baseline_runs: &recorded.baseline_runs,
         skipped_runs: &recorded.skipped_runs,
         signals: &recorded.signals,

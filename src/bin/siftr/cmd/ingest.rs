@@ -94,7 +94,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let changes = Changes {
         run: &recorded.run,
         behaviors: recorded.behaviors,
-        sources: Some(&recorded.sources),
+        streams: Some(&recorded.streams),
         baseline_runs: &recorded.baseline_runs,
         skipped_runs: &recorded.skipped_runs,
         signals: &recorded.signals,

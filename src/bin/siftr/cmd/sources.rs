@@ -48,6 +48,7 @@ fn document(listed: &[Listed], command: Option<&str>, here: &Path) -> Value {
         "command": command,
         "sources": listed.iter().map(|source| json!({
             "name": source.name,
+            "stream": source.stream.to_string(),
             "about": source.about,
             "on": source.on,
             "applies": source.applies,
@@ -67,9 +68,14 @@ fn human(
         None => writeln!(w, "sources in {}", here.display())?,
     }
     for source in listed {
+        // The command's own output is named after its stream, so naming it twice would say nothing.
+        let stream = match source.stream.to_string() {
+            same if same == source.name => String::new(),
+            stream => format!("{stream} — "),
+        };
         writeln!(
             w,
-            "  {:<12}  {:<3}  {:<14}  {} ({})",
+            "  {:<9}  {:<3}  {:<14}  {stream}{} ({})",
             source.name,
             if source.on { "on" } else { "off" },
             if source.applies {

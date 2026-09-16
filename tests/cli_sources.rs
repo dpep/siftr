@@ -54,11 +54,15 @@ fn a_rails_project_running_rspec_has_every_source_apply() {
     assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
     let doc = document(&output);
     assert_eq!(doc["command"], "bundle exec rspec");
-    for name in ["stdout", "stderr", "rspec-events", "log/test.log"] {
+    for name in ["stdout", "stderr", "rspec", "rails_log"] {
         let source = row(&doc, name);
         assert_eq!(source["on"], true, "{name} is on by default");
         assert_eq!(source["applies"], true, "{name} applies: {source}");
     }
+    // A source is named by its config key; `stream` is what joins it to an exemplar's `stream`.
+    assert_eq!(row(&doc, "rspec")["stream"], "file:rspec-events");
+    assert_eq!(row(&doc, "rails_log")["stream"], "file:log/test.log");
+    assert_eq!(row(&doc, "stdout")["stream"], "stdout");
 }
 
 #[test]
@@ -68,18 +72,18 @@ fn a_source_that_does_not_apply_says_why() {
         bare.path(),
         &["sources", "-j", "--", "bundle", "exec", "rspec"],
     ));
-    let log = row(&doc, "log/test.log");
+    let log = row(&doc, "rails_log");
     assert_eq!(log["applies"], false, "no rails log here: {log}");
     assert!(
         log["why"].as_str().unwrap().contains("rails"),
         "says why: {log}"
     );
-    assert_eq!(row(&doc, "rspec-events")["applies"], true);
+    assert_eq!(row(&doc, "rspec")["applies"], true);
 
     // In a Rails project, a command that isn't a test run gets neither side channel.
     let project = rails_project();
     let doc = document(&siftr(project.path(), &["sources", "-j", "--", "ls"]));
-    for name in ["rspec-events", "log/test.log"] {
+    for name in ["rspec", "rails_log"] {
         let source = row(&doc, name);
         assert_eq!(source["applies"], false, "{name}: {source}");
     }
@@ -97,7 +101,7 @@ fn without_a_command_it_says_what_it_cannot_judge() {
     assert_eq!(output.status.code(), Some(0));
     let text = stdout(&output);
     assert!(
-        text.contains("rspec-events") && text.contains("log/test.log"),
+        text.contains("rspec") && text.contains("rails_log"),
         "{text}"
     );
     assert!(
@@ -106,17 +110,17 @@ fn without_a_command_it_says_what_it_cannot_judge() {
     );
     let doc = document(&siftr(project.path(), &["sources", "-j"]));
     assert_eq!(doc["command"], Value::Null);
-    let rspec = row(&doc, "rspec-events");
+    let rspec = row(&doc, "rspec");
     assert_eq!(rspec["applies"], false, "no command to judge: {rspec}");
     assert!(rspec["why"].as_str().unwrap().contains("no command"));
 }
 
 #[test]
-fn a_run_reports_the_sources_it_actually_captured() {
+fn a_run_reports_the_streams_it_actually_captured() {
     // A command that writes nothing to stderr captured no stderr: the list is what arrived, not what was offered.
     let bare = tempfile::tempdir().unwrap();
     let doc = document(&siftr(bare.path(), &["run", "-j", "--", "echo", "hello"]));
-    assert_eq!(doc["sources"], serde_json::json!(["stdout"]));
+    assert_eq!(doc["streams"], serde_json::json!(["stdout"]));
 
     // A replayed scenario: its stderr.txt is empty, so only the three streams with bytes are captured.
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/rails_demo/n_plus_one");
@@ -125,8 +129,8 @@ fn a_run_reports_the_sources_it_actually_captured() {
         &["ingest", "-j", "--dir", fixture.to_str().unwrap()],
     ));
     assert_eq!(
-        doc["sources"],
-        serde_json::json!(["stdout", "rspec-events", "log/test.log"]),
+        doc["streams"],
+        serde_json::json!(["stdout", "file:rspec-events", "file:log/test.log"]),
         "the command's own output first, then each side channel as it was fed"
     );
 }
@@ -149,7 +153,7 @@ fn the_human_listing_reads_as_a_table() {
     let rows: Vec<&str> = lines.filter(|line| line.starts_with("  ")).collect();
     assert_eq!(rows.len(), 4, "{text}");
     assert!(
-        rows[2].contains("rspec-events") && rows[2].contains("applies"),
+        rows[2].contains("rspec") && rows[2].contains("applies"),
         "{text}"
     );
     assert!(

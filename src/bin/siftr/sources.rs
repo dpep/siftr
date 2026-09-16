@@ -1,8 +1,9 @@
 //! Where a run's lines come from: the command's own stdout and stderr always, plus the side channels it writes
 //! somewhere else — an RSpec listener's events, the slice of `log/test.log` a run appended.
 //!
-//! A source is named by the stream it feeds, so `siftr sources`, a run's `-j` `sources` and an exemplar's
-//! `stream` all say the same word.
+//! A source is named by its configuration key, so the word read in `siftr sources` is the word typed in
+//! `.siftr.toml`. What it feeds is a stream, named separately: interpreters match on stream labels, and a run's
+//! `-j` `streams` reports the ones that arrived.
 
 mod rails_log;
 mod rspec;
@@ -18,6 +19,16 @@ use crate::record::Recording;
 use rails_log::RailsLog;
 use rspec::Rspec;
 
+/// A source's name, which is also its configuration key.
+pub const RSPEC: &str = "rspec";
+pub const RAILS_LOG: &str = "rails_log";
+
+/// Every source configuration can switch, in listing order. The command's own output isn't one of them: siftr
+/// always reads it.
+// Configuration validates its keys against this list; nothing inside the binary reads it.
+#[allow(dead_code)]
+pub const SOURCES: &[&str] = &[RSPEC, RAILS_LOG];
+
 /// The command's own output, which every run reads.
 const STDOUT: &str = "stdout";
 const STDERR: &str = "stderr";
@@ -32,19 +43,9 @@ pub fn rails_log() -> Stream {
     Stream::File(LOG_STREAM.into())
 }
 
-/// The source a stream came from, as everything siftr prints names it. An exemplar's `stream` tags a side
-/// channel with `file:`, since it must parse back into a [`Stream`]; a source name never does.
-pub fn name_of(stream: &Stream) -> &str {
-    match stream {
-        Stream::Stdout => STDOUT,
-        Stream::Stderr => STDERR,
-        Stream::File(name) => name,
-    }
-}
-
 /// What a wrapped command produces somewhere other than stdout and stderr.
 pub trait Source {
-    /// As `siftr sources` lists it and a run's `-j` `sources` reports it.
+    /// Its name and configuration key, as `siftr sources` lists it.
     fn name(&self) -> &'static str;
 
     /// Before spawning: set or append env vars (e.g. `SPEC_OPTS`), note pre-run state such as a log's length.
@@ -54,7 +55,7 @@ pub trait Source {
     fn collect(&mut self, recording: &mut Recording) -> Result<()>;
 }
 
-/// Which sources siftr may use, whether or not they apply to a given command.
+/// Which sources siftr may use, whether or not they apply to a given command. One field per [`SOURCES`] key.
 #[derive(Debug, Clone, Copy)]
 pub struct Enabled {
     pub rspec: bool,
@@ -93,7 +94,10 @@ pub fn for_command(argv: &[String], dir: &Path, on: &Enabled) -> Vec<Box<dyn Sou
 
 /// One source as `siftr sources` lists it.
 pub struct Listed {
+    /// Its name and configuration key.
     pub name: &'static str,
+    /// The stream it feeds, as an exemplar's `stream` and a run's `streams` spell it.
+    pub stream: Stream,
     /// What it reads.
     pub about: &'static str,
     pub on: bool,
@@ -109,8 +113,9 @@ pub fn survey(argv: &[String], dir: &Path, on: &Enabled) -> Vec<Listed> {
     let suite = suite(argv);
     let given = !argv.is_empty();
     let log = RailsLog::detect(dir);
-    let passthrough = |name| Listed {
+    let passthrough = |name, stream| Listed {
         name,
+        stream,
         about: "the command's own output",
         on: true,
         applies: true,
@@ -129,17 +134,19 @@ pub fn survey(argv: &[String], dir: &Path, on: &Enabled) -> Vec<Listed> {
         (_, Some(_), Some(_)) => (true, "log/ is there and the Gemfile names rails"),
     };
     vec![
-        passthrough(STDOUT),
-        passthrough(STDERR),
+        passthrough(STDOUT, Stream::Stdout),
+        passthrough(STDERR, Stream::Stderr),
         Listed {
-            name: EVENTS_STREAM,
+            name: RSPEC,
+            stream: rspec_events(),
             about: "RSpec's per-example results, from a listener added to SPEC_OPTS",
             on: on.rspec,
             applies: rspec_applies,
             why: rspec_why,
         },
         Listed {
-            name: LOG_STREAM,
+            name: RAILS_LOG,
+            stream: rails_log(),
             about: "the SQL and request lines the run appends to the Rails test log",
             on: on.rails_log,
             applies: log_applies,
@@ -224,15 +231,16 @@ mod tests {
         sources.iter().map(|source| source.name()).collect()
     }
 
+    fn rspec_argv() -> Vec<String> {
+        ["bundle", "exec", "rspec"].map(str::to_owned).to_vec()
+    }
+
     #[test]
     fn a_source_switched_off_is_never_prepared() {
         let dir = rails_project();
-        let argv: Vec<String> = ["bundle", "exec", "rspec"].map(str::to_owned).to_vec();
+        let argv = rspec_argv();
         let all = Enabled::default();
-        assert_eq!(
-            names(&for_command(&argv, dir.path(), &all)),
-            [EVENTS_STREAM]
-        );
+        assert_eq!(names(&for_command(&argv, dir.path(), &all)), [RSPEC]);
 
         // The rspec source owns the log slice its offsets index, so without it the log is read on its own.
         let no_rspec = Enabled {
@@ -241,7 +249,7 @@ mod tests {
         };
         assert_eq!(
             names(&for_command(&argv, dir.path(), &no_rspec)),
-            [LOG_STREAM]
+            [RAILS_LOG]
         );
         assert!(
             for_command(
@@ -257,10 +265,47 @@ mod tests {
 
         let listed = survey(&argv, dir.path(), &no_rspec);
         let off: Vec<&str> = listed.iter().filter(|s| !s.on).map(|s| s.name).collect();
-        assert_eq!(off, [EVENTS_STREAM]);
+        assert_eq!(off, [RSPEC]);
         assert!(
             listed.iter().all(|s| s.applies),
             "being off is not the same as not applying here"
+        );
+    }
+
+    /// The config lane reads [`SOURCES`], so a source added to [`Enabled`] and left out of it would be
+    /// unswitchable. With everything off, exactly the listed keys read off.
+    #[test]
+    fn sources_are_exactly_the_keys_configuration_can_switch() {
+        let dir = rails_project();
+        let off = Enabled {
+            rspec: false,
+            rails_log: false,
+        };
+        let switched: Vec<&str> = survey(&rspec_argv(), dir.path(), &off)
+            .into_iter()
+            .filter(|s| !s.on)
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(switched, SOURCES);
+    }
+
+    #[test]
+    fn a_source_is_named_by_its_key_and_says_which_stream_it_feeds() {
+        let dir = rails_project();
+        let listed = survey(&rspec_argv(), dir.path(), &Enabled::default());
+        let named: Vec<(&str, String)> = listed
+            .iter()
+            .map(|s| (s.name, s.stream.to_string()))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("stdout", "stdout".to_owned()),
+                ("stderr", "stderr".to_owned()),
+                ("rspec", "file:rspec-events".to_owned()),
+                ("rails_log", "file:log/test.log".to_owned()),
+            ],
+            "the key is what configuration takes; the stream is what evidence points at"
         );
     }
 
@@ -279,16 +324,16 @@ mod tests {
         };
         assert_eq!(
             applies(&["bundle", "exec", "rspec"], rails.path()),
-            [STDOUT, STDERR, EVENTS_STREAM, LOG_STREAM]
+            [STDOUT, STDERR, RSPEC, RAILS_LOG]
         );
         assert_eq!(
             applies(&["bundle", "exec", "rspec"], bare.path()),
-            [STDOUT, STDERR, EVENTS_STREAM],
+            [STDOUT, STDERR, RSPEC],
             "no Rails log outside a Rails project"
         );
         assert_eq!(
             applies(&["bin/rails", "test"], rails.path()),
-            [STDOUT, STDERR, LOG_STREAM],
+            [STDOUT, STDERR, RAILS_LOG],
             "only the log can see into a non-rspec suite"
         );
         assert_eq!(
