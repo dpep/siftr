@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 — 2026-09-15
 
 - `siftr` without a subcommand does the obvious thing, and never guesses. `siftr -- CMD` is `siftr run -- CMD`. `siftr FILE` (or `siftr -`) ingests it, compared only with earlier ingests of that file; `--context NAME` still wins, for dated or rotated files. A bare `siftr` ingests stdin when it's piped or redirected, and prints help otherwise. A subcommand or preset always wins over a file of the same name (`./cron` names the file). Any other word is an error with a "did you mean", exit 2, never read as a file. `siftr ingest FILE` is unchanged and still compares within the `ingest` context.
 - System logs no longer split one message into a behavior per day, host or connection. A syslog line's header (`Sep 14 10:21:07 mbp-a backupd[412]:`) becomes `<timestamp> <host> backupd[<int>]:`, so a new month or another machine is the same behavior; the process name stays as written. A month word anywhere else (`Scheduled for May`) is untouched. A `0x` pointer glued on by a dot (`peer[3].0x7fa1c2`) is masked like any other `0x` value.
