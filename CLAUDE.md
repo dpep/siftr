@@ -34,14 +34,19 @@ Not a cloud service, dashboard, config language, or log search tool.
 
 ```
 Source ──Observation──▶ Interpreter ──Event──▶ Aggregator ──Aggregate──▶ Store
-(process, file tail,     (rspec, rails,        (per Behavior,           (runs, behaviors,
- stdin)                   sql, generic)          bounded state)           aggregates, exemplars)
-                                                                              │
-                                     Baseline (last N runs of same Context) ◀─┘
+(the command's own       (rspec, rails,        (per Behavior,           (runs, behaviors,
+ stdout and stderr,       sql, resources,       bounded state)           aggregates, exemplars)
+ plus rspec, rails_log,   generic)                                            │
+ rusage; or stdin)                   Baseline (last N runs of same Context) ◀─┘
                                                      │
                                                   Signals ──▶ explain / evidence
 ```
 
+- **Source** — where a run's records come from beyond the command's own stdout and stderr: a
+  `Source` (`prepare` before the spawn, `collect` after the reap), named by the `.siftr.toml` key
+  that switches it. `rspec` (the listener's events), `rails_log` (the slice the run appended),
+  `rusage` (what the kernel charged it, which reads no bytes and so feeds no stream). `siftr
+  sources` says which apply to a command here, and why.
 - **Observation** — one raw record (a line) with stream (`stdout`, `stderr`,
   `file:<name>`) and per-stream line number (= its line in the run's capture of
   that stream).
@@ -52,7 +57,8 @@ Source ──Observation──▶ Interpreter ──Event──▶ Aggregator �
 - **Event** — an interpreted observation: semantic kind (`test.example`,
   `test.summary`, `db.query`, `http.request`, `exception`, `log`), template,
   duration, outcome, named measures (`queries`), and **scope** — the enclosing
-  test example when known, so a SQL change is attributable to one example.
+  test example when known, so a SQL change is attributable to one example. `run.resources` is the
+  one kind no rule ever judges: evidence only (`docs/findings/resources.md`).
 - **Behavior** — a recurring pattern identified by a **stable** id derived from
   (semantic kind, template). Stable across runs and machines: use a fixed hash
   (never `std` `DefaultHasher`/`RandomState`).
@@ -80,9 +86,13 @@ src/
                 pure domain: no I/O.
   store         one concrete `Store` over SQLite (rusqlite, bundled); a trait arrives with a second backend.
   bin/siftr/    the `siftr` binary: capture, commands, rendering.
+  bin/siftr/sources
+                one `Source` per side channel — `rspec`, `rails_log`, `rusage` — each named by the
+                `.siftr.toml` key that switches it.
 assets/         the RSpec listener the binary embeds
 tests/          integration tests: the library API and the built binary
-examples/       normalizer probes on a log file (throughput, template families)
+examples/       probes: the normalizer on a log file (throughput, template families), and what the
+                kernel's accounting costs and how far it moves (rusage_cost)
 dogfood/        real projects/scripts used to exercise siftr end to end
 fixtures/       committed captured outputs used by tests (no private data)
 docs/findings/  measurements and experiments that justified a design choice
