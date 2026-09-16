@@ -224,6 +224,43 @@ fn settings_choose_what_evidence_keeps_but_never_what_templates_hold() {
     );
 }
 
+#[test]
+fn evidence_names_a_capture_only_when_there_is_one_to_open() {
+    // Ordered, so the behavior picked is the same one in both sandboxes: `Authorization: Bearer <TOKEN>`.
+    let first_behavior = |sandbox: &Sandbox| {
+        sandbox
+            .column("SELECT id FROM behaviors ORDER BY template")
+            .remove(0)
+    };
+
+    let kept = Sandbox::new();
+    kept.ingest(&exposure(), &[]);
+    let output = kept.siftr(&["evidence", &first_behavior(&kept)], &[]);
+    let listed = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        listed.contains("capture "),
+        "the capture is on disk, so evidence points at it: {listed}"
+    );
+
+    // Read back with the setting *unset*: what decides is the file, not how the run was recorded.
+    let off = Sandbox::new();
+    off.ingest(&exposure(), &[("SIFTR_CAPTURE", "off")]);
+    let behavior = first_behavior(&off);
+    let output = off.siftr(&["evidence", &behavior], &[]);
+    let listed = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        listed.contains("<TOKEN_1>"),
+        "the kept lines are still shown: {listed}"
+    );
+    assert!(
+        !listed.contains("capture "),
+        "nothing was captured, so there is no file to name: {listed}"
+    );
+    let json: Value =
+        serde_json::from_slice(&off.siftr(&["-j", "evidence", &behavior], &[]).stdout).unwrap();
+    assert_eq!(json["captures"], serde_json::json!({}), "{json}");
+}
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/rails_demo/baseline")

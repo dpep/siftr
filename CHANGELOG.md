@@ -20,6 +20,7 @@
   `rspec` is the listener siftr adds through `SPEC_OPTS`; `rails_log` is the slice of `log/test.log` a run appends. Both are on unless a file says otherwise, and the project file wins over the user file. Nothing else goes in the file: retention (`SIFTR_KEEP_*`) and privacy (`SIFTR_REDACT`, `SIFTR_CAPTURE`) stay environment-only, since they're about your machine and the data dir every project shares, not about one project.
 - `siftr status` has a `config` block: what each source is set to, which file set it (or `default`), and which files siftr looked for — so a file that isn't taking effect says so instead of being silently ignored. In `-j` it's `config.sources` and `config.files`.
 - An unknown key, an unknown source name, a value of the wrong type, or a file that isn't valid TOML warns once on stderr and leaves the default standing. Your command still runs and still exits with its own code.
+- `siftr evidence` lists only the captures still on disk. A run recorded with `SIFTR_CAPTURE=off`, or one whose captures retention has since pruned, was given a `capture stdout: …` line naming a file that was never written; `-j`'s `captures` carried the same dead paths. Both now list what you can actually open, and nothing when that's nothing.
 
 ## 0.1.2 — 2026-09-15
 

@@ -72,13 +72,14 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         .map(|(_, stats)| stats)
         .unwrap_or_default();
     let exemplars = store.exemplars(run, behavior.id, args.limit)?;
+    // Only the captures still on disk: `SIFTR_CAPTURE=off` and retention both leave the path unwritten, and a
+    // file that isn't there sends the reader somewhere empty.
     let captures: BTreeMap<String, String> = exemplars
         .iter()
-        .map(|e| {
-            (
-                e.stream.to_string(),
-                store.capture_file(run, &e.stream).display().to_string(),
-            )
+        .filter_map(|e| {
+            let path = store.capture_file(run, &e.stream);
+            path.is_file()
+                .then(|| (e.stream.to_string(), path.display().to_string()))
         })
         .collect();
 
