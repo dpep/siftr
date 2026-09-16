@@ -423,12 +423,15 @@ impl Normalizer {
     /// wrote it, so its name stays literal whatever it spells (`postgres-14`).
     fn syslog_header(&mut self, line: &[u8], start: usize, header: syslog::Header) -> usize {
         self.slot(SlotKind::Timestamp, start, header.time_end);
+        let Some(tail) = header.tail else {
+            return header.time_end;
+        };
         self.template.push(b' ');
-        self.slot(SlotKind::Host, header.time_end + 1, header.host_end);
+        self.slot(SlotKind::Host, header.time_end + 1, tail.host_end);
         self.template.push(b' ');
         self.template
-            .extend_from_slice(&line[header.host_end + 1..header.proc_end]);
-        header.proc_end
+            .extend_from_slice(&line[tail.host_end + 1..tail.proc_end]);
+        tail.proc_end
     }
 
     fn piece(&mut self, line: &[u8], s: usize, e: usize, level: usize) {
