@@ -59,11 +59,11 @@ fn a_reader_that_goes_away_stops_the_command_as_it_would_unwrapped() {
     let bare = bare.expect("bare `yes` stops once its reader is gone");
 
     let home = tempfile::tempdir().unwrap();
-    let (line, wrapped, elapsed) =
-        first_line_then_close(siftr(&home, &["run", "--", "sh", "-c", "yes"]));
+    let (line, wrapped, _) = first_line_then_close(siftr(&home, &["run", "--", "sh", "-c", "yes"]));
     assert_eq!(line, "y\n");
+    // Not timed: this run records, and recording runs after the command is already dead. What the command
+    // actually waits for is timed store-free below.
     let wrapped = wrapped.expect("siftr kept the command running after its reader went away");
-    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
     assert_eq!(
         (wrapped.code(), wrapped.signal()),
         (bare.code(), bare.signal()),
@@ -74,6 +74,26 @@ fn a_reader_that_goes_away_stops_the_command_as_it_would_unwrapped() {
         runs[0]["interrupted"], 13,
         "its capture is cut short, so never a baseline: {runs}"
     );
+}
+
+/// How fast siftr gets out of the command's way, with nothing else in the measurement: `SIFTR_HOME` is a file, so
+/// the store never opens. The run above records instead, and recording happens after the command is already dead —
+/// it costs ~0.9s on a loaded machine against ~0.1s of propagation, so a clock spanning both times the store, not
+/// siftr. Propagation measured ~11ms idle and ~137ms at 6x oversubscription; the bound is `run`'s `ORPHAN_GRACE`,
+/// the shortest wait a regression here could park on.
+#[test]
+fn getting_out_of_the_way_waits_for_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let not_a_dir = home.path().join("file");
+    std::fs::write(&not_a_dir, "").unwrap();
+    let mut command = siftr(&home, &["run", "--", "sh", "-c", "yes"]);
+    command.env("SIFTR_HOME", &not_a_dir);
+
+    let (line, wrapped, elapsed) = first_line_then_close(command);
+    assert_eq!(line, "y\n");
+    let wrapped = wrapped.expect("siftr kept the command running after its reader went away");
+    assert_eq!(wrapped.signal(), Some(13), "SIGPIPE, as it would unwrapped");
+    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
 }
 
 /// `siftr run -- sh -c 'echo first; exit 3'`: when its first line arrived, and its output. `release` frees the store
