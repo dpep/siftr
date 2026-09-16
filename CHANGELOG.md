@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 — 2026-09-16
 
 - `siftr sources` says what siftr can read here: the command's own output, and everything else a run produces — RSpec's per-example events (`rspec`), the slice of `log/test.log` a run appends (`rails_log`), and what the kernel charged the run (`rusage`). Each row gives the source's name, whether it's on, whether it applies to the command you name, and why either way (`the command isn't an rspec run`, `no log/test.log, and no Gemfile naming rails`). A source is named by its configuration key, so the word you read is the word you set. What applies depends on the command as much as on the directory, so `siftr sources -- bundle exec rspec` answers precisely; with no command it judges the directory alone and says so. Read-only: it prepares nothing, runs nothing and records nothing. Exits 0.
 - `run -j` and `ingest -j` carry `streams`: what the run actually captured, spelled as an exemplar's `stream` is (`stdout`, `stderr`, `file:rspec-events`, `file:log/test.log`), so a piece of evidence joins straight to it. A stream opens on its first byte, so a command that wrote nothing to stderr doesn't list it. `changes -j` reports `streams: null`, since the store doesn't hold what a run read. A source that was expected and failed warns as before, now naming itself — `rspec skipped: …` rather than `side channel skipped: …`.
