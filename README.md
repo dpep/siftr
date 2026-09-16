@@ -195,9 +195,11 @@ next: siftr evidence f035378415 --run r4
 
 If retention has pruned the run's lines, `explain` still shows the numbers and says so: `evidence  r22 pruned (SIFTR_KEEP_EVIDENCE)`.
 
+A `resources` line follows the measure, for any run that recorded what the kernel charged it: this run's CPU, peak memory and context switches beside the median of its baseline runs. No rule reads them — they're there to tell a loaded machine from a code change.
+
 ### `siftr evidence <BEHAVIOR>`
 
-The raw lines kept for a behavior, each tagged with its stream and line number, plus the path to the run's full capture. Takes a behavior id or a unique prefix of 4+ hex digits. `--run` picks the run (default: the latest where the behavior occurred), `-n` limits the lines (default 8).
+The raw lines kept for a behavior, each tagged with its stream and line number, plus the path to each of the run's captures that is still on disk — a run recorded with `SIFTR_CAPTURE=off`, or one whose captures retention has pruned, lists none. Takes a behavior id or a unique prefix of 4+ hex digits. `--run` picks the run (default: the latest where the behavior occurred), `-n` limits the lines (default 8).
 
 ```
 $ siftr evidence 27d0 --run r4 -n 3
@@ -398,7 +400,7 @@ That is the whole language. Retention (`SIFTR_KEEP_*`) and privacy (`SIFTR_REDAC
 A file siftr can't understand never stops your command. An unknown key, an unknown source, a value that isn't `true` or `false`, or a file that isn't TOML at all warns once on stderr and leaves the default standing:
 
 ```
-siftr: warning: ~/code/app/.siftr.toml: rspce is not a source (rails_log, rspec); ignoring it
+siftr: warning: ~/code/app/.siftr.toml: rspce is not a source (rspec, rails_log, rusage); ignoring it
 siftr: warning: ~/code/app/.siftr.toml: sources.rspec.enabled is not true or false (integer); using the default
 ```
 
@@ -424,7 +426,7 @@ Past those limits it still keeps a run that is recording, and whatever the lates
 ```
 $ siftr status
 data      ~/.local/share/siftr
-database  388 KB, schema 8
+database  388 KB, schema 10
 captures  337 KB for 11 runs
 runs      11 runs of 1 command; oldest r1 39s ago, newest r11 0s ago
 keep      stats of the last 100 runs of each command (default; set SIFTR_KEEP_RUNS)
@@ -432,6 +434,7 @@ keep      stats of the last 100 runs of each command (default; set SIFTR_KEEP_RU
           nothing of a command not run for 30 days (default; set SIFTR_KEEP_DAYS)
 config    rails_log off (~/code/app/.siftr.toml)
           rspec on (default)
+          rusage on (default)
           files ~/code/app/.siftr.toml, ~/.config/siftr/config.toml (not read)
     RUNS  STATS  EVIDENCE  CAPTURES  NEWEST    COMMAND
       11     11        11    337 KB  0s ago    bundle exec rspec
