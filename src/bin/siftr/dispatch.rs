@@ -15,7 +15,7 @@ use crate::output;
 
 pub const SUBCOMMANDS: &[&str] = &[
     "run", "ingest", "changes", "summary", "evidence", "explain", "ack", "dismiss", "history",
-    "status", "gc",
+    "sources", "status", "gc",
 ];
 pub const PRESETS: &[&str] = &["cron"];
 

@@ -47,6 +47,8 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let changes = Changes {
         run: &run,
         behaviors: store.behavior_count(run.id)?,
+        // The store doesn't hold what a run captured, so a run read back from it can't say.
+        sources: None,
         baseline_runs: &baseline_runs,
         skipped_runs: &skipped,
         signals: &signals,

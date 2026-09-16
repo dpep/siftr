@@ -49,7 +49,7 @@ A subcommand or a preset always wins over a file of the same name: `siftr status
 
 ```
 $ siftr statu; echo "exit=$?"
-siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, changes, summary, evidence, explain, ack, dismiss, history, status, gc; presets: cron
+siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, changes, summary, evidence, explain, ack, dismiss, history, sources, status, gc; presets: cron
 exit=2
 ```
 
@@ -313,6 +313,34 @@ next: crontab -e, and replace a job with its record-it line
 
 A job that needs a shell (`cd`, `&&`, `~`, `%`, redirections) keeps it through `sh -c`. siftr names itself by absolute path because cron's `PATH` is minimal. A launchd agent gets no line: only its plist could change, and siftr doesn't touch it.
 
+### `siftr sources`
+
+What siftr can read here: the command's own output, plus the side channels a command writes somewhere else. Each row says whether the source is on, whether it applies to the command you name, and why either way. Read-only — it prepares nothing, runs nothing and records nothing.
+
+```
+$ siftr sources -- bundle exec rspec
+sources for bundle exec rspec in ~/src/siftr/dogfood/rails_demo
+  stdout        on   applies         the command's own output (always read)
+  stderr        on   applies         the command's own output (always read)
+  rspec-events  on   applies         RSpec's per-example results, from a listener added to SPEC_OPTS (the command runs rspec)
+  log/test.log  on   applies         the SQL and request lines the run appends to the Rails test log (log/ is there and the Gemfile names rails)
+next: siftr run -- bundle exec rspec
+```
+
+What applies depends on the command as much as on the directory, so name the command you'd wrap. Elsewhere, or for a command that isn't a test run:
+
+```
+$ siftr sources -- make test
+sources for make test in ~/src/notes
+  stdout        on   applies         the command's own output (always read)
+  stderr        on   applies         the command's own output (always read)
+  rspec-events  on   does not apply  RSpec's per-example results, from a listener added to SPEC_OPTS (the command isn't an rspec run)
+  log/test.log  on   does not apply  the SQL and request lines the run appends to the Rails test log (the command isn't a Ruby test run)
+next: siftr run -- make test
+```
+
+With no command it judges the directory alone, and says that's what it did. A run that worked says nothing about its own plumbing; to see what one actually captured, read `sources` in `run -j` or `ingest -j`.
+
 ### Common flags and exit codes
 
 - `-j` prints exactly one JSON document on stdout, on every command. Empty results are still that command's document (exit 1). Errors, argument errors included, are `{"error": {"code", "message"}}` (exit 2), where `code` is `usage`, `not_found`, `busy` (another siftr held the data directory too long; retry) or `failed`.
@@ -324,6 +352,7 @@ A job that needs a shell (`cd`, `&&`, `~`, `%`, redirections) keeps it through `
 | `run` | the command's own code; 125 if siftr fails before starting it, 126 if it can't be executed, 127 if not found |
 | `ingest` | 0 recorded, 2 error |
 | `cron` | 0 found a job or cron output, 1 found neither, 2 error |
+| `sources` | 0 listed, 2 error |
 | `changes`, `explain`, `evidence`, `summary`, `history` | 0 results, 1 nothing found, 2 error |
 | `status` | 0 healthy, 1 something needs attention, 2 error |
 | `ack`, `dismiss` | 0 recorded, 2 error |
@@ -406,6 +435,7 @@ Run the suite through siftr, read the first line of the report, and drill down o
 The `-j` fields that matter (full schema: top of [`src/bin/siftr/output.rs`](src/bin/siftr/output.rs)):
 
 - `run.complete`: false when the run was unfinished, interrupted, or INCOMPLETE.
+- `sources`: what this run captured — `stdout`, `stderr`, `rspec-events`, `log/test.log` — in `run -j` and `ingest -j`. A stream opens on its first byte, so a command that wrote nothing to stderr doesn't list it. `changes -j` reports null: the store doesn't hold what a run read. `siftr sources` says what could apply here.
 - `changes`: number of code-level groups. `baseline_runs`: the run ids compared against. `skipped_runs[]`: {`run`, `reason`}, where `reason` is `no_test_summary`, `errors_outside_examples`, `stopped` or `subset`.
 - `groups[]`: `rank` (1 is most important), `headline` (a signal id), `signals` (ids in the group), `setup` (true when the change happened outside every example: the environment or suite hooks, not the code), `disappeared_examples` (null, or {`file`, `examples`} for a deleted spec file's examples collapsed into one group).
 - `signals[]`, in rank order:
@@ -499,6 +529,8 @@ Trimmed with `jq '{run: {id: .run.id, complete: .run.complete}, changes, baselin
 - **Per-example results** from an RSpec reporter listener, added by appending `--require` to `SPEC_OPTS`. It isn't a formatter, so your `.rspec` formatters and any `SPEC_OPTS` you've set keep working. It also sees errors outside examples, such as a spec file that fails to load or a hook that raises.
 - **SQL and request lines** from the bytes the run appended to `log/test.log`. Each line is attributed to the example that was running when it was written, or to before, between or after examples. One log rotation during a run is handled exactly. With two or more, bytes are lost.
 - **stdout and stderr**. When siftr's stdout is a terminal, the child gets a PTY, so RSpec's colours survive. stderr stays a separate pipe, because deprecation warnings land there.
+
+`siftr sources` says which of these apply to a command here; a run's `-j` `sources` says which it actually captured.
 
 Why it works this way: [docs/findings/capture.md](docs/findings/capture.md).
 

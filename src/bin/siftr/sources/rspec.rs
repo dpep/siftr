@@ -7,9 +7,10 @@ use std::process::Command;
 
 use anyhow::{Context as _, Result};
 use siftr::context::shell_join;
+use siftr::interpret::rspec::EVENTS_STREAM;
 use tempfile::TempDir;
 
-use super::SideChannel;
+use super::Source;
 use super::rails_log::{RailsLog, Slice};
 use crate::output;
 use crate::record::Recording;
@@ -34,7 +35,11 @@ impl Rspec {
     }
 }
 
-impl SideChannel for Rspec {
+impl Source for Rspec {
+    fn name(&self) -> &'static str {
+        EVENTS_STREAM
+    }
+
     fn prepare(&mut self, command: &mut Command) -> Result<()> {
         let dir = tempfile::Builder::new()
             .prefix("siftr-rspec-")

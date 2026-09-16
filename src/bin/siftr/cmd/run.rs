@@ -22,7 +22,7 @@ use super::Globals;
 use crate::output::{self, Changes};
 use crate::project;
 use crate::record::{Begun, Recorded, Recording};
-use crate::sidechannel;
+use crate::sources;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -144,11 +144,13 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
     if !foreground {
         command.process_group(0);
     }
-    let mut channels = sidechannel::for_command(&argv);
-    channels.retain_mut(|channel| {
-        channel
+    let here = std::env::current_dir().unwrap_or_default();
+    let mut sources = sources::for_command(&argv, &here, &sources::enabled());
+    sources.retain_mut(|source| {
+        let name = source.name();
+        source
             .prepare(&mut command)
-            .inspect_err(|error| output::warn(format_args!("side channel skipped: {error:#}")))
+            .inspect_err(|error| output::warn(format_args!("{name} skipped: {error:#}")))
             .is_ok()
     });
 
@@ -267,9 +269,10 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
             return exit_as(status, code);
         }
     };
-    for channel in &mut channels {
-        if let Err(error) = channel.collect(&mut recording) {
-            output::warn(format_args!("side channel lost: {error:#}"));
+    for source in &mut sources {
+        let name = source.name();
+        if let Err(error) = source.collect(&mut recording) {
+            output::warn(format_args!("{name} lost: {error:#}"));
         }
     }
     // Siftr itself was interrupted (and may or may not have forwarded it), its reader went away and the capture
@@ -537,6 +540,7 @@ fn report(recorded: &Recorded, open: &[siftr::store::StoredSignal], json: bool) 
     let changes = Changes {
         run: &recorded.run,
         behaviors: recorded.behaviors,
+        sources: Some(&recorded.sources),
         baseline_runs: &recorded.baseline_runs,
         skipped_runs: &recorded.skipped_runs,
         signals: &recorded.signals,

@@ -15,7 +15,7 @@ use super::{Globals, record_shown};
 use crate::output::{self, Changes};
 use crate::project;
 use crate::record::Recording;
-use crate::sidechannel;
+use crate::sources;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -94,6 +94,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let changes = Changes {
         run: &recorded.run,
         behaviors: recorded.behaviors,
+        sources: Some(&recorded.sources),
         baseline_runs: &recorded.baseline_runs,
         skipped_runs: &recorded.skipped_runs,
         signals: &recorded.signals,
@@ -115,8 +116,8 @@ fn scenario(dir: &Path) -> Result<(Inputs, Option<i32>)> {
     let layout = [
         ("stdout.txt", Stream::Stdout),
         ("stderr.txt", Stream::Stderr),
-        ("rspec.ndjson", sidechannel::rspec_events()),
-        ("test.log", sidechannel::rails_log()),
+        ("rspec.ndjson", sources::rspec_events()),
+        ("test.log", sources::rails_log()),
     ];
     let mut inputs: Inputs = Vec::new();
     for (name, stream) in layout {

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `siftr sources` says what siftr can read here: the command's own output, and the side channels a command writes somewhere else — RSpec's per-example events, and the slice of `log/test.log` a run appends. Each row says whether the source is on and whether it applies to the command you name, with the reason either way (`the command isn't an rspec run`, `no log/test.log, and no Gemfile naming rails`). What applies depends on the command as much as the directory, so `siftr sources -- bundle exec rspec` answers precisely; with no command it judges the directory alone and says so. Read-only: it prepares nothing, runs nothing and records nothing. Exits 0.
+- `run -j` and `ingest -j` carry `sources`: the streams that run actually captured, named as `siftr sources` names them (`stdout`, `stderr`, `rspec-events`, `log/test.log`). A stream opens on its first byte, so a command that wrote nothing to stderr doesn't list it. `changes -j` reports `sources: null`, since the store doesn't hold what a run read.
+- A run that worked still says nothing about its own sources. A source that was expected and failed warns as before, now naming itself — `rspec-events skipped: …` rather than `side channel skipped: …`.
+
 ## 0.1.2 — 2026-09-15
 
 - `siftr` without a subcommand does the obvious thing, and never guesses. `siftr -- CMD` is `siftr run -- CMD`. `siftr FILE` (or `siftr -`) ingests it, compared only with earlier ingests of that file; `--context NAME` still wins, for dated or rotated files. A bare `siftr` ingests stdin when it's piped or redirected, and prints help otherwise. A subcommand or preset always wins over a file of the same name (`./cron` names the file). Any other word is an error with a "did you mean", exit 2, never read as a file. `siftr ingest FILE` is unchanged and still compares within the `ingest` context.

@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
+use siftr::interpret::rspec::LOG_STREAM;
 
-use super::SideChannel;
+use super::Source;
 use crate::record::Recording;
 
 /// Re-read at the end: a truncation that regrew past the start offset changes these bytes, which size can't see.
@@ -223,7 +224,11 @@ impl Slice {
     }
 }
 
-impl SideChannel for RailsLog {
+impl Source for RailsLog {
+    fn name(&self) -> &'static str {
+        LOG_STREAM
+    }
+
     fn prepare(&mut self, _command: &mut Command) -> Result<()> {
         self.snapshot()
     }

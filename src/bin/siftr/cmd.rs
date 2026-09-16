@@ -9,6 +9,7 @@ pub mod gc;
 pub mod history;
 pub mod ingest;
 pub mod run;
+pub mod sources;
 pub mod status;
 pub mod summary;
 
@@ -127,7 +128,7 @@ pub fn listener_event(
     exemplar: &siftr::aggregate::Exemplar,
 ) -> Option<String> {
     use std::io::BufRead as _;
-    if exemplar.stream != crate::sidechannel::rspec_events() {
+    if exemplar.stream != crate::sources::rspec_events() {
         return None;
     }
     let whole = std::fs::File::open(store.capture_file(run, &exemplar.stream))

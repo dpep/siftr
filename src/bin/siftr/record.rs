@@ -31,6 +31,8 @@ pub struct Recording {
 pub struct Recorded {
     pub run: RunRecord,
     pub behaviors: u64,
+    /// What the run captured, as [`crate::sources`] names each stream.
+    pub sources: Vec<String>,
     pub baseline_runs: Vec<RunId>,
     /// Recent runs of the context left out of the baseline, and why, most recent first.
     pub skipped_runs: Vec<(RunId, Ineligible)>,
@@ -131,7 +133,7 @@ impl Recording {
     }
 
     pub fn finish(self, exit_code: Option<i32>) -> Result<Recorded> {
-        let (mut store, run, context, wall, analysis) = self.analyze();
+        let (mut store, run, context, wall, analysis, sources) = self.analyze();
 
         let recent = store.baseline_runs(&context, run, MAX_RUNS)?;
         let current = analysis.stats();
@@ -156,6 +158,7 @@ impl Recording {
         Ok(Recorded {
             run: store.run(run)?.context("the finished run is missing")?,
             behaviors: analysis.aggregates.len() as u64,
+            sources,
             baseline_runs,
             skipped_runs,
             signals: store.signals(run)?,
@@ -168,7 +171,7 @@ impl Recording {
     /// `exit_code` is the child's own exit, not assumed from `signal`: a trapping child (RSpec force-quits
     /// only on the second SIGINT) can still exit with its own code rather than dying by the signal.
     pub fn finish_interrupted(self, exit_code: Option<i32>, signal: i32) -> Result<Recorded> {
-        let (mut store, run, _, wall, analysis) = self.analyze();
+        let (mut store, run, _, wall, analysis, sources) = self.analyze();
 
         let end = RunEnd {
             wall,
@@ -179,6 +182,7 @@ impl Recording {
         Ok(Recorded {
             run: store.run(run)?.context("the finished run is missing")?,
             behaviors: analysis.aggregates.len() as u64,
+            sources,
             baseline_runs: Vec::new(),
             skipped_runs: Vec::new(),
             signals: Vec::new(),
@@ -187,7 +191,7 @@ impl Recording {
 
     /// Drains buffered lines through the analyzer and closes the capture: shared tail of `finish` and
     /// `finish_interrupted`.
-    fn analyze(self) -> (Store, RunId, Context, Duration, Analysis) {
+    fn analyze(self) -> (Store, RunId, Context, Duration, Analysis, Vec<String>) {
         let Recording {
             store,
             run,
@@ -209,6 +213,7 @@ impl Recording {
         for (stream, splitter, scanner) in &mut streams {
             splitter.finish_raw(|raw| sink.line(stream, scanner, raw));
         }
+        let sources = captured(&streams);
         if let Some(capture) = capture
             && let Err(error) = capture.finish()
         {
@@ -229,8 +234,23 @@ impl Recording {
                 }
             }
         }
-        (store, run, context, wall, analysis)
+        (store, run, context, wall, analysis, sources)
     }
+}
+
+/// What the run captured: the command's own output first, then each side channel as it was fed. A stream opens
+/// on its first byte, so this is what arrived rather than what was offered.
+fn captured(streams: &[(Stream, LineSplitter, Scanner)]) -> Vec<String> {
+    let mut order: Vec<&Stream> = streams.iter().map(|(stream, ..)| stream).collect();
+    order.sort_by_key(|stream| match stream {
+        Stream::Stdout => 0,
+        Stream::Stderr => 1,
+        Stream::File(_) => 2,
+    });
+    order
+        .into_iter()
+        .map(|stream| crate::sources::name_of(stream).to_owned())
+        .collect()
 }
 
 /// Where each line goes once redacted.

@@ -7,7 +7,7 @@ mod output;
 mod privacy;
 mod project;
 mod record;
-mod sidechannel;
+mod sources;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -27,6 +27,7 @@ Exit codes:
   run      the command's own code; 125 if siftr fails before starting it, 126 if it can't be executed, 127 if not found
   ingest   0 recorded, 2 error
   cron     0 found jobs or cron output, 1 nothing found, 2 error
+  sources  0 listed, 2 error
   queries  0 results, 1 nothing found, 2 error
   status   0 healthy, 1 something needs attention, 2 error
   ack      0 recorded, 2 error
@@ -43,6 +44,7 @@ Examples:
   siftr run -- bundle exec rspec
   siftr --quiet-unless-changed -- backup.sh   silent unless something changed, for cron, CI and git hooks
   siftr log/production.log
+  siftr sources -- bundle exec rspec
   siftr cron
   siftr changes
   siftr explain s3
@@ -91,6 +93,8 @@ enum Command {
     Dismiss(cmd::feedback::Args),
     /// Runs recorded in this project
     History(cmd::history::Args),
+    /// What siftr can read here, whether each source is on, and whether it applies. Read-only
+    Sources(cmd::sources::Args),
     /// What the data dir holds and what retention does about it; exits 1 when something needs attention
     Status(cmd::status::Args),
     /// Prune what's past the retention limits now, and reclaim the space
@@ -139,6 +143,7 @@ fn main() -> ExitCode {
             cmd::feedback::run(FeedbackKind::Dismissed, "dismiss", args, &globals)
         }
         Command::History(args) => cmd::history::run(args, &globals),
+        Command::Sources(args) => cmd::sources::run(args, &globals),
         Command::Status(args) => cmd::status::run(args, &globals),
         Command::Gc(args) => cmd::gc::run(args, &globals),
     };

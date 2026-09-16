@@ -91,11 +91,13 @@ fn an_unfixed_regression_is_reminded_until_it_is_fixed_or_dismissed() {
         "{open:?}"
     );
     assert!(open.iter().all(|(_, run)| run == "r4"), "{open:?}");
-    assert_eq!(
-        sandbox.json(&["changes", "-j"]),
-        again,
-        "changes says what ingest did"
-    );
+    // Everything but `sources`: only the run that did the capturing knows what it read, and the store doesn't
+    // hold it, so a run read back reports null rather than guessing.
+    let mut stored = sandbox.json(&["changes", "-j"]);
+    assert_eq!(stored["sources"], Value::Null);
+    assert!(again["sources"].is_array());
+    stored["sources"] = again["sources"].clone();
+    assert_eq!(stored, again, "changes says what ingest did");
 
     let changes = sandbox.siftr(&["changes"]);
     assert_eq!(
