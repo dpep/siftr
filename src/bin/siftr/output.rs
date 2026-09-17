@@ -4,7 +4,10 @@
 //!
 //! - run: `id`, `project`, `context`, `command`, `cwd`, `started_at_ms`, `finished`, `wall_ms`,
 //!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap), `interrupted`
-//!   (the signal number, or null; interrupted runs are never compared or used as a baseline), `complete` (false
+//!   (the signal number, or null; interrupted runs are never compared or used as a baseline), `uncompared` (how
+//!   many changes the comparison produced when that was past `signal::MAX_CHANGES`, so none were recorded; null
+//!   when the run was compared. Such a run is still complete: its evidence is kept and it baselines normally),
+//!   `complete` (false
 //!   when the run is unfinished, interrupted, or signalled INCOMPLETE: it didn't run what its baseline runs did).
 //! - behavior: `id` (16 hex), `kind` (test.example|test.summary|db.query|http.request|exception|log|run.resources,
 //!   the last being the one run-level behavior no signal rule judges), `template`, `roles` (what its paths are,
@@ -366,6 +369,14 @@ impl Changes<'_> {
             writeln!(
                 w,
                 "{run}: interrupted by signal {signal}; kept as evidence, not compared, never a baseline"
+            )?;
+        } else if let Some(changes) = self.run.uncompared {
+            writeln!(
+                w,
+                "{run} vs {} ({}): {changes} changes, too many to be findings, so none were recorded; \
+                 this run's behaviors and lines are kept as evidence",
+                plural(n, "baseline run"),
+                runs_label(self.baseline_runs, &named),
             )?;
         } else if n == 0 && !self.skipped_runs.is_empty() {
             writeln!(
@@ -731,6 +742,7 @@ pub fn run_json(run: &RunRecord, complete: bool) -> Value {
         "lines": run.end.map(|end| end.lines),
         "overflow_events": run.overflow_events,
         "interrupted": run.interrupted,
+        "uncompared": run.uncompared,
         "complete": complete,
     })
 }

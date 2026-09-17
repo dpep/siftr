@@ -156,6 +156,10 @@ pub struct RunRecord {
     pub overflow_events: u64,
     /// The signal that interrupted the run. Interrupted runs keep their evidence but never join a baseline.
     pub interrupted: Option<i32>,
+    /// How many changes the comparison produced, when that was more than [`crate::signal::MAX_CHANGES`] and so
+    /// none were recorded; `None` when the run was compared. Unlike an interrupted run, this one is complete:
+    /// its evidence is kept and it baselines normally. It was the comparison that said nothing, not the run.
+    pub uncompared: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

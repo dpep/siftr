@@ -11,7 +11,7 @@ use siftr::context::Context;
 use siftr::interpret::resources::Resources;
 use siftr::normalize::secrets::{Mode, Redactor, Scanner};
 use siftr::observation::{LineSplitter, Observation, RawLine, Stream};
-use siftr::signal::detect;
+use siftr::signal::{MAX_CHANGES, detect};
 use siftr::store::{Capture, Finished, NewRun, RunEnd, RunId, RunRecord, Store, StoredSignal};
 
 use crate::output;
@@ -178,15 +178,27 @@ impl Recording {
             exit_code,
             lines: analysis.observations,
         };
-        store.finish_run(
-            run,
-            &Finished {
+        // More changes than a reader can use is a statement that the behaviors don't recur, not a set of
+        // findings, and recording them would make the count the whole output. The evidence is kept either way.
+        if signals.len() > MAX_CHANGES {
+            store.finish_run_uncompared(
+                run,
                 end,
-                analysis: &analysis,
-                baseline_runs: &baseline_runs,
-                signals: &signals,
-            },
-        )?;
+                &analysis,
+                &baseline_runs,
+                signals.len() as u64,
+            )?;
+        } else {
+            store.finish_run(
+                run,
+                &Finished {
+                    end,
+                    analysis: &analysis,
+                    baseline_runs: &baseline_runs,
+                    signals: &signals,
+                },
+            )?;
+        }
         Ok(Recorded {
             run: store.run(run)?.context("the finished run is missing")?,
             behaviors: analysis.aggregates.len() as u64,

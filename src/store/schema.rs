@@ -224,6 +224,12 @@ CREATE TABLE run_sources (
     PRIMARY KEY (run_id, name)
 ) WITHOUT ROWID;
 ",
+    r"
+-- How many changes a comparison produced when it produced more than `signal::MAX_CHANGES`, in which case none
+-- were recorded: that many is a statement that the run's behaviors don't recur, not a set of findings. NULL for
+-- a run that was compared. Its aggregates, exemplars and capture are kept either way, and it baselines normally.
+ALTER TABLE runs ADD COLUMN uncompared INTEGER;
+",
 ];
 
 /// Index of the migration [`scrub::credentials`] completes.

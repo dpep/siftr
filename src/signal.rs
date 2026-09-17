@@ -102,6 +102,13 @@ pub mod measure {
 /// NEW, DISAPPEARED, FREQUENCY and LATENCY need this many baseline runs; ERROR needs one.
 pub const MIN_BASELINE_RUNS: u32 = rules::MIN_RUNS as u32;
 
+/// Past this many changes, a run records none: that many says its behaviors don't recur, not that this
+/// much changed. Measured separation — over 27 runs of the RSpec captures in `fixtures/` the most any one
+/// run produced was 11, and one window of the macOS unified log produced 8,564, with nothing in between.
+/// A backstop, not a tuned threshold: it clears a per-example change to a suite far larger than any here
+/// (the 934-example suite of `docs/findings/signals.md`) by an order of magnitude.
+pub const MAX_CHANGES: usize = 1_000;
+
 /// The baseline numbers a rule used, rounded to the precision they have.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BaselineNumbers {

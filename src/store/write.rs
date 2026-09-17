@@ -65,7 +65,27 @@ impl Store {
     }
 
     pub fn finish_run(&mut self, run: RunId, finished: &Finished<'_>) -> Result<()> {
-        self.finish(run, finished, None)
+        self.finish(run, finished, None, None)
+    }
+
+    /// Records a run whose comparison produced `changes` changes, more than [`crate::signal::MAX_CHANGES`], so
+    /// none of them are kept: that many is a statement that its behaviors don't recur rather than a set of
+    /// findings. Everything else is a normal finished run — its evidence stays, and it baselines like any other.
+    pub fn finish_run_uncompared(
+        &mut self,
+        run: RunId,
+        end: RunEnd,
+        analysis: &Analysis,
+        baseline_runs: &[RunId],
+        changes: u64,
+    ) -> Result<()> {
+        let finished = Finished {
+            end,
+            analysis,
+            baseline_runs,
+            signals: &[],
+        };
+        self.finish(run, &finished, None, Some(changes))
     }
 
     /// Records what an interrupted run saw, as evidence only: no baseline, no signals, and it never
@@ -83,7 +103,7 @@ impl Store {
             baseline_runs: &[],
             signals: &[],
         };
-        self.finish(run, &finished, Some(signal))
+        self.finish(run, &finished, Some(signal), None)
     }
 
     fn finish(
@@ -91,16 +111,19 @@ impl Store {
         run: RunId,
         finished: &Finished<'_>,
         interrupted: Option<i32>,
+        uncompared: Option<u64>,
     ) -> Result<()> {
         self.conn.busy_timeout(FINISH_WAIT)?;
         let tx = self.conn.transaction()?;
         tx.execute(
-            "UPDATE runs SET wall_ms = ?1, exit_code = ?2, lines = ?3, interrupted = ?4 WHERE id = ?5",
+            "UPDATE runs SET wall_ms = ?1, exit_code = ?2, lines = ?3, interrupted = ?4, uncompared = ?5
+             WHERE id = ?6",
             params![
                 micros(finished.end.wall) / 1000,
                 finished.end.exit_code,
                 int(finished.end.lines),
                 interrupted,
+                uncompared.map(int),
                 run.0
             ],
         )?;

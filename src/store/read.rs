@@ -33,7 +33,8 @@ pub enum Order {
 fn run_columns() -> String {
     format!(
         "id, project, context, command, cwd, started_at_ms, wall_ms, exit_code, lines, interrupted,
-         (SELECT count FROM aggregates o WHERE o.run_id = runs.id AND o.behavior_id = '{}')",
+         (SELECT count FROM aggregates o WHERE o.run_id = runs.id AND o.behavior_id = '{}'),
+         uncompared",
         overflow_behavior().id
     )
 }
@@ -461,6 +462,7 @@ fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         end,
         interrupted: row.get(9)?,
         overflow_events: row.get::<_, Option<i64>>(10)?.unwrap_or(0).unsigned_abs(),
+        uncompared: row.get::<_, Option<i64>>(11)?.map(i64::unsigned_abs),
     })
 }
 
