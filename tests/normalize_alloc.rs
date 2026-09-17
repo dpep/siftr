@@ -1,31 +1,45 @@
-//! Steady-state normalization must not allocate. One test per binary: the
-//! counting allocator is process-global.
+//! Steady-state normalization must not allocate.
+//!
+//! The counter is thread-local, not a process-global atomic: a `#[global_allocator]` sees every thread, so a
+//! global count also charges this test for whatever the harness allocates on its own threads while the loop
+//! runs. Only the thread below is measured, and between its two samples it does nothing but normalize. One
+//! test per binary still, since the allocator is installed process-wide.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::Cell;
 
 use siftr::normalize::{Normalizer, Roots, SlotKind, SlotStats};
 
 struct Counting;
 
-static ALLOCS: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    /// Const-initialized and not `Drop`, so reading it from inside the allocator neither allocates nor
+    /// re-enters it.
+    static ALLOCS: Cell<u64> = const { Cell::new(0) };
+}
+
+fn counted() {
+    let _ = ALLOCS.try_with(|n| n.set(n.get() + 1));
+}
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        counted();
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        counted();
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
 
 #[global_allocator]
 static GLOBAL: Counting = Counting;
+
+const ROUNDS: usize = 10_000;
 
 #[test]
 fn steady_state_does_not_allocate() {
@@ -57,9 +71,9 @@ fn steady_state_does_not_allocate() {
         stats.observe(v.as_bytes());
     }
 
-    let before = ALLOCS.load(Ordering::Relaxed);
+    let before = ALLOCS.get();
     let mut slots = 0;
-    for _ in 0..10_000 {
+    for _ in 0..ROUNDS {
         for line in &lines {
             slots += n.normalize(line).slots.len();
         }
@@ -67,7 +81,12 @@ fn steady_state_does_not_allocate() {
             stats.observe(v.as_bytes());
         }
     }
-    let after = ALLOCS.load(Ordering::Relaxed);
+    let after = ALLOCS.get();
     assert!(slots > 0);
-    assert_eq!(after - before, 0, "allocations in steady state");
+    assert_eq!(
+        after - before,
+        0,
+        "allocations across {} steady-state normalizations",
+        ROUNDS * lines.len()
+    );
 }
