@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A run whose comparison produces more than 1000 changes records none of them and says so in one line, keeping its behaviors and captured lines as evidence. That many changes says a source's behaviors don't recur, rather than naming findings: pointed at the macOS unified log, siftr reported 8,952 changes from a single five-minute window. Such a run stays complete and baselines normally, and `uncompared` in `-j` carries the count that was refused. The bound is a backstop, not a tuning knob — the most a real RSpec suite produced here was 11.
+- `siftr history --sources` shows what each run actually read, in human and `-j` output. `not recorded` (`sources: null`) means the run recorded no sources, so siftr cannot say what it read — not that it read nothing: `ingest` replays a capture rather than choosing sources, so an ingested run always reads that way.
+- `docs/json.md` describes every command's `-j` document field by field, including the shapes that differ between commands — three commands return a bare array, and `history --signals` nests a signal where `changes` inlines one. `siftr --help` and the README point at it.
+
 ## 0.1.4 — 2026-09-16
 
 - A run records which sources it actually read, and a behavior whose source was absent from one side of a comparison no longer raises NEW or DISAPPEARED. Turning `[sources.rails_log] enabled = false` on or off in `.siftr.toml` changes what siftr looked at, not what your command did, and siftr no longer reports the difference as behavior appearing or disappearing. The migration runs automatically and runs recorded before it compare exactly as they did: DISAPPEARED is protected from the first run after upgrading, NEW once the baseline window has been re-recorded. A count that moves because a source was switched off is still reported, since attributing part of a count to one source would be a guess.
