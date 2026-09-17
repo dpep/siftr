@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A regression that is fixed and breaks again is reported every time it returns. The rolling baseline absorbs a value it has already seen — a repeat sits inside the baseline's own range, so no per-run rule can fire on it without firing on values the baseline really exhibited — and the still-open reminder, which judges against the signal's frozen original baseline, was dropping it: a change that had been fixed and returned counted as `recurred` rather than `open`, and only `open` was reminded. So the second break of a regression went unreported by every per-run command, while `siftr summary` showed it plainly. A change present at this run is now surfaced whether or not it was fixed in between. The rules and their thresholds are untouched, and the zero-false-positive backtest is unchanged.
+- `siftr history --signals` carries every cycle instead of freezing after the first recurrence, and reports the latest verdict: a change fixed, broken and fixed again reads `resolved`, not `recurred`. A new `recurrences` field counts the returns; `resolved_in` and `recurred_in` still name the first of each.
 - `siftr explain` shows a truncated run's event counts instead of a dash per run. `events_past_cap` is the overflow behavior's own count rather than a stored measure, so the values row had nothing to read and printed `events_past_cap r4 -  |  baseline r3 -  r2 -  r1 -` for a signal whose own summary line said 60.
 
 ## 0.1.5 — 2026-09-17
