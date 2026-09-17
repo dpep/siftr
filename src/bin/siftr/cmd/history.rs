@@ -409,18 +409,25 @@ fn judge(
         .into_iter()
         .map(|id| store.run_stats(id))
         .collect::<Result<Vec<RunStats>>>()?;
-    // Each run is judged against the signal's own baseline runs, as its own run was. `None`: the run skipped
-    // examples those runs ran, so it can't say whether a change is still there.
+    // Each run is judged against the signal's own baseline runs, as its own run was. `None`: the run has no
+    // verdict to give, so it does not get a vote. It skipped examples those runs ran, or the behavior cap cut
+    // what it saw — and a truncated run's absences raise nothing, since admission goes by the arrival order of
+    // a behavior's first occurrence. Letting it vote would read its silence about a DISAPPEARED as the
+    // behavior coming back, when all that changed is siftr's willingness to say it is gone.
     let fires = |stats: &RunStats, verdict: bool| -> Option<HashSet<Key>> {
         let baseline = Baseline::from_runs(stats, baseline_stats.iter().enumerate());
-        (!verdict || baseline.incomplete().is_none())
-            .then(|| detect(stats, &baseline).iter().map(key).collect())
+        let speaks = baseline.incomplete().is_none() && stats.events_past_cap() == 0;
+        (!verdict || speaks).then(|| detect(stats, &baseline).iter().map(key).collect())
     };
     let own = fires(&store.run_stats(run.id)?, false).unwrap_or_default();
     let mut later: Vec<RunRecord> = Vec::new();
     let mut later_fires: Vec<HashSet<Key>> = Vec::new();
     for record in store.runs_after(&run.context, run.id)? {
         if until.is_some_and(|until| record.id > until) {
+            continue;
+        }
+        // Nor has a run whose comparison was refused for producing too many changes.
+        if record.uncompared.is_some() {
             continue;
         }
         if let Some(fired) = fires(&store.run_stats(record.id)?, true) {

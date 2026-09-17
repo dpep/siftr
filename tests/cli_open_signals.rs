@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use serde_json::{Value, json};
+use siftr::aggregate::MAX_BEHAVIORS;
 use tempfile::TempDir;
 
 const CLEAN: [&str; 3] = ["baseline", "baseline_2", "baseline_documentation"];
@@ -200,6 +201,90 @@ fn a_run_whose_comparison_was_refused_reminds_of_nothing() {
         sandbox.siftr(&["changes", "r6"]).status.code(),
         Some(1),
         "nothing to look at, so nothing found"
+    );
+}
+
+/// Whether an earlier change is still there is decided by re-running its rule on each later run. A truncated
+/// run cannot answer: the cap admits behaviors by the arrival order of their first occurrence, so a behavior
+/// it lacks may simply not have fitted, and its absences therefore raise nothing. That silence makes its
+/// `fires` set omit an earlier DISAPPEARED's key, and an absent key reads as resolved — while the behavior is
+/// still gone. Only siftr's willingness to say so changed, so such a run must not adjudicate.
+#[test]
+fn a_truncated_later_run_does_not_resolve_an_earlier_disappearance() {
+    let sandbox = Sandbox::new();
+    // One line per distinct template, four letters so the normalizer cannot fold them into one behavior.
+    let token = |mut n: usize| -> String {
+        (0..4)
+            .map(|_| {
+                let letter = (b'a' + (n % 26) as u8) as char;
+                n /= 26;
+                letter
+            })
+            .collect()
+    };
+    let ingest = |name: &str, body: &str| -> Value {
+        let path = sandbox.project.path().join(format!("{name}.log"));
+        std::fs::write(&path, body).unwrap();
+        sandbox.json(&["ingest", "-j", "--context", "cap", path.to_str().unwrap()])
+    };
+    // One under the cap, so adding a single behavior still fits and adding two does not.
+    let common: String = (0..MAX_BEHAVIORS - 1)
+        .map(|i| format!("widget {} ready\n", token(i)))
+        .collect();
+    let gone = "gadget zzz done\n";
+
+    // Exactly at the cap: the baseline runs keep every behavior they saw, `gone` included.
+    for run in 1..=3 {
+        let full = ingest(&format!("run{run}"), &format!("{gone}{common}"));
+        assert_eq!(
+            full["run"]["overflow_events"].as_u64(),
+            Some(0),
+            "a baseline run must not be truncated itself: {full}"
+        );
+    }
+
+    // r4 drops that one behavior and nothing else: one honest DISAPPEARED.
+    let disappeared = ingest("run4", &common);
+    assert_eq!(
+        disappeared["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["kind"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["disappeared"],
+        "{disappeared}"
+    );
+
+    // r5 lacks it too, and is one behavior over the cap. Only its truncation differs from r4, and it is
+    // truncated rather than refused, so nothing but truncation can explain a change of verdict.
+    let truncated = ingest(
+        "run5",
+        &format!("{common}gizmo aaaa ready\ngizmo aaab ready\n"),
+    );
+    assert!(
+        truncated["run"]["overflow_events"]
+            .as_u64()
+            .is_some_and(|events| events > 0),
+        "r5 must actually be truncated: {truncated}"
+    );
+    assert_eq!(
+        truncated["run"]["uncompared"],
+        Value::Null,
+        "truncated, not refused for producing too many changes"
+    );
+
+    let outcomes = sandbox.json(&["history", "--signals", "-j"]);
+    let verdict = outcomes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["signal"]["run"] == "r4" && row["signal"]["kind"] == "disappeared")
+        .unwrap_or_else(|| panic!("no DISAPPEARED from r4 in {outcomes}"));
+    assert_eq!(
+        (&verdict["outcome"], &verdict["resolved_in"]),
+        (&json!("open"), &Value::Null),
+        "the behavior is still gone; a run that declined to judge absences did not fix it"
     );
 }
 
