@@ -209,3 +209,13 @@ share.
   platform sees an identity conversion, and watch the push's CI. Cross-checking
   locally with `--target x86_64-unknown-linux-gnu` does not work on this machine:
   `libsqlite3-sys` is bundled, so it would need a C cross-compiler.
+- **`streams` and `sources` are different sets, not two names for one thing.** A
+  run's `streams` is what *arrived* — a stream opens on its first byte — while
+  `Store::run_sources()` is what siftr *read*. A source that was read and stayed
+  empty (stderr, in most runs) is in the sources and absent from `streams`. So
+  `changes -j`'s `streams: null` is honest rather than lazy: the store cannot
+  answer "what arrived", and filling it from the sources would file what was
+  offered under a name meaning what arrived, making `changes -j` contradict
+  `run -j` for the same run. A run with no verdict is the same shape of trap:
+  `uncompared` means siftr declined to report a comparison, so nothing may judge
+  from it — not a reminder, not an exit code, not another signal's outcome.
