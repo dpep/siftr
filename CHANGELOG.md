@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 — 2026-09-17
 
 - A run whose comparison produces more than 1000 signals records none of them and says so in one line, keeping its behaviors and captured lines as evidence. That many signals says a source's behaviors don't recur, rather than naming findings: pointed at the macOS unified log, siftr produced 8,952 signals from a single five-minute window. Such a run baselines normally, and stays complete unless it was also truncated; `uncompared` in `-j` carries the count that was refused. The bound is a backstop, not a tuning knob — the most a real RSpec suite produced here was 11.
 - A run that could not record what it saw never reports itself complete. Truncation past the 20,000-behavior cap belongs to the run, but `complete` was read from the run's recorded signals — so a truncated run that recorded no INCOMPLETE read as complete: a first run of a context, which has no baseline to compare against, and a run whose flood of signals was refused, which records no signals at all. The worse run looked the cleaner one: a run that lost 4,500 events and refused 20,001 signals printed `0 changes` with no `incomplete` marker, beside strictly less broken runs that carried one. `complete` now reads the run's own truncation, in `-j` and in the `siftr history` marker alike.
