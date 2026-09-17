@@ -65,21 +65,27 @@ These appear inside several commands' documents.
 
 `interrupted` is the signal number, or null; an interrupted run is never compared
 and never becomes a baseline. `complete` is false when the run is unfinished,
-interrupted, or signalled INCOMPLETE — it didn't run what its baseline runs did,
-or couldn't record what it saw — so its changes don't mean what a whole run's do.
+interrupted, truncated past the behavior cap (`overflow_events` above zero), or
+signalled INCOMPLETE — it didn't run what its baseline runs did, or couldn't
+record what it saw — so its changes don't mean what a whole run's do.
 `overflow_events` above zero is the second case: past the 20,000-behavior cap a
 behavior is admitted on the arrival order of its first occurrence, so such a run
-reports INCOMPLETE with measure `events_past_cap` and raises nothing from its
-absences — a behavior it lacks may simply not have fitted. Its counts are still
+raises nothing from its absences — a behavior it lacks may simply not have
+fitted — and reports INCOMPLETE with measure `events_past_cap` whenever it had a
+baseline to say that against. Truncation belongs to the run rather than to its
+signals, so `complete` is false even when no signal carries it: a truncated first
+run of a context has no baseline to compare with, and a truncated run whose
+comparison was refused (below) recorded no signals at all. Its counts are still
 exact, so FREQUENCY, ERROR and LATENCY stand, and it still baselines normally.
 
 `uncompared` is null for a run that was compared. Otherwise it is how many
 changes the comparison produced when that was past `signal::MAX_CHANGES` (1000),
 in which case **none were recorded**: that many changes is a statement that the
-behaviors don't recur, not a set of findings. Such a run is still `complete` —
-its behaviors, exemplars and capture are kept, and it baselines normally. It has
-no verdict, so it also reports no `open_signals`: judging those would mean
-re-running the comparison siftr just refused.
+behaviors don't recur, not a set of findings. Such a run is still `complete`
+unless it was truncated as well — its behaviors, exemplars and capture are kept,
+and it baselines normally. It has no verdict, so it also reports no
+`open_signals`: judging those would mean re-running the comparison siftr just
+refused.
 
 ### `behavior`
 

@@ -17,7 +17,7 @@ use siftr::aggregate::{MAX_BEHAVIORS, RunStats};
 use siftr::analyze::{Analysis, Analyzer};
 use siftr::baseline::Baseline;
 use siftr::observation::{LineSplitter, Stream};
-use siftr::signal::{SignalKind, detect};
+use siftr::signal::{MAX_CHANGES, SignalKind, detect};
 use tempfile::TempDir;
 
 /// Distinct templates emitted before the core, enough to fill the cap on their own.
@@ -219,6 +219,79 @@ fn a_truncated_run_reports_its_truncation_to_the_reader() {
     assert!(
         headline.contains("incomplete"),
         "the verdict line says the comparison was partial: {human}"
+    );
+}
+
+/// Truncation is a property of the run, not of its signals. A first run of a context has no baseline, so
+/// `detect` returns before the INCOMPLETE is ever produced — and reading completeness from the signals then
+/// calls the run complete, though it could not tell its behaviors apart.
+#[test]
+fn a_truncated_first_run_is_not_complete() {
+    let sandbox = Sandbox::new();
+    let first = sandbox.ingest("run1", &filler_first());
+
+    assert_eq!(
+        first["run"]["overflow_events"].as_u64(),
+        Some(CORE as u64),
+        "the run really was truncated: {first}"
+    );
+    assert!(
+        signal_kinds(&first).is_empty(),
+        "no baseline, so no signal can carry the truncation: {first}"
+    );
+    assert_eq!(
+        first["run"]["complete"], false,
+        "a run that couldn't record what it saw is not complete: {first}"
+    );
+
+    let human = String::from_utf8(sandbox.siftr(&["history"]).stdout).unwrap();
+    assert!(
+        human.contains("incomplete"),
+        "a reader scanning runs must see that this one couldn't record what it saw: {human}"
+    );
+}
+
+/// Truncated *and* past the change cap: the refusal stores no signals, so it discards the truncation
+/// INCOMPLETE along with the flood. This run lost events and refused every change, yet read as the cleanest
+/// run of its context — the compared ones are marked incomplete and it wasn't.
+#[test]
+fn a_truncated_run_whose_changes_were_refused_is_not_complete() {
+    let sandbox = Sandbox::new();
+    // Two short runs of lines the flood also has: enough baseline for NEW, and nothing to disappear.
+    let seed = filler()[..2].join("\n") + "\n";
+    for run in 1..=2 {
+        sandbox.ingest(&format!("run{run}"), &seed);
+    }
+    let flooded = sandbox.ingest("run3", &filler_first());
+
+    assert!(
+        flooded["run"]["uncompared"]
+            .as_u64()
+            .is_some_and(|signals| signals as usize > MAX_CHANGES),
+        "the comparison was refused for producing too many signals: {flooded}"
+    );
+    assert_eq!(
+        flooded["run"]["overflow_events"].as_u64(),
+        Some(CORE as u64),
+        "and the run was truncated as well: {flooded}"
+    );
+    assert!(
+        signal_kinds(&flooded).is_empty(),
+        "the refusal stored no signals, the truncation INCOMPLETE among them: {flooded}"
+    );
+    assert_eq!(
+        flooded["run"]["complete"], false,
+        "the most broken run of the context must not read as the cleanest: {flooded}"
+    );
+
+    let human = String::from_utf8(sandbox.siftr(&["history"]).stdout).unwrap();
+    let row = human
+        .lines()
+        .find(|line| line.trim_start().starts_with("r3 "))
+        .unwrap_or_default();
+    assert!(
+        row.contains("incomplete"),
+        "the refused run's row says it couldn't record what it saw: {human}"
     );
 }
 

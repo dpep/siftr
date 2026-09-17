@@ -3,15 +3,16 @@
 //! JSON shapes (every number is already rounded where it was built):
 //!
 //! - run: `id`, `project`, `context`, `command`, `cwd`, `started_at_ms`, `finished`, `wall_ms`,
-//!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap; above zero the run reports
-//!   INCOMPLETE with measure `events_past_cap` and raises nothing from its absences, since the cap admits a
-//!   behavior on the arrival order of its first occurrence — its counts are still exact), `interrupted`
+//!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap; above zero the run raises
+//!   nothing from its absences, since the cap admits a behavior on the arrival order of its first occurrence —
+//!   its counts are still exact — and it reports INCOMPLETE with measure `events_past_cap` whenever it had a
+//!   baseline to say that against), `interrupted`
 //!   (the signal number, or null; interrupted runs are never compared or used as a baseline), `uncompared` (how
 //!   many changes the comparison produced when that was past `signal::MAX_CHANGES`, so none were recorded; null
-//!   when the run was compared. Such a run is still complete: its evidence is kept and it baselines normally),
-//!   `complete` (false
-//!   when the run is unfinished, interrupted, or signalled INCOMPLETE: it didn't run what its baseline runs
-//!   did, or couldn't record what it saw).
+//!   when the run was compared. Such a run is complete unless it was truncated too: its evidence is kept and it
+//!   baselines normally),
+//!   `complete` (false when the run is unfinished, interrupted, truncated past the behavior cap, or signalled
+//!   INCOMPLETE: it didn't run what its baseline runs did, or couldn't record what it saw).
 //! - behavior: `id` (16 hex), `kind` (test.example|test.summary|db.query|http.request|exception|log|run.resources,
 //!   the last being the one run-level behavior no signal rule judges), `template`, `roles` (what its paths are,
 //!   from their names and where they lie:
@@ -742,10 +743,16 @@ pub fn ids(runs: &[RunId]) -> Vec<String> {
     runs.iter().map(RunId::to_string).collect()
 }
 
-/// Whether a run ran what it set out to: finished, not interrupted, and not signalled INCOMPLETE.
+/// Whether a run ran what it set out to: finished, not interrupted, able to record what it saw, and not
+/// signalled INCOMPLETE.
+///
+/// Truncation is read from the run, not from its signals: a run past the cap records the INCOMPLETE only when
+/// it had a baseline to say it against, and a refused comparison keeps no signals at all. Either way it
+/// couldn't tell its behaviors apart.
 pub fn complete(run: &RunRecord, signals: &[StoredSignal]) -> bool {
     run.end.is_some()
         && run.interrupted.is_none()
+        && run.overflow_events == 0
         && !signals
             .iter()
             .any(|s| s.signal.kind == SignalKind::Incomplete)
