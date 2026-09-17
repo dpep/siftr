@@ -171,10 +171,17 @@ it was there.
 
 2. **Keep treating a flood as a failed comparison, upstream.** **Ship it** — the cap is
    already in 0.1.5 and, on this corpus, it is what turns four unusable runs into an
-   honest refusal. Add `dogfood-system-logs.md` recommendation 3 (refuse to baseline a
-   source whose singleton rate says it won't baseline) rather than trying to make
+   honest refusal. That is the right layer for a flood, rather than trying to make
    thousands of signals presentable by grouping them. Nothing in this measurement
    changes those thresholds.
+
+   **Not** by singleton rate, though: `dogfood-system-logs.md` recommendation 3 proposed
+   refusing a source whose first-run singleton rate is high, and that was measured and
+   **rejected** — real RSpec runs score 72–89% singleton (the demo suite 72–77%), *above*
+   the 68% unified-log corpus the threshold was meant to reject, because a `test.example`
+   occurs once per run by construction while recurring perfectly across runs. The rate is
+   not even monotone in what it predicts: 100% singleton produced 0 signals forever, 96%
+   produced 11, 68% produced 8,564. Recommendation 3 is closed, not pending.
 
 3. **Group NEW/DISAPPEARED behaviors that share an identity, as the spec-file collapse
    already does for DISAPPEARED.** **Needs evidence**, but it is where the evidence
