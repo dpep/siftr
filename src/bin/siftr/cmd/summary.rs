@@ -68,8 +68,8 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         if run.overflow_events > 0 {
             writeln!(
                 w,
-                "note: {} events of behaviors past the {}-behavior cap count as one overflow behavior",
-                run.overflow_events,
+                "note: {} of behaviors past the {}-behavior cap, counted as one overflow behavior",
+                plural(run.overflow_events, "event"),
                 siftr::aggregate::MAX_BEHAVIORS
             )?;
         }

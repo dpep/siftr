@@ -495,8 +495,8 @@ impl Changes<'_> {
         if self.run.overflow_events > 0 {
             writeln!(
                 w,
-                "  note: {} events of behaviors past the {MAX_BEHAVIORS}-behavior cap were counted but not told apart",
-                self.run.overflow_events
+                "  note: {} of behaviors past the {MAX_BEHAVIORS}-behavior cap, counted but not told apart",
+                plural(self.run.overflow_events, "event")
             )?;
         }
         for change in open.iter().take(SHOWN_GROUPS) {
