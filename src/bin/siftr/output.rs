@@ -28,6 +28,8 @@
 //!   `baseline_runs`, `skipped_runs` [{`run`,
 //!   `reason` (no_test_summary|errors_outside_examples|stopped|subset)}] (recent runs of the context left out of
 //!   the baseline because they didn't run what this run did, most recent first), `changes` (code-level groups),
+//!   `groups_total` and `signals_total` (how many of each the run has, whatever this document shows: `changes`
+//!   bounds the groups and signals listed, so `groups_total` over the length of `groups` is what was left out),
 //!   `groups` [{`rank`, `setup` (changed outside every example), `headline` (signal id), `signals` (ids),
 //!   `disappeared_examples` (null, or {`file`, `examples`} when the group is DISAPPEARED examples of one spec
 //!   file collapsed together)}], `signals` (rank order), `open_signals` (signals of earlier runs in
@@ -315,8 +317,32 @@ pub struct Changes<'a> {
 }
 
 impl Changes<'_> {
+    /// The whole report: every change the run raised.
     pub fn json(&self) -> Value {
+        self.document(None)
+    }
+
+    /// At most `limit` changes, in rank order. `groups_total` and `signals_total` still count them all, so a
+    /// consumer can always tell a slice from the whole.
+    pub fn json_limited(&self, limit: Option<usize>) -> Value {
+        self.document(limit)
+    }
+
+    fn document(&self, limit: Option<usize>) -> Value {
         let groups = groups(self.signals);
+        // Unlimited keeps the stored order of `signals`; limited lists the shown groups' own members, so
+        // `signals` can never disagree with `groups`.
+        let (shown, signals): (&[Group<'_>], Vec<&StoredSignal>) = match limit {
+            None => (&groups, self.signals.iter().collect()),
+            Some(n) => {
+                let shown = &groups[..n.min(groups.len())];
+                let signals = shown
+                    .iter()
+                    .flat_map(|g| g.members.iter().copied())
+                    .collect();
+                (shown, signals)
+            }
+        };
         json!({
             "run": run_json(self.run, complete(self.run, self.signals)),
             "behaviors": self.behaviors,
@@ -326,8 +352,11 @@ impl Changes<'_> {
                 "run": run.to_string(),
                 "reason": why.as_str(),
             })).collect::<Vec<_>>(),
+            // The run's own counts, never the shown ones: the headline number must not shrink with -n.
             "changes": groups.iter().filter(|g| !g.setup).count(),
-            "groups": groups.iter().map(|g| json!({
+            "groups_total": groups.len(),
+            "signals_total": self.signals.len(),
+            "groups": shown.iter().map(|g| json!({
                 "rank": g.rank,
                 "setup": g.setup,
                 "headline": g.headline().id.to_string(),
@@ -335,7 +364,7 @@ impl Changes<'_> {
                 "disappeared_examples": disappeared_examples(g.members.iter().map(|s| (&s.signal, &s.behavior)))
                     .map(|d| json!({"file": d.file, "examples": d.examples})),
             })).collect::<Vec<_>>(),
-            "signals": self.signals.iter().map(signal_json).collect::<Vec<_>>(),
+            "signals": signals.into_iter().map(signal_json).collect::<Vec<_>>(),
             "open_signals": self.open_signals.iter().map(signal_json).collect::<Vec<_>>(),
         })
     }
@@ -349,13 +378,25 @@ impl Changes<'_> {
             "baseline_runs": [],
             "skipped_runs": [],
             "changes": 0,
+            "groups_total": 0,
+            "signals_total": 0,
             "groups": [],
             "signals": [],
             "open_signals": [],
         })
     }
 
+    /// The whole report.
     pub fn human(&self, w: &mut dyn Write) -> io::Result<()> {
+        self.render(w, None)
+    }
+
+    /// At most `limit` changes, the rest still counted in the line that says how many were left out.
+    pub fn human_limited(&self, w: &mut dyn Write, limit: Option<usize>) -> io::Result<()> {
+        self.render(w, limit)
+    }
+
+    fn render(&self, w: &mut dyn Write, limit: Option<usize>) -> io::Result<()> {
         let groups = groups(self.signals);
         let (setup, code): (Vec<&Group<'_>>, Vec<&Group<'_>>) =
             groups.iter().partition(|g| g.setup);
@@ -420,14 +461,17 @@ impl Changes<'_> {
             }
             writeln!(w)?;
         }
-        for group in code.iter().take(SHOWN_GROUPS) {
+        // `-n` says how many changes to read; without it the report shows its usual few. Either way the line
+        // below counts the rest, and `-j` without `-n` is still the whole report.
+        let shown = limit.unwrap_or(SHOWN_GROUPS);
+        for group in code.iter().take(shown) {
             group_lines(w, group)?;
         }
-        if code.len() > SHOWN_GROUPS {
+        if code.len() > shown {
             writeln!(
                 w,
                 "  … {}, ranked lower: siftr changes {run} -j",
-                plural((code.len() - SHOWN_GROUPS) as u64, "more change")
+                plural((code.len() - shown) as u64, "more change")
             )?;
         }
         for group in setup {
@@ -875,14 +919,31 @@ pub fn exception(event: &str) -> Option<Vec<String>> {
 
 /// The signals a changes output shows: all of them as JSON; for a person, only what [`Changes::human`] prints.
 pub fn surfaced(signals: &[StoredSignal], json: bool) -> Vec<&StoredSignal> {
+    surfaced_limited(signals, json, None)
+}
+
+/// As [`surfaced`], for a report bounded by `-n`. Feedback says what was *shown*, so a signal a limit left out
+/// was not surfaced, in either interface.
+pub fn surfaced_limited(
+    signals: &[StoredSignal],
+    json: bool,
+    limit: Option<usize>,
+) -> Vec<&StoredSignal> {
     if json {
-        return signals.iter().collect();
+        return match limit {
+            None => signals.iter().collect(),
+            Some(n) => groups(signals)
+                .into_iter()
+                .take(n)
+                .flat_map(|g| g.members)
+                .collect(),
+        };
     }
     let (setup, code): (Vec<Group<'_>>, Vec<Group<'_>>) =
         groups(signals).into_iter().partition(|g| g.setup);
     // As `human` prints them: the first code groups in full, and each setup group by its headline's id.
     code.into_iter()
-        .take(SHOWN_GROUPS)
+        .take(limit.unwrap_or(SHOWN_GROUPS))
         .flat_map(|g| g.members)
         .chain(setup.into_iter().map(|g| g.members[0]))
         .collect()

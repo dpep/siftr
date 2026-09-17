@@ -58,6 +58,7 @@ These appear inside several commands' documents.
   "lines": 246,
   "overflow_events": 0,
   "interrupted": null,
+  "uncompared": null,
   "complete": true
 }
 ```
@@ -66,6 +67,14 @@ These appear inside several commands' documents.
 and never becomes a baseline. `complete` is false when the run is unfinished,
 interrupted, or signalled INCOMPLETE — it didn't run what its baseline runs did,
 so its changes don't mean what a whole run's do.
+
+`uncompared` is null for a run that was compared. Otherwise it is how many
+changes the comparison produced when that was past `signal::MAX_CHANGES` (1000),
+in which case **none were recorded**: that many changes is a statement that the
+behaviors don't recur, not a set of findings. Such a run is still `complete` —
+its behaviors, exemplars and capture are kept, and it baselines normally. It has
+no verdict, so it also reports no `open_signals`: judging those would mean
+re-running the comparison siftr just refused.
 
 ### `behavior`
 
@@ -154,6 +163,8 @@ An object. All three emit the same document.
   "baseline_runs": ["r4", "r3", "r2", "r1"],
   "skipped_runs": [],
   "changes": 1,
+  "groups_total": 1,
+  "signals_total": 1,
   "groups": [ { "rank": 1, "setup": false, "headline": "s5", "signals": ["s5"], "disappeared_examples": null } ],
   "signals": [ { "…": "signal objects, rank order" } ],
   "open_signals": []
@@ -162,10 +173,16 @@ An object. All three emit the same document.
 
 - `changes` is the number of code-level groups — groups with `setup: true`
   (the environment or suite hooks) are excluded from it but still listed.
-- `signals` is **every** signal, unbounded; `groups` groups them. There is no
-  limit flag and no total field, so on a pathological run this array can hold
-  thousands of entries. The human report shows the top 3 groups and points at
-  `-j` for the rest.
+- `groups_total` and `signals_total` count every group and signal the run
+  raised, whatever this document lists. `changes -n N` lists at most N groups
+  (highest-ranked first) and the signals those groups name, so
+  **`groups_total` greater than `groups | length` is what a limit left out.**
+  `changes` and both totals are the run's own numbers and never shrink with
+  `-n`. Without `-n` the document is complete, and `run -j` and `ingest -j`
+  always are.
+- A run with `uncompared` set recorded no signals at all: `signals`, `groups`
+  and `open_signals` are empty and `signals_total` is 0, while
+  `run.uncompared` says how many changes were refused.
 - `skipped_runs` is `[{run, reason}]` with `reason` one of `no_test_summary`,
   `errors_outside_examples`, `stopped`, `subset`: recent runs left out of the
   baseline because they didn't run what this run did.
@@ -423,9 +440,14 @@ null
 ```
 
 Null means *this command cannot say*, not "no streams". `streams` is what
-arrived during the recording, so only the recording knows it; `changes` reads the
-run back from the store. For a run's provenance after the fact, use
-`history --sources`, which is stored per run.
+**arrived**: a stream opens on its first byte, so a stream that stayed empty is
+not listed, and only the recording ever knows that. The store keeps what the run
+**read** — every source it listened to, empty or not — which is a different set
+and is `history --sources`. In the run above, `streams` is `["stdout"]` while
+`history --sources` reports `stdout`, `stderr` and `rusage`: stderr was read and
+produced nothing. So `changes` reports null rather than answering the question it
+can answer under the name of the one it can't. For a run's provenance after the
+fact, use `history --sources`.
 
 **"What siftr can read" and "what a run read" are different questions.**
 `siftr sources` is prospective and configuration-shaped; `history --sources` is
@@ -437,11 +459,13 @@ and `applies: true` and still feed a run nothing, in which case it appears in
 `attribution: null`, `database: null` and `unknown_reason` all mean "no answer
 available", never "the answer is none".
 
-**`-n` truncates silently except in `summary`.** `summary` carries
-`behaviors_total` beside its limited array. `history`, `history --signals`,
-`history --sources` and `evidence` carry no total, so a limited array cannot be
-distinguished from a complete one. `changes` has no limit at all and emits every
-signal.
+**`-n` truncates silently in most commands.** `changes` and `summary` carry
+totals beside their limited arrays (`groups_total`/`signals_total`,
+`behaviors_total`), so a slice is always detectable — and `changes -n` has no
+default, so its document is complete unless you asked otherwise. `history`,
+`history --signals`, `history --sources` and `evidence` carry no total and do
+default to a limit, so for those a limited array cannot be distinguished from a
+complete one.
 
 **Counting changes vs signals.** `changes` (the number) counts code-level
 groups; `signals` counts signals. A single N+1 is one change and four signals.

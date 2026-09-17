@@ -19,6 +19,12 @@ pub struct Args {
     /// The latest run of this context, as `siftr history` shows it (e.g. the `ingest --context` name)
     #[arg(long, value_name = "NAME", conflicts_with = "run")]
     context: Option<String>,
+
+    /// How many changes to show, highest-ranked first [default: all of them]
+    // No default, unlike `summary -n`: this report's completeness is load-bearing, and its own `-j` hint
+    // promises the rest. `groups_total` and `signals_total` say what a limit left out.
+    #[arg(short = 'n', long)]
+    limit: Option<usize>,
 }
 
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
@@ -47,15 +53,21 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     let changes = Changes {
         run: &run,
         behaviors: store.behavior_count(run.id)?,
-        // The store doesn't hold what a run captured, so a run read back from it can't say.
+        // A stream opens on its first byte, so what *arrived* is knowable only while recording. The store
+        // keeps what the run *read*, which is a different set (a source can be read and stay empty) and is
+        // `siftr history --sources`; answering with it here would put that under a name that means arrived.
         streams: None,
         baseline_runs: &baseline_runs,
         skipped_runs: &skipped,
         signals: &signals,
         open_signals: &open,
     };
-    output::emit(globals.json, || changes.json(), |w| changes.human(w))?;
-    let shown = output::surfaced(&signals, globals.json)
+    output::emit(
+        globals.json,
+        || changes.json_limited(args.limit),
+        |w| changes.human_limited(w, args.limit),
+    )?;
+    let shown = output::surfaced_limited(&signals, globals.json, args.limit)
         .into_iter()
         .chain(output::reminded(&open, globals.json))
         .collect();
