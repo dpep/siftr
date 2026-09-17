@@ -7,9 +7,11 @@ use std::process::ExitCode;
 use anyhow::Result;
 use serde_json::{Value, json};
 use siftr::aggregate::RunStats;
+use siftr::analyze::RunSource;
 use siftr::baseline::Baseline;
 use siftr::behavior::BehaviorId;
 use siftr::context::Context;
+use siftr::observation::Stream;
 use siftr::signal::{Signal, SignalKind, detect};
 use siftr::store::{Feedback, FeedbackKind, Pruned, RunId, RunRecord, Store, StoredSignal};
 
@@ -32,6 +34,10 @@ pub struct Args {
     /// These runs' signals instead, each with what became of it: open, resolved, recurred, or unknown
     #[arg(long)]
     signals: bool,
+
+    /// What each of these runs read instead: the sources it recorded, or that it recorded none
+    #[arg(long, conflicts_with = "signals")]
+    sources: bool,
 }
 
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
@@ -51,6 +57,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     }
     if args.signals {
         return signals(&store, &runs, globals);
+    }
+    if args.sources {
+        return sources(&store, &runs, project.as_str(), globals);
     }
     // (code-level changes, signals, complete) per run.
     let counts = runs
@@ -114,6 +123,65 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         }
     })?;
     Ok(found(!runs.is_empty()))
+}
+
+/// What each run recorded reading, newest first. A run that recorded none can't say what it read — `ingest`
+/// replays a capture rather than choosing sources, and neither did siftr before it kept them — so that reads
+/// as unknown (`null`, `not recorded`) rather than as having read nothing.
+fn sources(
+    store: &Store,
+    runs: &[RunRecord],
+    project: &str,
+    globals: &Globals,
+) -> Result<ExitCode> {
+    let rows: Vec<(&RunRecord, Vec<RunSource>)> = runs
+        .iter()
+        .map(|run| Ok((run, store.run_sources(run.id)?)))
+        .collect::<Result<_>>()?;
+
+    let as_json = || -> Value {
+        rows.iter()
+            .map(|(run, sources)| {
+                let listed = (!sources.is_empty()).then(|| {
+                    sources
+                        .iter()
+                        .map(|source| {
+                            json!({
+                                "name": source.name,
+                                "stream": source.stream.as_ref().map(Stream::to_string),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                });
+                json!({ "run": run.id.to_string(), "sources": listed })
+            })
+            .collect()
+    };
+    output::emit(globals.json, as_json, |w| {
+        writeln!(w, "runs in {project}, and what each read")?;
+        for (run, sources) in &rows {
+            let read = match sources.is_empty() {
+                true => "not recorded".to_owned(),
+                false => sources
+                    .iter()
+                    .map(|source| source.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            };
+            writeln!(
+                w,
+                "  {:<5} {:>8}  {read:<34}  {}",
+                run.id.to_string(),
+                age(run.started_at),
+                printable(&run.command, 60)
+            )?;
+        }
+        match rows.first() {
+            Some((run, _)) => writeln!(w, "next: siftr summary {}", run.id),
+            None => writeln!(w, "next: siftr run -- CMD"),
+        }
+    })?;
+    Ok(found(!rows.is_empty()))
 }
 
 fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitCode> {
