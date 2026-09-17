@@ -247,7 +247,7 @@ pub fn still_open(
         .iter()
         .any(|s| s.signal.kind == SignalKind::Incomplete);
     // Nor can a run whose comparison was refused: the judgement below re-runs the rules on this run's stats,
-    // which is the comparison that produced too many changes to report, and nearly everything fires in it.
+    // which is the comparison that produced too many signals to report, and nearly everything fires in it.
     // Reminding from it would surface as fact what siftr just declined to say.
     if run.interrupted.is_some() || run.end.is_none() || incomplete || run.uncompared.is_some() {
         return Ok(Vec::new());
@@ -426,7 +426,7 @@ fn judge(
         if until.is_some_and(|until| record.id > until) {
             continue;
         }
-        // Nor has a run whose comparison was refused for producing too many changes.
+        // Nor has a run whose comparison was refused for producing too many signals.
         if record.uncompared.is_some() {
             continue;
         }

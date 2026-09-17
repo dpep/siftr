@@ -68,7 +68,7 @@ impl Store {
         self.finish(run, finished, None, None)
     }
 
-    /// Records a run whose comparison produced `changes` changes, more than [`crate::signal::MAX_CHANGES`], so
+    /// Records a run whose comparison produced `signals` signals, more than [`crate::signal::MAX_SIGNALS`], so
     /// none of them are kept: that many is a statement that its behaviors don't recur rather than a set of
     /// findings. Everything else is a normal finished run — its evidence stays, and it baselines like any other.
     pub fn finish_run_uncompared(
@@ -77,7 +77,7 @@ impl Store {
         end: RunEnd,
         analysis: &Analysis,
         baseline_runs: &[RunId],
-        changes: u64,
+        signals: u64,
     ) -> Result<()> {
         let finished = Finished {
             end,
@@ -85,7 +85,7 @@ impl Store {
             baseline_runs,
             signals: &[],
         };
-        self.finish(run, &finished, None, Some(changes))
+        self.finish(run, &finished, None, Some(signals))
     }
 
     /// Records what an interrupted run saw, as evidence only: no baseline, no signals, and it never

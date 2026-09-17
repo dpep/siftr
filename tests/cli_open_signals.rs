@@ -271,7 +271,7 @@ fn a_truncated_later_run_does_not_resolve_an_earlier_disappearance() {
     assert_eq!(
         truncated["run"]["uncompared"],
         Value::Null,
-        "truncated, not refused for producing too many changes"
+        "truncated, not refused for producing too many signals"
     );
 
     let outcomes = sandbox.json(&["history", "--signals", "-j"]);

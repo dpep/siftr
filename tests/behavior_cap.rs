@@ -17,7 +17,7 @@ use siftr::aggregate::{MAX_BEHAVIORS, RunStats};
 use siftr::analyze::{Analysis, Analyzer};
 use siftr::baseline::Baseline;
 use siftr::observation::{LineSplitter, Stream};
-use siftr::signal::{MAX_CHANGES, SignalKind, detect};
+use siftr::signal::{MAX_SIGNALS, SignalKind, detect};
 use tempfile::TempDir;
 
 /// Distinct templates emitted before the core, enough to fill the cap on their own.
@@ -267,7 +267,7 @@ fn a_truncated_run_whose_changes_were_refused_is_not_complete() {
     assert!(
         flooded["run"]["uncompared"]
             .as_u64()
-            .is_some_and(|signals| signals as usize > MAX_CHANGES),
+            .is_some_and(|signals| signals as usize > MAX_SIGNALS),
         "the comparison was refused for producing too many signals: {flooded}"
     );
     assert_eq!(

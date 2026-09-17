@@ -8,9 +8,9 @@
 //!   its counts are still exact — and it reports INCOMPLETE with measure `events_past_cap` whenever it had a
 //!   baseline to say that against), `interrupted`
 //!   (the signal number, or null; interrupted runs are never compared or used as a baseline), `uncompared` (how
-//!   many changes the comparison produced when that was past `signal::MAX_CHANGES`, so none were recorded; null
-//!   when the run was compared. Such a run is complete unless it was truncated too: its evidence is kept and it
-//!   baselines normally),
+//!   many *signals* the comparison produced when that was past `signal::MAX_SIGNALS`, so no changes were
+//!   recorded; null when the run was compared. Such a run is complete unless it was truncated too: its evidence
+//!   is kept and it baselines normally),
 //!   `complete` (false when the run is unfinished, interrupted, truncated past the behavior cap, or signalled
 //!   INCOMPLETE: it didn't run what its baseline runs did, or couldn't record what it saw).
 //! - behavior: `id` (16 hex), `kind` (test.example|test.summary|db.query|http.request|exception|log|run.resources,
@@ -416,13 +416,15 @@ impl Changes<'_> {
                 w,
                 "{run}: interrupted by signal {signal}; kept as evidence, not compared, never a baseline"
             )?;
-        } else if let Some(changes) = self.run.uncompared {
+        } else if let Some(signals) = self.run.uncompared {
+            // Signals, not changes: the threshold counts the raw judgements, which group into fewer changes.
             writeln!(
                 w,
-                "{run} vs {} ({}): {changes} changes, too many to be findings, so none were recorded; \
+                "{run} vs {} ({}): {}, too many to be findings, so no changes were recorded; \
                  this run's behaviors and lines are kept as evidence",
                 plural(n, "baseline run"),
                 runs_label(self.baseline_runs, &named),
+                plural(signals, "signal"),
             )?;
         } else if n == 0 && !self.skipped_runs.is_empty() {
             writeln!(

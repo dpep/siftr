@@ -79,9 +79,12 @@ comparison was refused (below) recorded no signals at all. Its counts are still
 exact, so FREQUENCY, ERROR and LATENCY stand, and it still baselines normally.
 
 `uncompared` is null for a run that was compared. Otherwise it is how many
-changes the comparison produced when that was past `signal::MAX_CHANGES` (1000),
-in which case **none were recorded**: that many changes is a statement that the
-behaviors don't recur, not a set of findings. Such a run is still `complete`
+**signals** the comparison produced when that was past `signal::MAX_SIGNALS`
+(1000), in which case **no changes were recorded**: that many is a statement that
+the behaviors don't recur, not a set of findings. The threshold counts signals
+rather than the changes they group into, and the two differ by design — the N+1
+fixture is 4 signals in 1 change — so a run refused at 1017 signals might have
+shown far fewer changes. Such a run is still `complete`
 unless it was truncated as well — its behaviors, exemplars and capture are kept,
 and it baselines normally. It has no verdict, so it also reports no
 `open_signals`: judging those would mean re-running the comparison siftr just
@@ -195,7 +198,8 @@ An object. All three emit the same document.
   always are.
 - A run with `uncompared` set recorded no signals at all: `signals`, `groups`
   and `open_signals` are empty and `signals_total` is 0, while
-  `run.uncompared` says how many changes were refused.
+  `run.uncompared` says how many signals were refused — signals, not the
+  changes they would have grouped into.
 - `skipped_runs` is `[{run, reason}]` with `reason` one of `no_test_summary`,
   `errors_outside_examples`, `stopped`, `subset`: recent runs left out of the
   baseline because they didn't run what this run did.
