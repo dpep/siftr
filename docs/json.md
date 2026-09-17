@@ -150,6 +150,14 @@ that didn't fit under the cap, so this run's absences went unjudged).
 `between` or `teardown`. Signals that share a `group` are one change; the one
 with `headline: true` is its head.
 
+`confidence` says how much baseline backs the claim, not how much it matters.
+For every kind but `latency` it is exactly `(n+1)/(n+2)` over `baseline.runs` —
+a bijection of that count, carrying no effect size — so it ranks nothing and
+should not be thresholded. Rank on `tier`, and judge size from `current`
+against `baseline`. Human output prints the baseline run count in its place for
+this reason; the measurement behind that is
+[findings/confidence.md](findings/confidence.md).
+
 ### `exemplar`
 
 ```json
@@ -264,6 +272,7 @@ A **bare array**, and the element is *not* a signal — the signal is nested und
     "unknown_reason": null,
     "resolved_in": "r5",
     "recurred_in": null,
+    "recurrences": 0,
     "later_runs": 1,
     "investigated": false,
     "dismissed": false,
@@ -274,8 +283,42 @@ A **bare array**, and the element is *not* a signal — the signal is nested und
 
 `outcome` is `open`, `resolved`, `recurred` or `unknown`; when `unknown`,
 `unknown_reason` says why (today's rules no longer reproduce it, or retention
-pruned the runs the judgement needs, naming the setting). To count by kind, read
-`.[].signal.kind` — `.[].kind` does not exist:
+pruned the runs the judgement needs, naming the setting).
+
+**`outcome` is the latest verdict, and the two `*_in` fields are the first.**
+A change can be fixed and come back more than once, and the three fields answer
+different questions about that history:
+
+- `outcome` is where the change stands as of the newest run that gave a verdict.
+  One fixed, broken and fixed again reads `resolved`, not `recurred` —
+  `recurred` means it is there now.
+- `resolved_in` and `recurred_in` name only the **first** fix and the **first**
+  return. They do not move as later cycles happen.
+- `recurrences` counts every time the change came back after being resolved. It
+  is the only field that grows with a second cycle.
+
+So the fixed → broken → fixed → broken sequence below is `recurred` with
+`recurrences: 2`, while `resolved_in` and `recurred_in` still point at the first
+cycle. Fix it once more and `outcome` becomes `resolved` with `recurrences`
+still 2:
+
+```
+$ siftr history --signals -j | jq '[.[] | select(.signal.id=="s1")] | .[0]
+    | {outcome, resolved_in, recurred_in, recurrences, later_runs}'
+{
+  "outcome": "recurred",
+  "resolved_in": "r6",
+  "recurred_in": "r7",
+  "recurrences": 2,
+  "later_runs": 5
+}
+```
+
+To ask "is this change there now", test `outcome == "open" or outcome ==
+"recurred"`, or read a current run's `open_signals` — never `recurred_in`, which
+is set for a change that has since been fixed.
+
+To count by kind, read `.[].signal.kind` — `.[].kind` does not exist:
 
 ```
 $ siftr history --signals -j | jq -r '.[].signal.kind' | sort | uniq -c

@@ -16,7 +16,7 @@ $ SIFTR_DEMO_N_PLUS_ONE=1 siftr run -- bundle exec rspec
 10 examples, 0 failures, 1 pending
 
 r4 vs 3 baseline runs (r1 r2 r3): 1 change
-  s1   FREQUENCY   conf 0.80  GET UsersController#show 2xx  queries 3 → 10
+  s1   FREQUENCY   3 baseline runs  GET UsersController#show 2xx  queries 3 → 10
        supporting: FREQUENCY Comment Load SELECT "comments".* FROM "comments"…  count 1 → 9 (0 → 8 in this example) · FREQUENCY ./spec/requests/users_spec.rb # Users shows a us…  queries 28 → 35 · DISAPPEARED Comment Load SELECT "comments".* FROM "comments"…  gone: 1 → 0, in all 3 baseline runs
        in: ./spec/requests/users_spec.rb # Users shows a user with posts and comments
        evidence: 10 lines, and the baseline runs for what disappeared
@@ -24,6 +24,10 @@ next: siftr explain s1
 ```
 
 The suite passed, and the N+1 costs under a millisecond, so neither the exit code nor the timings would have caught it. RSpec's output (trimmed here) goes to stdout untouched. siftr's report goes to stderr.
+
+**A baseline is keyed on the project and the command as you typed it.** This is the one fact to take away before anything else: `bundle exec rspec` and `bundle exec rspec spec/models` are two different contexts with two separate baselines, and the second starts from nothing. Use the same command line every time, or siftr has nothing to compare against. (The project is the nearest directory with a manifest — `Gemfile`, `Cargo.toml`, `package.json` — and [Limitations](#limitations) has the corner cases.)
+
+**Practising? Point siftr at a throwaway data directory.** Every run you make becomes baseline for the next one, so replaying the examples below a few times genuinely changes what siftr says about them — that is the tool working, not a bug, and it means a directory you have been experimenting in will not reproduce them. `siftr --home /tmp/siftr-practice run -- …` (or `SIFTR_HOME=/tmp/siftr-practice`) keeps practice runs out of your real history, and `rm -rf /tmp/siftr-practice` is a clean slate.
 
 ## Install
 
@@ -68,7 +72,7 @@ A failing example, with `-q`:
 ```
 $ SIFTR_DEMO_FAIL=1 siftr run -q -- bundle exec rspec; echo "exit=$?"
 r6 vs 5 baseline runs (r1…r5): 1 change
-  s5   ERROR       conf 0.86  ./spec/models/user_spec.rb # User requires an email  failed with RSpec::Expectations::ExpectationNotMetError; passed in 5 of 5 baseline runs
+  s5   ERROR       5 baseline runs  ./spec/models/user_spec.rb # User requires an email  failed with RSpec::Expectations::ExpectationNotMetError; passed in 5 of 5 baseline runs
        evidence: 1 line
 next: siftr explain s5
 exit=1
@@ -86,6 +90,15 @@ next: siftr explain s1
 ```
 
 A disappearance is never reminded. A query or spec you removed on purpose isn't a regression left in place.
+
+A reminder is reported on every run the change is actually present in, including one where you fixed it in between and broke it again. It is bounded by the baseline window, though: it lasts while the run that raised the change is still among the last 10 runs of the context. Leave the N+1 in place and keep running, and that run eventually ages out — after which the regression is simply what siftr has always seen here:
+
+```
+r14 vs 10 baseline runs (r4…r13): no new changes · 1 still open
+r15 vs 10 baseline runs (r5…r14): 0 changes
+```
+
+Nothing was fixed between r14 and r15, and the N+1 is still there. This is the one case where `0 changes` doesn't mean "nothing is wrong", and it is the other reason to practise in a throwaway data directory.
 
 #### Unattended: cron, CI, git hooks
 
@@ -115,7 +128,7 @@ A run that skipped examples its baseline ran (a spec file failed to load, `--fai
 ```
 $ siftr run -q -- bundle exec rspec      # with an unclosed `RSpec.describe "broken" do` appended to a spec
 r7 (incomplete: 1 error outside examples) vs 6 baseline runs (r1…r6): 1 change
-  s6   INCOMPLETE  conf 0.88  ./spec/requests/users_spec.rb failed to load: SyntaxError: unexpected end-of-inp…  failed outside examples: 1 now, 0 in baseline runs
+  s6   INCOMPLETE  6 baseline runs  ./spec/requests/users_spec.rb failed to load: SyntaxError: unexpected end-of-inp…  failed outside examples: 1 now, 0 in baseline runs
        evidence: 1 line
 next: siftr explain s6
 ```
@@ -149,7 +162,7 @@ An error raised outside every example (a `raise` after a `describe` block, a sui
 ```
 $ SIFTR_DEMO_RAISE_AFTER=1 siftr run -q -- bundle exec rspec
 r9 vs 7 baseline runs (r1…r6 r8; skipped r7: ran 8 examples, 10 now): 1 change
-  s7   NEW         conf 0.89  ./spec/requests/users_spec.rb failed to load: SyntaxError: compile error  new: 1 now, in none of 7 baseline runs
+  s7   NEW         7 baseline runs  ./spec/requests/users_spec.rb failed to load: SyntaxError: compile error  new: 1 now, in none of 7 baseline runs
        evidence: 1 line
 next: siftr explain s7
 ```
@@ -159,13 +172,14 @@ next: siftr explain s7
 Its examples collapse into one change, which never outranks a real regression:
 
 ```
+$ siftr ingest --context hunt --dir fixtures/rspec_hunt/a20_warn1   # three times
 $ siftr ingest --context hunt --dir fixtures/rspec_hunt/a4_warn3
-r19 vs 3 baseline runs (r16 r17 r18): 2 changes
-  s10  FREQUENCY   conf 0.80  DEPRECATION: old api  count 1 → 3
+r4 vs 3 baseline runs (r1 r2 r3): 2 changes
+  s1   FREQUENCY   3 baseline runs  DEPRECATION: old api  count 1 → 3
        evidence: 3 lines
-  s11  DISAPPEARED conf 0.80  16 examples of ./spec/b_spec.rb  gone, in all 3 baseline runs
+  s2   DISAPPEARED 3 baseline runs  16 examples of ./spec/b_spec.rb  gone, in all 3 baseline runs
        evidence: in the baseline runs, not this one
-next: siftr explain s10
+next: siftr explain s1
 ```
 
 ### `siftr changes [RUN]`
@@ -215,18 +229,32 @@ next: siftr summary r4
 
 ### `siftr summary [RUN]`
 
-A run's top behaviors, by count (default) or `--by time`. `-n` limits rows (default 20).
+A run's top behaviors, by count (default) or `--by time`. `-n` limits rows (default 20). The two orders answer different questions, and on a Rails suite the default answers the less interesting one:
 
 ```
-$ siftr summary --by time -n 5
-r4: 253 lines, 46 behaviors, bundle exec rspec
+$ siftr summary r4 -n 5
+r4: 253 lines, 47 behaviors, bundle exec rspec
     COUNT ERRORS      P50      P95    TOTAL  BEHAVIOR
-        1      0   56.2ms   56.2ms   56.2ms  21991bc714  log  Finished in <duration> (files took <duration> to load)
-        1      0   56.2ms   56.2ms   56.2ms  332a3a42c0  test.summary  rspec
-        1      0   25.5ms   25.5ms   25.5ms  224151e20c  test.example  ./spec/requests/users_spec.rb # Users lists users
-        1      0   10.9ms   10.9ms   10.9ms  872cda219e  test.example  ./spec/requests/users_spec.rb # Users shows a user with posts and comments
+       55      0      0µs      0µs      0µs  3e0ff9b464  db.query  TRANSACTION SAVEPOINT active_record_<int>
+       55      0      0µs      0µs      0µs  dcb25f6085  db.query  TRANSACTION RELEASE SAVEPOINT active_record_<int>
+       32      0      0µs    100µs    1.5ms  3b6fe14cfe  db.query  Comment Create INSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?) RET…
+       17      0    100µs    100µs    1.4ms  1bc855df6d  db.query  Post Create INSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?) …
+       10      0      0µs      0µs      0µs  1b4ca5c07e  db.query  TRANSACTION ROLLBACK TRANSACTION
+next: siftr evidence 3e0ff9b464 --run r4
+```
+
+By count, a test suite is mostly transaction bookkeeping: `SAVEPOINT` and `RELEASE SAVEPOINT` take the top two rows at 55 each, and in this run the default's whole 20 rows hold **no test example at all**. Each example occurs exactly once, so the count-1 rows tie and are ordered by behavior id, which leaves the examples just past the cut. So use the default to ask "what does this run do most of", and **`--by time` to find a slow test**:
+
+```
+$ siftr summary r4 --by time -n 5
+r4: 253 lines, 47 behaviors, bundle exec rspec
+    COUNT ERRORS      P50      P95    TOTAL  BEHAVIOR
+        1      0   54.7ms   54.7ms   54.7ms  332a3a42c0  test.summary  rspec
+        1      0   54.7ms   54.7ms   54.7ms  21991bc714  log  Finished in <duration> (files took <duration> to load)
+        1      0     25ms     25ms     25ms  224151e20c  test.example  ./spec/requests/users_spec.rb # Users lists users
+        1      0   10.2ms   10.2ms   10.2ms  872cda219e  test.example  ./spec/requests/users_spec.rb # Users shows a user with posts and comments
         1      0     10ms     10ms     10ms  0b6cf2d542  http.request  GET UsersController#index 2xx
-next: siftr evidence 21991bc714 --run r4
+next: siftr evidence 332a3a42c0 --run r4
 ```
 
 ### `siftr history`
@@ -298,7 +326,7 @@ Records a file, or stdin, as a run's stdout, for output you already have. `--con
 $ siftr ingest --context demo --dir fixtures/rails_demo/baseline      # and baseline_2
 $ siftr ingest --context demo --dir fixtures/rails_demo/slow
 r15 vs 2 baseline runs (r13 r14): 1 change
-  s9   LATENCY     conf 0.57  ./spec/models/post_spec.rb # Post summarizes the body  5.37ms → 311ms
+  s9   LATENCY     2 baseline runs  ./spec/models/post_spec.rb # Post summarizes the body  5.37ms → 311ms
        evidence: 1 line
 next: siftr explain s9
 ```
@@ -441,20 +469,22 @@ Past those limits it still keeps a run that is recording, and whatever the lates
 ```
 $ siftr status
 data      ~/.local/share/siftr
-database  388 KB, schema 10
-captures  337 KB for 11 runs
-runs      11 runs of 1 command; oldest r1 39s ago, newest r11 0s ago
+database  104 KB, schema 12
+captures  32.3 KB for 1 run
+runs      1 run of 1 command; oldest r1 0s ago, newest r1 0s ago
 keep      stats of the last 100 runs of each command (default; set SIFTR_KEEP_RUNS)
           evidence, raw lines and captures, of the last 20 (default; set SIFTR_KEEP_EVIDENCE)
           nothing of a command not run for 30 days (default; set SIFTR_KEEP_DAYS)
 config    rails_log off (~/code/app/.siftr.toml)
           rspec on (default)
           rusage on (default)
-          files ~/code/app/.siftr.toml, ~/.config/siftr/config.toml (not read)
+          looked in ~/code/app/.siftr.toml, ~/.config/siftr/config.toml (nothing to read)
     RUNS  STATS  EVIDENCE  CAPTURES  NEWEST    COMMAND
-      11     11        11    337 KB  0s ago    bundle exec rspec
+       1      1         1   32.3 KB  0s ago    demo
 next: siftr history
 ```
+
+The `looked in` line is a search path, not a problem report. A path marked `(nothing to read)` is one siftr checked and found nothing usable at — nearly always because no file is there; a file that *is* there but isn't valid TOML warned on stderr when it was read. A file that set something carries no marker and is named again beside each source it set, as `~/code/app/.siftr.toml` is above.
 
 `siftr gc` prunes everything past the limits now, and vacuums the database once 25% of it is free. `siftr gc --dry-run` lists what it would remove.
 
@@ -482,9 +512,16 @@ Run the suite through siftr, read the first line of the report, and drill down o
 
 `skipped rN: …` inside the parentheses just says which recent runs were left out of the baseline, and why.
 
-3. For structure, use `siftr changes -j` (or `siftr run -j -- …`). The same order applies: if `run.complete` is false, fix the `incomplete` signal first. Stop when `changes` is 0, `open_signals` is empty and `baseline_runs` has 2 or more ids. Otherwise read `groups[0].headline`, then `open_signals`. A non-null `not_recorded` means the run wasn't recorded; rerun for a report.
+3. For structure, use `siftr changes -j` (or `siftr run -j -- …`). The same order applies: if `run.complete` is false, fix the `incomplete` signal first. The gate condition is three fields: `changes == 0`, `open_signals == []`, and `baseline_runs` with 2 or more ids. Test those, not `signals[0]` — on a clean run there is no first signal, and a trimmed document can hand you a `null` that reads as "no id" rather than failing. Otherwise read `groups[0].headline`, then `open_signals`. A non-null `not_recorded` means the run wasn't recorded; rerun for a report.
 4. With `-j`, exit 2 means `error.code` tells you what went wrong: `usage` (fix the arguments), `not_found` (the run, signal, behavior or context doesn't exist), `busy` (retry) or `failed`. Exit 1 means nothing was found, and you still get the command's normal document, empty (`run: null`; `[]` for `history`).
 5. Once you act, record it: `siftr ack <signal> -m '…'` when you're fixing it, `siftr dismiss <signal> -m '…'` when it's intended. `siftr history --signals` shows what became of each.
+
+**`open_signals` versus `history --signals`.** They answer different questions, and a gate wants the first:
+
+- **`open_signals`, in the current run's document, is what is wrong right now.** It lists changes from earlier runs that this run still shows, judged against each signal's own original baseline rather than the rolling one — which is why a regression the baseline has absorbed still appears. A change that was fixed and came back is listed again on every run it is present in. This is the field to gate on, together with `changes`.
+- **`history --signals` is the story of each signal, not the state of the suite.** `outcome` is its latest verdict, `recurrences` how many times it came back, `resolved_in` and `recurred_in` the first of each. Use it to report and to review, not to decide whether the tree is clean. Its fields are in [docs/json.md](docs/json.md).
+
+The one thing neither will tell you is a regression that has outlived its baseline window: after about 10 further runs of the same context an unfixed change stops being reported at all, because it has become what siftr has always seen here.
 
 The `-j` fields that matter (full schema: top of [`src/bin/siftr/output.rs`](src/bin/siftr/output.rs)):
 
@@ -496,7 +533,7 @@ The `-j` fields that matter (full schema: top of [`src/bin/siftr/output.rs`](src
   - `kind`: `error`, `new`, `disappeared`, `frequency`, `latency` or `incomplete`.
   - `measure`: `count`, `queries`, `duration_ms`, `failed`, `examples` or `errors_outside_of_examples`.
   - `current`, compared with `baseline` {`runs`, `present_in`, `median`, `min`, `max`, `failures`}.
-  - `confidence` in [0, 1): how likely it is that this isn't noise. It grows with the number of baseline runs.
+  - `confidence` in [0, 1): how much baseline backs the claim, **not** how much it matters. For every kind but LATENCY it is exactly `(n+1)/(n+2)` over `baseline.runs`, so it carries no effect size and discriminates nothing — rank on `tier` and read `current` against `baseline`. The human report prints the run count itself (`3 baseline runs`) for that reason; the measurement is in [docs/findings/confidence.md](docs/findings/confidence.md).
   - `tier`: 1 error through 5 outside examples.
   - `behavior` {`id`, `kind`, `template`}: what changed. Pass `id` to `evidence`.
   - `attribution.scope`: the test example it happened in, or null outside examples. `attribution.phase`: `setup`, `example`, `between` or `teardown` (before the first example, in one, between two, after the last). `attribution.setup` is true only for `setup`.
@@ -504,7 +541,7 @@ The `-j` fields that matter (full schema: top of [`src/bin/siftr/output.rs`](src
 - `open_signals[]`: signals from earlier runs that are still open and weren't raised again, in the same shape as `signals[]`.
 - `not_recorded` (`run -j` only): null, or {`code`, `message`} when the command ran but siftr couldn't record it.
 
-Trimmed with `jq '{run: {id: .run.id, complete: .run.complete}, changes, baseline_runs, skipped_runs, groups, signals: [.signals[0]], open_signals}'`, output unedited:
+Trimmed with `jq '{run: {id: .run.id, complete: .run.complete}, changes, baseline_runs, skipped_runs, groups, signals: (.signals[:1]), open_signals}'`, output unedited:
 
 ```json
 {
@@ -542,6 +579,7 @@ Trimmed with `jq '{run: {id: .run.id, complete: .run.complete}, changes, baselin
         "scope": {
           "id": "872cda219ee77788",
           "kind": "test.example",
+          "roles": [],
           "template": "./spec/requests/users_spec.rb # Users shows a user with posts and comments"
         },
         "setup": false
@@ -557,6 +595,7 @@ Trimmed with `jq '{run: {id: .run.id, complete: .run.complete}, changes, baselin
       "behavior": {
         "id": "f0353784155976cf",
         "kind": "http.request",
+        "roles": [],
         "template": "GET UsersController#show 2xx"
       },
       "confidence": 0.8,
@@ -572,6 +611,29 @@ Trimmed with `jq '{run: {id: .run.id, complete: .run.complete}, changes, baselin
       "tier": 2
     }
   ],
+  "open_signals": []
+}
+```
+
+Use `.signals[:1]`, not `[.signals[0]]`. On a run with no signals the slice yields `[]` while the index yields `[null]`, and a downstream `.signals[0].id` check then reads a null instead of failing — a gate built that way passes a broken build silently. The same recipe on the clean run that follows, output unedited:
+
+```json
+{
+  "run": {
+    "id": "r6",
+    "complete": true
+  },
+  "changes": 0,
+  "baseline_runs": [
+    "r5",
+    "r4",
+    "r3",
+    "r2",
+    "r1"
+  ],
+  "skipped_runs": [],
+  "groups": [],
+  "signals": [],
   "open_signals": []
 }
 ```
@@ -610,7 +672,7 @@ The thresholds come from measured noise and a backtest: [docs/findings/signals.m
 - **Rich capture is RSpec + Rails only.** Other commands get generic templated lines and their counts. parallel_tests, spring, `rake spec` and RSpec older than 3.13 are untested.
 - **LATENCY is blunt on purpose.** It catches a single example slowing down by at least 100ms and 4x. It misses 30ms → 90ms, and it misses +50% on a 1-second test.
 - **Not every number is a signal.** Measured noise says these would mostly cry wolf, so they aren't built: suite-duration LATENCY, per-query latency (the `(0.1ms)` in a log line), distribution drift, and setup-only changes (a cold database) as regressions.
-- **Context is the project plus the command line, as typed.** `bundle exec rspec spec/models/user_spec.rb:12` has its own baseline, separate from the full suite's. The project is the nearest directory with a manifest (`Gemfile`, `Cargo.toml`, `package.json`, …), looking no higher than the git root; with none, it's the working directory. Two apps with their own Gemfiles in one repo get separate baselines, but in a repository with no manifest every directory is its own project.
+- **Context is the project plus the command line, as typed** — the fact stated under [30 seconds](#30-seconds), with its corner cases. `bundle exec rspec spec/models/user_spec.rb:12` has its own baseline, separate from the full suite's. The project is the nearest directory with a manifest (`Gemfile`, `Cargo.toml`, `package.json`, …), looking no higher than the git root; with none, it's the working directory. Two apps with their own Gemfiles in one repo get separate baselines, but in a repository with no manifest every directory is its own project.
 - **Focus filters in code don't change the command line.** A run with `fit` or `focus: true` is compared with full runs: it reports INCOMPLETE, and later full runs leave it out of their baseline.
 - **Local only.** One SQLite file per data directory, no sharing between machines.
 
