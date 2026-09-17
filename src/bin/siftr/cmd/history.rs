@@ -203,6 +203,7 @@ fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitC
                     "unknown_reason": outcome.unknown_reason(),
                     "resolved_in": outcome.resolved_in.map(|run| run.to_string()),
                     "recurred_in": outcome.recurred_in.map(|run| run.to_string()),
+                    "recurrences": outcome.recurrences,
                     "later_runs": outcome.later_runs,
                     "investigated": outcome.investigated(),
                     "dismissed": outcome.dismissed(),
@@ -279,7 +280,7 @@ pub fn still_open(
             .collect();
         for (stored, outcome) in signals.into_iter().zip(outcomes) {
             // INCOMPLETE is about its own run: a later run doesn't leave it open.
-            if outcome.status() == "open"
+            if outcome.present_at(run.id)
                 && stored.signal.kind != SignalKind::Incomplete
                 && !dismissed.contains(&stored.signal.group)
                 && seen.insert(key(&stored.signal))
@@ -302,6 +303,13 @@ struct Outcome {
     later_runs: usize,
     resolved_in: Option<RunId>,
     recurred_in: Option<RunId>,
+    /// How many times the change came back after being resolved. `resolved_in` and `recurred_in` name only the
+    /// first of each, so a regression that cycles twice is otherwise unrepresentable.
+    recurrences: usize,
+    /// Whether [`Self::latest`] still fires the signal: the change is there as of the newest run judged.
+    firing: bool,
+    /// The newest later run that gave a verdict; `None` when none did.
+    latest: Option<RunId>,
     /// Feedback on the signal's behavior from its run until the run it resolved in.
     feedback: Vec<Feedback>,
 }
@@ -314,6 +322,9 @@ impl Outcome {
             later_runs: 0,
             resolved_in: None,
             recurred_in: None,
+            recurrences: 0,
+            firing: false,
+            latest: None,
             feedback: Vec::new(),
         }
     }
@@ -327,13 +338,23 @@ impl Outcome {
         }
     }
 
+    /// The latest verdict, not the first: a change that recurred and was fixed again reads as resolved, and one
+    /// that recurred is only "recurred" while it is actually there.
     fn status(&self) -> &'static str {
-        match (self.reproducible, self.resolved_in, self.recurred_in) {
+        match (self.reproducible, self.firing, self.resolved_in) {
             (false, _, _) => "unknown",
-            (true, _, Some(_)) => "recurred",
-            (true, Some(_), None) => "resolved",
-            (true, None, None) => "open",
+            (true, true, Some(_)) => "recurred",
+            (true, false, Some(_)) => "resolved",
+            // Never resolved, or no later run gave a verdict.
+            (true, _, None) => "open",
         }
+    }
+
+    /// Whether the change is there at `run`: never resolved, or resolved earlier and back again by `run`'s own
+    /// verdict. The live baseline absorbs a value it has already seen — a repeated regression sits inside its
+    /// own baseline range — so a recurrence fires nowhere else.
+    fn present_at(&self, run: RunId) -> bool {
+        self.status() == "open" || (self.firing && self.latest == Some(run))
     }
 
     fn investigated(&self) -> bool {
@@ -359,8 +380,19 @@ impl Outcome {
         };
         let mut text = match (self.reproducible, self.resolved_in, self.recurred_in) {
             (false, _, _) => format!("unknown: {}", self.unknown_reason().unwrap_or_default()),
+            // Naming only the first cycle froze the story: a change fixed and broken twice more read as
+            // "recurred in r6" forever, mentioning neither the later fix nor the later break.
             (true, Some(resolved), Some(again)) => {
-                format!("recurred in {again}, after resolving in {resolved} {how}")
+                match (self.recurrences, self.firing, self.latest) {
+                    (n, true, Some(latest)) if n > 1 => format!(
+                        "recurred {n} times, last in {latest}, after first resolving in {resolved} {how}"
+                    ),
+                    (n, false, Some(latest)) if n > 0 => format!(
+                        "resolved again in {latest}, after {} since {resolved} {how}",
+                        plural(n as u64, "recurrence")
+                    ),
+                    _ => format!("recurred in {again}, after resolving in {resolved} {how}"),
+                }
             }
             (true, Some(resolved), None) => format!("resolved in {resolved} {how}"),
             (true, None, _) => {
@@ -447,6 +479,9 @@ fn judge(
             let resolved = still.iter().position(|&fires| !fires);
             let recurred =
                 resolved.and_then(|at| still[at..].iter().position(|&fires| fires).map(|n| at + n));
+            // Each step from not-firing to firing is the change coming back. Counting every one is what makes a
+            // second cycle representable at all; two positions can express exactly one.
+            let recurrences = still.windows(2).filter(|step| !step[0] && step[1]).count();
             // Millisecond timestamps: feedback in the resolving run's first millisecond counts as before it.
             let until = resolved.map(|at| later[at].started_at);
             let feedback = store
@@ -460,6 +495,9 @@ fn judge(
                 later_runs: later.len(),
                 resolved_in: resolved.map(|at| later[at].id),
                 recurred_in: recurred.map(|at| later[at].id),
+                recurrences,
+                firing: still.last() == Some(&true),
+                latest: later.last().map(|record| record.id),
                 feedback,
             })
         })
