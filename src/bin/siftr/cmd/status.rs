@@ -209,13 +209,15 @@ fn configured(w: &mut dyn Write, config: &Config) -> io::Result<()> {
         .iter()
         .map(|file| match file.read {
             true => tilde(&file.path),
-            false => format!("{} (not read)", tilde(&file.path)),
+            // Absent, unreadable and unparsable all land here. "not read" read as "siftr ignored your
+            // config"; a file that is there and broken warned on stderr as it happened.
+            false => format!("{} (nothing to read)", tilde(&file.path)),
         })
         .collect();
     if files.is_empty() {
         return Ok(());
     }
-    writeln!(w, "{:<10}files {}", "", files.join(", "))
+    writeln!(w, "{:<10}looked in {}", "", files.join(", "))
 }
 
 /// Where a setting's value came from, as `status` shows it. `env` is the variable that sets it, when one does.
