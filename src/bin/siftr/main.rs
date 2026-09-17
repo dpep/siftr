@@ -35,6 +35,10 @@ Exit codes:
   dismiss  0 recorded, 2 error
   gc       0 done, 2 error
 
+Machine-readable output:
+  -j prints exactly one JSON document on stdout, on every command, empty results and errors included.
+  Every document's fields, and the shapes that differ between commands: docs/json.md
+
 What siftr stores (the command's own output always passes through unchanged):
   SIFTR_REDACT=secrets  default: credentials (tokens, keys, passwords, cookies) are masked before anything is stored
   SIFTR_REDACT=pii      also emails, public IPs and home directories in raw captures and kept lines

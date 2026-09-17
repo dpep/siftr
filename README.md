@@ -265,6 +265,20 @@ $ siftr history --signals
 next: siftr history
 ```
 
+`--sources` lists what each of those runs actually read. `siftr sources` says what siftr *can* read here, before running anything; this says what the recording observed, per run, afterwards. Two runs of the same command in the same directory, with `rails_log` switched off in `.siftr.toml` between r2 and r3:
+
+```
+$ siftr history --sources
+runs in /tmp/proj_run, and what each read
+  r4      8m ago  rusage stderr stdout                bin/rspec
+  r3      8m ago  rusage stderr stdout                bin/rspec
+  r2      8m ago  rails_log rusage stderr stdout      bin/rspec
+  r1      8m ago  rails_log rusage stderr stdout      bin/rspec
+next: siftr summary r4
+```
+
+A run that recorded no sources reads `not recorded`, which means siftr can't say what it read — not that it read nothing. `ingest` replays a capture rather than choosing sources, so an ingested run always reads that way.
+
 ### `siftr ack <SIGNAL>` and `siftr dismiss <SIGNAL>`
 
 `ack` marks a signal as being acted on; `dismiss` marks it as not worth acting on, which also stops its `still open:` reminder. `-m TEXT` says why.
@@ -346,11 +360,11 @@ sources for make test in ~/src/notes
 next: siftr run -- make test
 ```
 
-With no command it judges the directory alone, and says that's what it did. This is what siftr *can* read; to see what a run actually did read, use `streams` in `run -j` or `ingest -j`.
+With no command it judges the directory alone, and says that's what it did. This is what siftr *can* read; to see what a run actually did read, use `streams` in `run -j` or `ingest -j` as it happens, or `siftr history --sources` for any recorded run afterwards. The two can differ: a source can be on and apply and still feed a run nothing.
 
 ### Common flags and exit codes
 
-- `-j` prints exactly one JSON document on stdout, on every command. Empty results are still that command's document (exit 1). Errors, argument errors included, are `{"error": {"code", "message"}}` (exit 2), where `code` is `usage`, `not_found`, `busy` (another siftr held the data directory too long; retry) or `failed`.
+- `-j` prints exactly one JSON document on stdout, on every command. Empty results are still that command's document (exit 1). Errors, argument errors included, are `{"error": {"code", "message"}}` (exit 2), where `code` is `usage`, `not_found`, `busy` (another siftr held the data directory too long; retry) or `failed`. **[docs/json.md](docs/json.md) describes every command's document field by field**, including the shapes that differ between commands — three commands return a bare array, and `streams` is null in `changes` but a list in `run -j`.
 - `--home DIR` or `SIFTR_HOME`: the data directory. Default `$XDG_DATA_HOME/siftr`, else `~/.local/share/siftr`.
 - Every human report ends with a `next:` line: the command to drill down with.
 
