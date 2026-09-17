@@ -3,18 +3,22 @@
 //! JSON shapes (every number is already rounded where it was built):
 //!
 //! - run: `id`, `project`, `context`, `command`, `cwd`, `started_at_ms`, `finished`, `wall_ms`,
-//!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap), `interrupted`
+//!   `exit_code`, `lines`, `overflow_events` (events past the per-run behavior cap; above zero the run reports
+//!   INCOMPLETE with measure `events_past_cap` and raises nothing from its absences, since the cap admits a
+//!   behavior on the arrival order of its first occurrence — its counts are still exact), `interrupted`
 //!   (the signal number, or null; interrupted runs are never compared or used as a baseline), `uncompared` (how
 //!   many changes the comparison produced when that was past `signal::MAX_CHANGES`, so none were recorded; null
 //!   when the run was compared. Such a run is still complete: its evidence is kept and it baselines normally),
 //!   `complete` (false
-//!   when the run is unfinished, interrupted, or signalled INCOMPLETE: it didn't run what its baseline runs did).
+//!   when the run is unfinished, interrupted, or signalled INCOMPLETE: it didn't run what its baseline runs
+//!   did, or couldn't record what it saw).
 //! - behavior: `id` (16 hex), `kind` (test.example|test.summary|db.query|http.request|exception|log|run.resources,
 //!   the last being the one run-level behavior no signal rule judges), `template`, `roles` (what its paths are,
 //!   from their names and where they lie:
 //!   database|lock|manifest|log|test|source|view|config|dependency|temp; information, no signal reads them).
 //! - signal: `id`, `run`, `kind` (error|new|disappeared|frequency|latency|incomplete), `confidence` (number in
-//!   [0, 1)), `measure` (count|queries|duration_ms|failed|examples|errors_outside_of_examples), `current`,
+//!   [0, 1)), `measure` (count|queries|duration_ms|failed|examples|errors_outside_of_examples|events_past_cap,
+//!   the last only on INCOMPLETE: events of behaviors the cap cut, so this run's absences went unjudged), `current`,
 //!   `baseline` {`runs`, `present_in`, `median`, `min`, `max`, `failures`}, `exception`, `attribution`
 //!   {`scope` (the example's behavior, or null outside examples), `phase` (setup|example|between|teardown:
 //!   before the first example, in one, between two, after the last), `setup` (phase is setup), `current`,
@@ -628,7 +632,7 @@ pub fn change(stored: &StoredSignal) -> String {
         SignalKind::Incomplete => {
             use siftr::behavior::Kind;
             use siftr::interpret::rspec::summary::EXAMPLES;
-            use siftr::signal::measure::COUNT;
+            use siftr::signal::measure::{COUNT, PAST_CAP};
             match (s.measure.as_str(), stored.behavior.kind) {
                 (COUNT, Kind::Exception) => format!(
                     "failed outside examples: {} now, {} in baseline runs",
@@ -645,6 +649,11 @@ pub fn change(stored: &StoredSignal) -> String {
                     plural(s.current as u64, "example"),
                     at(b.min),
                     at(b.max)
+                ),
+                // The `note:` line already states the raw count, so this says what it cost the comparison.
+                (PAST_CAP, _) => format!(
+                    "{} past the cap, so this run's absences weren't judged",
+                    plural(s.current as u64, "event")
                 ),
                 (COUNT, _) => "no test summary: stopped before the reporter finished".to_owned(),
                 _ => format!(
@@ -716,6 +725,9 @@ pub fn rule(s: &Signal) -> String {
         SignalKind::Error => format!(
             "failed now; no baseline failure had the same exception; confidence 1 - (failures+1)/(n+2) = {c}"
         ),
+        SignalKind::Incomplete if s.measure == siftr::signal::measure::PAST_CAP => format!(
+            "the cap cut behaviors out of this run, so a behavior it lacks may simply not have fitted; confidence (n+1)/(n+2) = {c}"
+        ),
         SignalKind::Incomplete => format!(
             "didn't run what all {n} baseline runs did, so what it lacks isn't signalled; confidence (n+1)/(n+2) = {c}"
         ),
@@ -743,7 +755,7 @@ pub fn complete(run: &RunRecord, signals: &[StoredSignal]) -> bool {
 fn incomplete_reason(groups: &[Group<'_>], signals: &[StoredSignal]) -> Option<String> {
     use siftr::behavior::Kind;
     use siftr::interpret::rspec::summary::EXAMPLES;
-    use siftr::signal::measure::COUNT;
+    use siftr::signal::measure::{COUNT, PAST_CAP};
     let head = groups.first()?.headline();
     if head.signal.kind != SignalKind::Incomplete {
         return None;
@@ -766,6 +778,10 @@ fn incomplete_reason(groups: &[Group<'_>], signals: &[StoredSignal]) -> Option<S
             s.baseline
                 .median
                 .map_or_else(|| "?".to_owned(), |m| m.to_string())
+        ),
+        (PAST_CAP, _) => format!(
+            "{} past the {MAX_BEHAVIORS}-behavior cap",
+            plural(s.current as u64, "event")
         ),
         (COUNT, _) => "no test summary".to_owned(),
         _ => format!("{} {}", s.measure, s.current),

@@ -66,7 +66,12 @@ These appear inside several commands' documents.
 `interrupted` is the signal number, or null; an interrupted run is never compared
 and never becomes a baseline. `complete` is false when the run is unfinished,
 interrupted, or signalled INCOMPLETE — it didn't run what its baseline runs did,
-so its changes don't mean what a whole run's do.
+or couldn't record what it saw — so its changes don't mean what a whole run's do.
+`overflow_events` above zero is the second case: past the 20,000-behavior cap a
+behavior is admitted on the arrival order of its first occurrence, so such a run
+reports INCOMPLETE with measure `events_past_cap` and raises nothing from its
+absences — a behavior it lacks may simply not have fitted. Its counts are still
+exact, so FREQUENCY, ERROR and LATENCY stand, and it still baselines normally.
 
 `uncompared` is null for a run that was compared. Otherwise it is how many
 changes the comparison produced when that was past `signal::MAX_CHANGES` (1000),
@@ -128,7 +133,9 @@ percentiles are that occurrence's own duration, not a histogram estimate.
 
 `kind` is `error`, `new`, `disappeared`, `frequency`, `latency` or `incomplete`
 (lowercase in JSON; human output upper-cases it). `measure` is `count`,
-`queries`, `duration_ms`, `failed`, `examples` or `errors_outside_of_examples`.
+`queries`, `duration_ms`, `failed`, `examples`, `errors_outside_of_examples` or
+`events_past_cap` (only on `incomplete`: how many events belonged to behaviors
+that didn't fit under the cap, so this run's absences went unjudged).
 `attribution`, when not null, is `{scope, phase, setup, current, baseline}` where
 `scope` is the enclosing example's behavior and `phase` is `setup`, `example`,
 `between` or `teardown`. Signals that share a `group` are one change; the one
