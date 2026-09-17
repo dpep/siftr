@@ -61,13 +61,16 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             .filter_map(|(_, stats)| Resources::of(stats)),
     );
     let rounded = |v: f64| siftr::num::round_sig(v, 3);
-    // Absent is zero for counts; for other measures there is no number to show.
+    // Absent is zero for counts; for other measures there is no number to show. `events_past_cap` is
+    // the exception: it was never stored as a named measure, being the overflow behavior's own count,
+    // so read it the way the rule that raised it did rather than printing a dash per run.
     let per_run: Vec<(RunId, Option<f64>)> = runs
         .iter()
         .map(|(run, stats)| {
             let v = signal::value(stats, behavior.id, &s.measure);
             let v = match (v, s.measure.as_str()) {
                 (None, measure::COUNT) => Some(0.0),
+                (None, measure::PAST_CAP) => Some(stats.events_past_cap() as f64),
                 (v, _) => v.map(rounded),
             };
             (*run, v)

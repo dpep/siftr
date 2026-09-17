@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `siftr explain` shows a truncated run's event counts instead of a dash per run. `events_past_cap` is the overflow behavior's own count rather than a stored measure, so the values row had nothing to read and printed `events_past_cap r4 -  |  baseline r3 -  r2 -  r1 -` for a signal whose own summary line said 60.
+
 ## 0.1.5 — 2026-09-17
 
 - A run whose comparison produces more than 1000 signals records none of them and says so in one line, keeping its behaviors and captured lines as evidence. That many signals says a source's behaviors don't recur, rather than naming findings: pointed at the macOS unified log, siftr produced 8,952 signals from a single five-minute window. Such a run baselines normally, and stays complete unless it was also truncated; `uncompared` in `-j` carries the count that was refused. The bound is a backstop, not a tuning knob — the most a real RSpec suite produced here was 11.
