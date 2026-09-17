@@ -246,7 +246,10 @@ pub fn still_open(
     let incomplete = signals
         .iter()
         .any(|s| s.signal.kind == SignalKind::Incomplete);
-    if run.interrupted.is_some() || run.end.is_none() || incomplete {
+    // Nor can a run whose comparison was refused: the judgement below re-runs the rules on this run's stats,
+    // which is the comparison that produced too many changes to report, and nearly everything fires in it.
+    // Reminding from it would surface as fact what siftr just declined to say.
+    if run.interrupted.is_some() || run.end.is_none() || incomplete || run.uncompared.is_some() {
         return Ok(Vec::new());
     }
     let mut seen: HashSet<Key> = signals.iter().map(|s| key(&s.signal)).collect();

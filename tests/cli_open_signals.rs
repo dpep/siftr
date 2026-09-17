@@ -139,6 +139,70 @@ fn an_unfixed_regression_is_reminded_until_it_is_fixed_or_dismissed() {
     );
 }
 
+/// A run whose comparison produced more changes than siftr will report has no verdict, so it cannot say
+/// whether an earlier change is still there: judging it re-runs the very comparison that was refused, in which
+/// nearly everything fires. Reminding from it would present as fact what siftr just declined to say.
+#[test]
+fn a_run_whose_comparison_was_refused_reminds_of_nothing() {
+    let sandbox = Sandbox::new();
+    // Letters, not digits: the normalizer masks digit runs, which would fold these into one template.
+    let letters = |n: usize| {
+        let at = |k: usize| (b'a' + (k % 26) as u8) as char;
+        format!("{}{}{}", at(n / 676), at(n / 26), at(n))
+    };
+    let ingest = |name: &str, body: &str| -> Value {
+        let path = sandbox.project.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        sandbox.json(&["ingest", "-j", "--context", "c", path.to_str().unwrap()])
+    };
+    let base: String = (0..20)
+        .map(|i| format!("alpha item {} ready\n", letters(i)))
+        .collect();
+    let plus = format!("{base}widget zzz ready\n");
+
+    for _ in 0..3 {
+        ingest("base.log", &base);
+    }
+    // One change in r4, and it is still there in r5: the reminder works in this corpus.
+    assert_eq!(ingest("plus.log", &plus)["changes"], 1);
+    let again = ingest("plus.log", &plus);
+    assert_eq!(
+        open_ids(&again)
+            .first()
+            .map(|(id, run)| (id.as_str(), run.as_str())),
+        Some(("s1", "r4")),
+        "{again:#}"
+    );
+
+    // The same input again, plus a flood of templates that each occur once: the comparison is refused. Only
+    // that changes between r5 and r6, so it is the refusal that silences the reminder.
+    let flood: String = (0..1500)
+        .map(|i| format!("flood q{} ready\n", letters(i)))
+        .collect();
+    let refused = ingest("flood.log", &format!("{plus}{flood}"));
+    assert!(
+        refused["run"]["uncompared"].as_u64().is_some_and(|n| n > 0),
+        "the comparison was refused: {refused:#}"
+    );
+    assert_eq!(refused["signals"], json!([]), "so it recorded no changes");
+    assert_eq!(
+        refused["open_signals"],
+        json!([]),
+        "and it leaves nothing open: it has no verdict to give"
+    );
+
+    let human = sandbox.text(&["changes", "r6"]);
+    assert!(
+        !human.contains("still open"),
+        "a refused comparison reminds of nothing: {human}"
+    );
+    assert_eq!(
+        sandbox.siftr(&["changes", "r6"]).status.code(),
+        Some(1),
+        "nothing to look at, so nothing found"
+    );
+}
+
 /// `siftr run -q` is what a coding agent reads, so its summary carries the reminder too.
 #[test]
 fn the_run_summary_reminds_of_an_unfixed_regression() {
