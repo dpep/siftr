@@ -65,9 +65,15 @@ fn eleven_changes() -> Sandbox {
     sandbox
 }
 
-/// How many changes a human report printed: one `conf` per change shown.
+/// How many changes a human report printed: one headline line, opening with the signal's id, per change shown.
 fn shown(report: &str) -> usize {
-    report.lines().filter(|line| line.contains("conf ")).count()
+    report
+        .lines()
+        .filter(|line| {
+            line.strip_prefix("  s")
+                .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        })
+        .count()
 }
 
 fn len(document: &Value, field: &str) -> usize {

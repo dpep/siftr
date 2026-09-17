@@ -1,5 +1,5 @@
-//! Human output reads right: counts agree with their nouns, confidence has two decimals, a single timing is
-//! exact, and a failure shows its message.
+//! Human output reads right: counts agree with their nouns, a change names the baseline backing it rather
+//! than a confidence score, a single timing is exact, and a failure shows its message.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -57,7 +57,7 @@ fn a_failure_after_one_clean_run_reads_right() {
     let fail = sandbox.ingest("fail");
     assert!(
         fail.starts_with(
-            "r2 vs 1 baseline run (r1): 1 change; only ERROR can fire until there are 2 baseline runs\n  s1   ERROR       conf 0.67  "
+            "r2 vs 1 baseline run (r1): 1 change; only ERROR can fire until there are 2 baseline runs\n  s1   ERROR       1 baseline run "
         ),
         "{fail}"
     );

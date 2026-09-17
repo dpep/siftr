@@ -542,21 +542,21 @@ fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
     match &collapsed {
         Some(d) => writeln!(
             w,
-            "  {:<4} {:<11} conf {:.2}  {} examples of {}  gone, in all {} baseline runs",
+            "  {:<4} {:<11} {:<16} {} examples of {}  gone, in all {} baseline runs",
             // Store ids implement Display without honoring width, so pad the rendered string.
             head.id.to_string(),
             label(s.kind),
-            s.confidence,
+            backing(s),
             d.examples,
             d.file,
             s.baseline.runs,
         )?,
         None => writeln!(
             w,
-            "  {:<4} {:<11} conf {:.2}  {}  {}",
+            "  {:<4} {:<11} {:<16} {}  {}",
             head.id.to_string(),
             label(s.kind),
-            s.confidence,
+            backing(s),
             printable(&head.behavior.template, 80),
             change(head),
         )?,
@@ -600,6 +600,14 @@ fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
         ),
         (lines, false) => writeln!(w, "       evidence: {}", plural(lines, "line")),
     }
+}
+
+/// How much baseline backs a change, where the report used to print `conf`. For every kind but LATENCY the
+/// confidence is `(n+1)/(n+2)` exactly — a bijection of this count — so the count says strictly more and
+/// implies strictly less than a 0–1 score does (`docs/findings/confidence.md`). The number itself stays in
+/// `-j` and in `explain`, which prints the formula beside it.
+fn backing(s: &Signal) -> String {
+    plural(u64::from(s.baseline.runs), "baseline run")
 }
 
 /// Runs oldest to newest. A range never spans a run in `named` that isn't one of `runs`: `r1…r7` beside
