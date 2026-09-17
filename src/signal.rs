@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::aggregate::{BehaviorStats, Phase, RunStats, overflow_behavior};
+use crate::aggregate::{BehaviorStats, Phase, RunStats, capped, overflow_behavior};
 use crate::baseline::{Baseline, Ineligible};
 use crate::behavior::{Behavior, BehaviorId, Kind};
 use crate::interpret::rspec::{EVENTS_STREAM, summary};
@@ -97,6 +97,8 @@ pub mod measure {
     pub const DURATION_MS: &str = "duration_ms";
     /// Failed occurrences of an example.
     pub const FAILED: &str = "failed";
+    /// Events of behaviors past the per-run cap: what a truncated run counted but couldn't tell apart.
+    pub const PAST_CAP: &str = "events_past_cap";
 }
 
 /// NEW, DISAPPEARED, FREQUENCY and LATENCY need this many baseline runs; ERROR needs one.
@@ -190,6 +192,7 @@ pub fn detect<K>(current: &RunStats, baseline: &Baseline<'_, K>) -> Vec<Signal> 
             comparison.incomplete(why, &mut found);
         }
     }
+    comparison.truncated(&mut found);
     if baseline.partial() {
         // Every baseline run skipped existing examples: one that none of them ran was skipped, not written since.
         let unrun = |example: BehaviorId| runs.iter().all(|run| run.count(example) == 0);
@@ -362,9 +365,12 @@ impl<'a> Comparison<'a> {
         let queries = std::iter::once(current)
             .chain(runs.iter().copied())
             .map(|run| {
-                let complete = run
-                    .iter()
-                    .all(|b| b.behavior.kind != Kind::DbQuery || b.unattributed == 0);
+                // A truncated run's total is short by whatever query behaviors the cap cut, and nothing says
+                // which, so it can't be compared either.
+                let complete = run.events_past_cap() == 0
+                    && run
+                        .iter()
+                        .all(|b| b.behavior.kind != Kind::DbQuery || b.unattributed == 0);
                 complete.then(|| example_queries(run))
             })
             .collect();
@@ -432,6 +438,73 @@ impl<'a> Comparison<'a> {
         }
     }
 
+    /// Whether the per-run behavior cap accounts for `id` being absent from one side. Admission goes by the
+    /// arrival order of a behavior's first occurrence, so a truncated run's absences are not evidence: two
+    /// runs of the very same lines in a different order disagree about which behaviors exist, and that
+    /// disagreement reads as NEW and DISAPPEARED. Deliberately narrow, like [`Self::configuration_explains`]:
+    /// an admitted behavior's counts are exact, so only presence is in doubt, and only for a [`capped`] kind.
+    fn truncation_explains(&self, id: BehaviorId, kind: SignalKind) -> bool {
+        let Some(b) = self
+            .current
+            .get(id)
+            .or_else(|| self.runs.iter().find_map(|run| run.get(id)))
+        else {
+            return false;
+        };
+        if !capped(b.behavior.kind) {
+            return false;
+        }
+        match kind {
+            // Absent now, from a run that couldn't keep every behavior it saw.
+            SignalKind::Disappeared => self.current.events_past_cap() > 0,
+            // Absent from the baseline, where not one run could keep every behavior it saw.
+            SignalKind::New => self.runs.iter().all(|run| run.events_past_cap() > 0),
+            _ => false,
+        }
+    }
+
+    /// INCOMPLETE when the cap cut behaviors out of this run: it didn't record what its baseline runs did, so
+    /// its absences went unjudged. Said once, on the overflow behavior that counts what was cut — otherwise
+    /// the run reports "0 changes", which here would mean "I didn't look".
+    fn truncated(&self, found: &mut Vec<Found>) {
+        let events = self.current.events_past_cap();
+        if events == 0 {
+            return;
+        }
+        let Some(confidence) = rules::incomplete(self.n()) else {
+            return;
+        };
+        let then: Vec<f64> = self
+            .runs
+            .iter()
+            .map(|run| run.events_past_cap() as f64)
+            .collect();
+        found.push(Found {
+            signal: Signal {
+                kind: SignalKind::Incomplete,
+                behavior: overflow_behavior().id,
+                measure: measure::PAST_CAP.to_owned(),
+                current: events as f64,
+                baseline: BaselineNumbers {
+                    runs: then.len() as u32,
+                    present_in: then.iter().filter(|&&events| events > 0.0).count() as u32,
+                    median: median(&then),
+                    min: then.iter().copied().reduce(f64::min),
+                    max: then.iter().copied().reduce(f64::max),
+                    failures: None,
+                },
+                exception: None,
+                attribution: None,
+                confidence,
+                tier: tier(SignalKind::Incomplete, Class::Output),
+                group: 0,
+                headline: false,
+            },
+            key: Key::Incomplete,
+            gone: false,
+        });
+    }
+
     fn class(&self, id: BehaviorId) -> Option<Class> {
         let b = self
             .current
@@ -485,7 +558,7 @@ impl<'a> Comparison<'a> {
             };
             // A source switched on or off since the baseline accounts for this by itself: it is a change to
             // what siftr read, not to what the command did, and no verdict beats a confident wrong one.
-            if !self.configuration_explains(id, kind) {
+            if !self.configuration_explains(id, kind) && !self.truncation_explains(id, kind) {
                 self.push(
                     found,
                     id,

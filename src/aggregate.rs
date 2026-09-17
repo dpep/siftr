@@ -32,6 +32,19 @@ pub fn overflow_behavior() -> Behavior {
     Behavior::new(Kind::Log, OVERFLOW_TEMPLATE.as_bytes())
 }
 
+/// Whether [`MAX_BEHAVIORS`] can cut a behavior of `kind`. Examples and summaries are exempt: the suite
+/// bounds them, and they are what everything else is scoped to. So is the run's own resource usage —
+/// exactly one event, and losing it to a chatty run is losing the evidence that says the run was chatty.
+///
+/// A comparison reads this to know which of a truncated run's absences prove nothing, so it must stay the
+/// one statement of the rule [`Aggregator::record`] admits by.
+pub fn capped(kind: Kind) -> bool {
+    !matches!(
+        kind,
+        Kind::TestExample | Kind::TestSummary | Kind::Resources
+    )
+}
+
 /// A raw line kept as evidence, addressable in the run's capture by `stream` and `seq`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Exemplar {
@@ -202,15 +215,11 @@ impl Aggregator {
 
     pub fn record(&mut self, event: &Event<'_>) {
         let id = BehaviorId::of(event.kind, event.template.template);
-        // Examples and summaries are exempt: the suite bounds them, and they are what everything else is scoped to.
-        // So is the run's own resource usage: exactly one event, and losing it to a chatty run is losing the
-        // evidence that says the run was chatty.
+        // Decided at a behavior's first occurrence and never revisited, so an admitted behavior's counts are
+        // exact and only its absence is in doubt.
         let admitted = self.behaviors.contains_key(&id)
             || self.behaviors.len() < MAX_BEHAVIORS
-            || matches!(
-                event.kind,
-                Kind::TestExample | Kind::TestSummary | Kind::Resources
-            );
+            || !capped(event.kind);
         let overflow = self.overflow;
         let acc = if admitted {
             self.behaviors.entry(id).or_insert_with(|| {
@@ -482,6 +491,13 @@ impl RunStats {
     /// Occurrences of `id` in this run; zero when absent.
     pub fn count(&self, id: BehaviorId) -> u64 {
         self.get(id).map_or(0, |b| b.stats.count)
+    }
+
+    /// Events whose own behavior didn't fit under [`MAX_BEHAVIORS`], counted but not told apart. Above zero
+    /// this run's *absences* prove nothing: a [`capped`] behavior it lacks may have occurred and been cut,
+    /// since admission goes by the arrival order of a behavior's first occurrence.
+    pub fn events_past_cap(&self) -> u64 {
+        self.count(overflow_behavior().id)
     }
 
     /// Records which streams the run could read, so a comparison can tell a behavior that stopped happening

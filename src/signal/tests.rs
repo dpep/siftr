@@ -114,6 +114,13 @@ fn summary(examples: f64, expected: f64, errors: f64) -> B {
     s
 }
 
+/// A run that hit the behavior cap: `events` counted into the overflow behavior, not told apart.
+fn past_cap(events: u64) -> B {
+    let cut = b(Kind::Log, crate::aggregate::OVERFLOW_TEMPLATE).count(events);
+    assert_eq!(cut.id(), overflow_behavior().id, "the overflow behavior");
+    cut
+}
+
 fn baseline<'a>(current: &RunStats, runs: &'a [RunStats]) -> Baseline<'a, usize> {
     Baseline::from_runs(current, runs.iter().enumerate())
 }
@@ -555,6 +562,62 @@ fn an_incomplete_run_keeps_what_ran_and_names_what_did_not() {
             row(3, true, Frequency, "queries", 5.0, 0.8),
         ],
         "no DISAPPEARED for d, which didn't run, nor for stderr, which a partial run can lack"
+    );
+}
+
+/// A run past the behavior cap keeps a behavior on the arrival order of its first occurrence, so its
+/// absences are not evidence — but what it did keep is exact, and the exempt kinds are never cut.
+#[test]
+fn a_truncated_run_does_not_turn_its_absences_into_changes() {
+    use SignalKind::*;
+    let [kept, gone] = ["kept", "gone"].map(|t| b(Kind::Log, t).stdout());
+    let full = run(&[kept.clone().count(3), gone.clone()]);
+    let whole = vec![full; 3];
+
+    // Nothing cut: a behavior that stopped occurring is a change, as it has always been.
+    let shrunk = run(&[kept.clone().count(3)]);
+    assert_eq!(
+        rows(&shrunk, &whole),
+        [row(1, true, Disappeared, "count", 0.0, 0.8)]
+    );
+
+    // The cap cut behaviors out of this run, so `gone` may simply not have fitted. It says so instead.
+    let truncated = run(&[kept.clone().count(3), past_cap(7)]);
+    assert_eq!(
+        rows(&truncated, &whole),
+        [row(1, true, Incomplete, measure::PAST_CAP, 7.0, 0.8)],
+        "an absence a truncated run can't account for is not a DISAPPEARED"
+    );
+
+    // Admission is decided at a behavior's first occurrence, so a kept behavior's count is exact.
+    let moved = run(&[kept.clone().count(99), gone.clone(), past_cap(7)]);
+    assert_eq!(
+        rows(&moved, &whole),
+        [
+            row(1, true, Incomplete, measure::PAST_CAP, 7.0, 0.8),
+            row(2, true, Frequency, "count", 99.0, 0.8),
+        ],
+        "what a truncated run did keep is still judged"
+    );
+
+    // Every baseline run was truncated, so a behavior absent from all of them may have been cut there.
+    let cut_baseline = vec![run(&[kept.clone().count(3), past_cap(7)]); 3];
+    let appeared = run(&[kept.clone().count(3), gone]);
+    assert_eq!(
+        rows(&appeared, &cut_baseline),
+        [],
+        "absent from a truncated baseline is not NEW"
+    );
+
+    // Examples and summaries are exempt from the cap, so a truncated test run still reports a deleted one.
+    let example = b(Kind::TestExample, "./spec/a_spec.rb # a passes").seq(1);
+    let suite = run(&[summary(1.0, 1.0, 0.0), example, kept.clone().count(3)]);
+    let ran = vec![suite; 3];
+    let deleted = run(&[summary(0.0, 0.0, 0.0), kept.count(3), past_cap(7)]);
+    let kinds: Vec<SignalKind> = rows(&deleted, &ran).into_iter().map(|r| r.2).collect();
+    assert!(
+        kinds.contains(&Disappeared),
+        "the cap never cuts an example, so its absence still counts: {kinds:?}"
     );
 }
 
