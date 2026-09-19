@@ -518,10 +518,16 @@ Run the suite through siftr, read the first line of the report, and drill down o
 
 **`open_signals` versus `history --signals`.** They answer different questions, and a gate wants the first:
 
-- **`open_signals`, in the current run's document, is what is wrong right now.** It lists changes from earlier runs that this run still shows, judged against each signal's own original baseline rather than the rolling one — which is why a regression the baseline has absorbed still appears. A change that was fixed and came back is listed again on every run it is present in. This is the field to gate on, together with `changes`.
+- **`open_signals`, in the current run's document, is what is wrong right now.** It lists changes from earlier runs that this run still shows, judged against each signal's own original baseline rather than the rolling one — which is why a regression the baseline has absorbed still appears. A change that was fixed and came back is listed again on every run it is present in, however long ago it was first raised. This is the field to gate on, together with `changes`.
 - **`history --signals` is the story of each signal, not the state of the suite.** `outcome` is its latest verdict, `recurrences` how many times it came back, `resolved_in` and `recurred_in` the first of each. Use it to report and to review, not to decide whether the tree is clean. Its fields are in [docs/json.md](docs/json.md).
 
-The one thing neither will tell you is a regression that has outlived its baseline window: after about 10 further runs of the same context an unfixed change stops being reported at all, because it has become what siftr has always seen here.
+**What a clean gate promises, and what it doesn't.** `changes == 0` with `open_signals == []` says nothing moved against the baseline *and* no earlier change is still here — including one the rolling baseline has absorbed, and one that has been fixed and has come back any number of times. A change that keeps returning is reported on every run it is present in, for as long as it keeps returning.
+
+Three things that still read as clean, in falling order of how likely you are to meet them:
+
+- **A change nobody ever fixed stops being reported** about 10 runs after it was raised, once every run siftr compares against has it: it is then what this context does, and no comparison can see it. You will have been told on each of those runs. Fix it or `siftr dismiss` it before then; `siftr history --signals` still lists it as `open` afterwards.
+- **A change that was already there before siftr's first run of this context was never a change**, so nothing will ever report it. Baselines are built from what siftr has seen, and it has always seen this.
+- **Past `SIFTR_KEEP_RUNS` runs** (default 100) the runs a reminder is judged against are pruned, and it lapses to `unknown` rather than being reported.
 
 The `-j` fields that matter (full schema: top of [`src/bin/siftr/output.rs`](src/bin/siftr/output.rs)):
 

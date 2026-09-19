@@ -212,7 +212,13 @@ An object. All three emit the same document.
   `errors_outside_examples`, `stopped`, `subset`: recent runs left out of the
   baseline because they didn't run what this run did.
 - `open_signals` are earlier runs' signals still open at this run and not raised
-  again by it — a regression the rolling baseline has absorbed.
+  again by it — a regression the rolling baseline has absorbed. Each is re-judged
+  against its own original baseline, so a change that was fixed and came back is
+  listed on every run it is present in, however old the signal is. One listed here
+  stops being listed when it is fixed, when it is dismissed, or when it has been
+  present on every run since it was raised and its own run has left the baseline
+  window — at which point it is what this context does, and `history --signals`
+  is where it still reads as `open`.
 - `run -j` adds `not_recorded: {code, message}` when the store was unusable or
   busy. The exit code is still the wrapped command's.
 
