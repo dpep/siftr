@@ -232,10 +232,15 @@ fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitC
     Ok(found(!rows.is_empty()))
 }
 
-/// Signals of the runs `run` was judged against that are still open at `run` — every later run of the context
-/// through `run` still shows the change against the signal's own baseline — and that `run` didn't raise again.
-/// The rolling baseline absorbs a change that stays, so without these an unfixed regression reads as no change.
-/// Bounded by that window: once the signal's run ages out of the baseline, the change is what siftr calls normal.
+/// Signals of earlier runs of the context that are still open at `run` — every later run through `run` still shows
+/// the change against the signal's own baseline — and that `run` didn't raise again. The rolling baseline absorbs a
+/// change that stays, so without these an unfixed regression reads as no change.
+///
+/// A reminder expires when the change has become what this context does, which is [`Outcome::settled`]: present in
+/// every run since its own, and its own run gone from the baseline window. A change that keeps coming back never
+/// settles, so it is reminded for as long as it returns — bounding it by the window instead reported a present
+/// regression as normal on the sixth return. Only `dismiss` and a fix end that.
+///
 /// Oldest first, one per behavior and measure; a change with any dismissed signal is left out, and so is one headed
 /// by DISAPPEARED: a disappearance that stays is the new normal, not a regression left in place.
 pub fn still_open(
@@ -254,7 +259,17 @@ pub fn still_open(
         return Ok(Vec::new());
     }
     let mut seen: HashSet<Key> = signals.iter().map(|s| key(&s.signal)).collect();
-    let mut earlier = store.baseline_of(run.id)?;
+    // The window says which changes have had time to become normal, not which ones may still be judged: a
+    // change that returns outlives its own run's place in it.
+    let window: HashSet<RunId> = store.baseline_of(run.id)?.into_iter().collect();
+    // Every earlier run of the context siftr still keeps stats for. Past `SIFTR_KEEP_RUNS` the judgement reads
+    // pruned runs and gives no verdict, so a change older than that goes unreminded either way.
+    let mut earlier: Vec<RunId> = store
+        .runs_of(&run.context, store.retention().runs.value as usize)?
+        .into_iter()
+        .map(|record| record.id)
+        .filter(|&id| id < run.id)
+        .collect();
     earlier.sort();
     let mut open = Vec::new();
     for id in earlier {
@@ -281,6 +296,7 @@ pub fn still_open(
         for (stored, outcome) in signals.into_iter().zip(outcomes) {
             // INCOMPLETE is about its own run: a later run doesn't leave it open.
             if outcome.present_at(run.id)
+                && !outcome.settled(window.contains(&stored.run))
                 && stored.signal.kind != SignalKind::Incomplete
                 && !dismissed.contains(&stored.signal.group)
                 && seen.insert(key(&stored.signal))
@@ -355,6 +371,15 @@ impl Outcome {
     /// own baseline range — so a recurrence fires nowhere else.
     fn present_at(&self, run: RunId) -> bool {
         self.status() == "open" || (self.firing && self.latest == Some(run))
+    }
+
+    /// Whether the change has become what this context does, rather than a change left in place: it has been
+    /// there on every run since its own, and its own run has left `in_window`, so every run siftr now compares
+    /// against shows it. A change that went away and came back is never settled however old it is — the runs
+    /// without it are the evidence that this is not normal, and the rules can't fire on it because those same
+    /// runs put it inside the rolling baseline's range.
+    fn settled(&self, in_window: bool) -> bool {
+        self.recurrences == 0 && !in_window
     }
 
     fn investigated(&self) -> bool {
