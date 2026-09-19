@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A regression that is fixed and breaks again is reported on every run it returns in, however long ago it was first raised. 0.1.6 said this and only half meant it: the reminder still stopped once the original signal's run left the 10-run baseline window, so a change that kept flapping went silent on its sixth return with the regression plainly present, and a CI gate keyed on `changes` and `open_signals` passed exactly that build. Expiry is now a property of the change rather than the age of the signal — one that keeps returning never settles, while one nobody ever fixed still stops being reported about 10 runs on, once every run siftr compares against has it. No rule, threshold or confidence formula moved, and the backtest is byte-identical.
+- The `-j` contract for `changes`, `run` and `ingest` says what `open_signals` now covers: any earlier retained run, not only those in `baseline_runs`.
+
 ## 0.1.6 — 2026-09-17
 
 - A regression that is fixed and breaks again is reported every time it returns. The rolling baseline absorbs a value it has already seen — a repeat sits inside the baseline's own range, so no per-run rule can fire on it without firing on values the baseline really exhibited — and the still-open reminder, which judges against the signal's frozen original baseline, was dropping it: a change that had been fixed and returned counted as `recurred` rather than `open`, and only `open` was reminded. So the second break of a regression went unreported by every per-run command, while `siftr summary` showed it plainly. A change present at this run is now surfaced whether or not it was fixed in between. The rules and their thresholds are untouched, and the zero-false-positive backtest is unchanged.

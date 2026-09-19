@@ -37,9 +37,12 @@
 //!   bounds the groups and signals listed, so `groups_total` over the length of `groups` is what was left out),
 //!   `groups` [{`rank`, `setup` (changed outside every example), `headline` (signal id), `signals` (ids),
 //!   `disappeared_examples` (null, or {`file`, `examples`} when the group is DISAPPEARED examples of one spec
-//!   file collapsed together)}], `signals` (rank order), `open_signals` (signals of earlier runs in
-//!   `baseline_runs` still open at this run and not raised again by it, oldest first, one per behavior and
-//!   measure; dismissed changes are left out, and so is any change headed by DISAPPEARED).
+//!   file collapsed together)}], `signals` (rank order), `open_signals` (signals of any earlier retained run
+//!   still open at this run and not raised again by it, oldest first, one per behavior and measure; dismissed
+//!   changes are left out, and so is any change headed by DISAPPEARED). Earlier is not limited to
+//!   `baseline_runs`: a change that was fixed and came back is still here however long ago it was raised, so
+//!   it keeps being listed, while one nobody ever fixed settles and drops off once every run siftr compares
+//!   against has it.
 //! - feedback (`ack -j`, `dismiss -j`): `kind` (surfaced|investigated|evidence_requested|dismissed|acked),
 //!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
 //!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
