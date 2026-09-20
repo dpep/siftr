@@ -1,0 +1,450 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Fault-injection recall matrix: inject faults of known kind and known magnitude into
+# dogfood/rails_demo, and record what siftr says about each — detected or not, at what
+# group rank, in which tier, with what confidence.
+#
+# The fixture replays prove siftr's output did not *change*. This proves it still
+# *detects*, and says where each rule's threshold actually sits on a real suite. Cells
+# either side of a threshold are the point: a cell expected to miss is as load-bearing
+# as one expected to hit, so a rules.rs change that widens or narrows a rule shows up as
+# a cell flipping in either direction.
+#
+#   script/fault-matrix                    every cell, 3 trials each
+#   script/fault-matrix --reps 5           5 trials each (191s quiet, ~7 min loaded)
+#   script/fault-matrix --cells A,B,Z      only these families
+#   script/fault-matrix --cells Z --reps 30   just the false-positive rate
+#   SIFTR=/path/to/siftr script/fault-matrix  skip the release build
+#
+# Exit 1 when a cell flipped — a detection lost, or a rule fired where it claims not to.
+#
+# Writes results.ndjson (one record per trial, every number traceable to its run id)
+# and summary.json alongside the table.
+
+require "fileutils"
+require "json"
+require "optparse"
+
+ROOT = File.expand_path("..", __dir__)
+DEMO = File.join(ROOT, "dogfood", "rails_demo")
+FAULTS = File.join(ROOT, "script", "faults.rb")
+
+options = {
+  reps: 3,
+  baseline: 4,
+  out: File.join(ENV["TMPDIR"] || "/tmp", "siftr-fault-matrix"),
+  cells: nil,
+  siftr: ENV["SIFTR"],
+}
+OptionParser.new do |o|
+  o.banner = "usage: script/fault-matrix [options]"
+  o.on("--reps N", Integer, "trials per cell (default 3)") { options[:reps] = it }
+  o.on("--baseline N", Integer, "baseline runs per seed (default 4)") { options[:baseline] = it }
+  o.on("--cells LIST", "comma-separated cell or family prefixes") { options[:cells] = it.split(",") }
+  o.on("--out DIR", "results directory") { options[:out] = it }
+  o.on("--siftr PATH", "siftr binary (default: cargo build --release)") { options[:siftr] = it }
+end.parse!
+
+# ---------------------------------------------------------------- injected spec files
+
+EXTRA_SPEC = <<~'RUBY'
+  require "rails_helper"
+
+  RSpec.describe "Injected" do
+    3.times { |i| it("holds #{i}") { expect(User.count).to be >= 0 } }
+  end
+RUBY
+
+LOAD_ERROR_SPEC = %(raise "injected load error"\n)
+
+# Two examples that fail at the same instant, differing only in where their description comes
+# from. RSpec generates a one-liner's `full_description` from the matcher that ran, and the
+# `test.example` behavior id is built from that description — so the failing one-liner is a
+# different behavior from its passing self, and `rules::error` has no baseline to judge it
+# against. Every example in dogfood/ and fixtures/ is hand-described, which is why the grid
+# needs this pair: without it the ERROR row reads cleaner than the rule is.
+OUTCOME_SPEC = <<~'RUBY'
+  RSpec.describe "outcome stability" do
+    broken = ENV.key?("SIFTR_FAULT_BREAK")
+    it("named example") { expect(1).to eq(broken ? 2 : 1) }
+    it { expect(1).to eq(broken ? 2 : 1) }
+  end
+RUBY
+
+EXTRA_PATH = "spec/models/zz_injected_spec.rb"
+OUTCOME_PATH = "spec/models/zz_outcome_spec.rb"
+INJECTED_PATHS = [EXTRA_PATH, OUTCOME_PATH].freeze
+
+# ---------------------------------------------------------------------------- seeds
+#
+# A seed is `baseline` runs of the demo recorded into one SIFTR_HOME, which every trial
+# of every cell that names it clones. Cells sharing a seed therefore share one baseline,
+# which is what makes their results comparable.
+
+Seed = Struct.new(:id, :env, :files, keyword_init: true)
+
+SEEDS = [
+  # A clean suite: the show request makes 3 queries in every run, every count exact.
+  Seed.new(id: "clean", env: ->(_i) { {} }, files: {}),
+  # The same suite with one example already slow, so LATENCY's ratio arm binds
+  # instead of its 100ms floor.
+  Seed.new(id: "slowbase", env: ->(_i) { { "SIFTR_FAULT_SLEEP_MS" => "200" } }, files: {}),
+  # A query count that varies run to run: [4, 5, 6, 5], so FREQUENCY's varying arm binds
+  # instead of its exact arm.
+  Seed.new(id: "jitter", env: ->(i) { { "SIFTR_FAULT_QUERIES" => [1, 2, 3, 2][i % 4].to_s } }, files: {}),
+  # Already red, with the same exception the fault cell raises: the known-flaky case.
+  Seed.new(id: "failing", env: ->(_i) { { "SIFTR_DEMO_FAIL" => "1" } }, files: {}),
+  # The deprecation warning in half the baseline runs: the intermittent case.
+  Seed.new(id: "warnmix", env: ->(i) { i.even? ? { "SIFTR_DEMO_WARN" => "1" } : {} }, files: {}),
+  # Three extra examples present throughout, for a cell that removes them.
+  Seed.new(id: "extra", env: ->(_i) { {} }, files: { EXTRA_PATH => EXTRA_SPEC }),
+  # A named example and a one-liner, both green, for the pair of cells that break both.
+  Seed.new(id: "outcome", env: ->(_i) { {} }, files: { OUTCOME_PATH => OUTCOME_SPEC }),
+].to_h { [it.id, it] }
+
+# ---------------------------------------------------------------------------- matchers
+#
+# A cell counts as detected only when siftr raises a signal about the fault that was
+# injected — never merely because the run produced some signal.
+
+EXAMPLE_SLOW = "./spec/models/post_spec.rb # Post summarizes the body"
+SHOW_REQUEST = "GET UsersController#show 2xx"
+
+MATCH = {
+  latency: ->(s) { s["kind"] == "latency" && s.dig("behavior", "template") == EXAMPLE_SLOW },
+  queries: ->(s) { s["kind"] == "frequency" && s["measure"] == "queries" && s.dig("behavior", "template") == SHOW_REQUEST },
+  error: ->(s) { s["kind"] == "error" && s.dig("behavior", "template").to_s.include?("User requires an email") },
+  warning: ->(s) { s["kind"] == "new" && s.dig("behavior", "template").to_s.start_with?("DEPRECATION WARNING") },
+  incomplete: ->(s) { s["kind"] == "incomplete" },
+  example_new: ->(s) { s["kind"] == "new" && s.dig("behavior", "kind") == "test.example" && s.dig("behavior", "template").to_s.include?("zz_injected") },
+  example_gone: ->(s) { s["kind"] == "disappeared" && s.dig("behavior", "kind") == "test.example" && s.dig("behavior", "template").to_s.include?("zz_injected") },
+  error_named: ->(s) { s["kind"] == "error" && s.dig("behavior", "template").to_s.include?("outcome stability named example") },
+  # Any ERROR naming the one-liner, however RSpec described it this run.
+  error_generated: lambda do |s|
+    template = s.dig("behavior", "template").to_s
+    s["kind"] == "error" && template.include?("zz_outcome") && !template.include?("named example")
+  end,
+}.freeze
+
+# ----------------------------------------------------------------------------- cells
+
+Cell = Struct.new(:id, :seed, :fault, :magnitude, :match, :expect, :why, :env, :files, keyword_init: true)
+
+def latency_cell(id, seed, base, extra, expect, why)
+  magnitude = base.zero? ? "+#{extra}ms" : "+#{extra}ms on #{base}ms"
+  Cell.new(id:, seed:, fault: "latency", magnitude:, match: :latency,
+           expect:, why:, env: { "SIFTR_FAULT_SLEEP_MS" => (base + extra).to_s }, files: {})
+end
+
+def query_cell(id, seed, extra, current, expect, why, fault)
+  Cell.new(id:, seed:, fault:, magnitude: "#{current} queries", match: :queries,
+           expect:, why:, env: { "SIFTR_FAULT_QUERIES" => extra.to_s }, files: {})
+end
+
+CELLS = [
+  # Controls. No fault at all: any signal here is a false positive, and every other
+  # cell's result is only as good as these.
+  Cell.new(id: "Z1", seed: "clean", fault: "none", magnitude: "—", match: nil, expect: :miss,
+           why: "clean run against a clean baseline", env: {}, files: {}),
+  Cell.new(id: "Z2", seed: "slowbase", fault: "none", magnitude: "—", match: nil, expect: :miss,
+           why: "clean run against a 200ms baseline", env: { "SIFTR_FAULT_SLEEP_MS" => "200" }, files: {}),
+
+  # LATENCY, floor arm: baseline median ~1ms, so need = max(100ms, 3x median) = 100ms.
+  latency_cell("A1", "clean", 0, 30, :miss, "delta 30ms under the 100ms floor"),
+  latency_cell("A2", "clean", 0, 80, :miss, "delta 80ms under the 100ms floor"),
+  latency_cell("A3", "clean", 0, 110, :hit, "delta 110ms just over the floor"),
+  latency_cell("A4", "clean", 0, 150, :hit, "delta 150ms clear of the floor"),
+  latency_cell("A5", "clean", 0, 300, :hit, "delta 300ms, the demo's own slow toggle"),
+
+  # LATENCY, ratio arm: baseline median ~200ms, so need = 3 x median ~ 600ms.
+  latency_cell("B1", "slowbase", 200, 300, :miss, "delta 300ms under 3x median"),
+  latency_cell("B2", "slowbase", 200, 500, :miss, "delta 500ms just under 3x median"),
+  latency_cell("B3", "slowbase", 200, 700, :hit, "delta 700ms just over 3x median"),
+  latency_cell("B4", "slowbase", 200, 1500, :hit, "delta 1500ms, 8.5x"),
+
+  # FREQUENCY, exact arm: baseline [3, 3, 3, 3], so any change fires.
+  query_cell("C1", "clean", 1, 4, :hit, "+1 query on an exact baseline", "frequency exact"),
+  query_cell("C2", "clean", 7, 10, :hit, "+7 queries, the demo's own N+1", "frequency exact"),
+
+  # FREQUENCY, varying arm: baseline [4, 5, 6, 5] — median 5, width 2, so a current
+  # value fires only outside [4, 6] and more than 2 x 2 from the median.
+  query_cell("D1", "jitter", 2, 5, :miss, "inside the baseline range", "frequency varying"),
+  query_cell("D2", "jitter", 4, 7, :miss, "outside the range but 2 <= 2 x width", "frequency varying"),
+  query_cell("D3", "jitter", 7, 10, :hit, "5 from the median > 2 x width", "frequency varying"),
+
+  # ERROR.
+  Cell.new(id: "E1", seed: "clean", fault: "error", magnitude: "1 example", match: :error, expect: :hit,
+           why: "a new failure against a green baseline", env: { "SIFTR_DEMO_FAIL" => "1" }, files: {}),
+  Cell.new(id: "E2", seed: "failing", fault: "error", magnitude: "1 example", match: :error, expect: :miss,
+           why: "same exception class in every baseline run: known flaky", env: { "SIFTR_DEMO_FAIL" => "1" }, files: {}),
+
+  # NEW, on stderr.
+  Cell.new(id: "F1", seed: "clean", fault: "new stderr", magnitude: "2 lines", match: :warning, expect: :hit,
+           why: "a deprecation absent from every baseline run", env: { "SIFTR_DEMO_WARN" => "1" }, files: {}),
+  Cell.new(id: "F2", seed: "warnmix", fault: "new stderr", magnitude: "2 lines", match: :warning, expect: :miss,
+           why: "present in 2 of 4 baseline runs: intermittent", env: { "SIFTR_DEMO_WARN" => "1" }, files: {}),
+
+  # INCOMPLETE, and the suite changing size in either direction.
+  Cell.new(id: "G1", seed: "clean", fault: "incomplete", magnitude: "1 spec file", match: :incomplete, expect: :hit,
+           why: "a spec file raises at load", env: {}, files: { EXTRA_PATH => LOAD_ERROR_SPEC }),
+  Cell.new(id: "H1", seed: "clean", fault: "examples added", magnitude: "+3 examples", match: :example_new, expect: :hit,
+           why: "a new spec file with 3 examples", env: {}, files: { EXTRA_PATH => EXTRA_SPEC }),
+  Cell.new(id: "H2", seed: "extra", fault: "examples removed", magnitude: "-3 examples", match: :example_gone, expect: :hit,
+           why: "the baseline's extra spec file deleted", env: {}, files: {}),
+
+  # The same failure, described two ways. I1 and I2 break in the same run of the same file,
+  # so the difference between their rows is the description and nothing else.
+  Cell.new(id: "I1", seed: "outcome", fault: "error, named", magnitude: "1 example", match: :error_named, expect: :hit,
+           why: "a hand-written description keeps the behavior id across the failure",
+           env: { "SIFTR_FAULT_BREAK" => "1" }, files: { OUTCOME_PATH => OUTCOME_SPEC }),
+  Cell.new(id: "I2", seed: "outcome", fault: "error, one-liner", magnitude: "1 example", match: :error_generated, expect: :miss,
+           why: "RSpec regenerates a one-liner's description from the matcher, so the failure lands on a different behavior id than the baseline's: reported as NEW + DISAPPEARED, never ERROR",
+           env: { "SIFTR_FAULT_BREAK" => "1" }, files: { OUTCOME_PATH => OUTCOME_SPEC }),
+].freeze
+
+# ------------------------------------------------------------------------- mechanics
+
+# The demo has its own Gemfile, so a bundler environment inherited from whatever launched
+# this script would point its runs at the wrong one.
+CHILD_ENV = { "BUNDLE_GEMFILE" => nil, "RUBYOPT" => nil }.freeze
+
+def die(message)
+  warn "fault-matrix: #{message}"
+  exit 1
+end
+
+# siftr's JSON is the last thing on stdout and is pretty-printed, so its opening brace is
+# the only line that is a bare `{`; anything the child printed first is skipped.
+def extract_json(out)
+  lines = out.lines
+  lines.each_index.select { |i| lines[i].rstrip == "{" }.reverse_each do |i|
+    return JSON.parse(lines[i..].join)
+  rescue JSON::ParserError
+    next
+  end
+  nil
+end
+
+def write_files(files)
+  files.each do |path, body|
+    full = File.join(DEMO, path)
+    FileUtils.mkdir_p(File.dirname(full))
+    File.write(full, body)
+  end
+end
+
+def clear_files
+  FileUtils.rm_f(INJECTED_PATHS.map { File.join(DEMO, it) })
+end
+
+# One `siftr run` of the demo. Returns siftr's own JSON verdict for that run.
+def siftr_run(siftr, home, env, files)
+  clear_files
+  write_files(files)
+  full_env = CHILD_ENV.merge(
+    "SIFTR_HOME" => home,
+    # `--require` accumulates where `--format` would replace the user's formatters, and siftr
+    # appends its own listener to whatever is here. See docs/findings/capture.md.
+    "SPEC_OPTS" => "--require #{FAULTS}",
+  ).merge(env)
+  out = IO.popen(full_env, [siftr, "run", "-q", "-j", "--", "bundle", "exec", "rspec"],
+                 chdir: DEMO, err: File::NULL, &:read)
+  extract_json(out) || die("no JSON from siftr run (home #{home}); stdout began: #{out[0, 400].inspect}")
+ensure
+  clear_files
+end
+
+def build_seed(siftr, seeds_dir, seed, baseline_runs)
+  home = File.join(seeds_dir, seed.id)
+  return home if File.directory?(home)
+
+  FileUtils.mkdir_p(home)
+  baseline_runs.times { |i| siftr_run(siftr, home, seed.env.call(i), seed.files) }
+  home
+end
+
+# What the fault cost the reader: where the matched signal landed, and how much else it
+# had to be picked out of.
+def score(cell, verdict)
+  signals = verdict["signals"] || []
+  matcher = cell.match && MATCH.fetch(cell.match)
+  index = matcher && signals.index { matcher.call(it) }
+  matched = index && signals[index]
+  group = matched && (verdict["groups"] || []).find { it["rank"] && it["signals"].include?(matched["id"]) }
+  {
+    "cell" => cell.id,
+    "run" => verdict.dig("run", "id"),
+    "wall_ms" => verdict.dig("run", "wall_ms"),
+    "detected" => !matched.nil?,
+    "signal_rank" => index && index + 1,
+    "group_rank" => group && group["rank"],
+    "tier" => matched && matched["tier"],
+    "confidence" => matched && matched["confidence"],
+    "baseline_median" => matched && matched.dig("baseline", "median"),
+    "current" => matched && matched["current"],
+    "headline" => matched && matched["headline"],
+    "groups_total" => verdict["groups_total"],
+    "signals_total" => verdict["signals_total"],
+    # Everything siftr said that wasn't the injected fault. On a control cell each of these
+    # is a false positive; elsewhere it is what the reader wades through to reach the fault.
+    "other_signals" => signals.reject { matched && it["id"] == matched["id"] }.map do |s|
+      {
+        "kind" => s["kind"], "tier" => s["tier"], "confidence" => s["confidence"],
+        "template" => s.dig("behavior", "template"),
+        "baseline_median" => s.dig("baseline", "median"), "current" => s["current"],
+      }
+    end,
+  }
+end
+
+# ------------------------------------------------------------------------------ main
+
+siftr = options[:siftr]
+unless siftr
+  warn "== building siftr (release)"
+  system("cargo", "build", "--release", "--manifest-path", File.join(ROOT, "Cargo.toml"),
+         out: File::NULL) || die("cargo build failed")
+  siftr = File.join(ENV["CARGO_TARGET_DIR"] || File.join(ROOT, "target"), "release", "siftr")
+end
+die("no siftr binary at #{siftr}") unless File.executable?(siftr)
+die("no demo at #{DEMO}") unless File.directory?(DEMO)
+# Every cell is a real `bundle exec rspec`, so say plainly what is missing rather than
+# failing 130 runs later with an unparseable capture.
+system(CHILD_ENV, "bundle", "check", chdir: DEMO, out: File::NULL, err: File::NULL) ||
+  die("dogfood/rails_demo's gems are not installed: run `bundle install` there first")
+
+cells = CELLS
+cells = cells.select { |c| options[:cells].any? { |p| c.id.start_with?(p) } } if options[:cells]
+die("no cells match #{options[:cells].inspect}") if cells.empty?
+
+# Only what this script itself creates is removed, never the directory it was pointed at.
+out_dir = File.expand_path(options[:out])
+FileUtils.mkdir_p(out_dir)
+seeds_dir = File.join(out_dir, "seeds")
+FileUtils.rm_rf([seeds_dir, *Dir.glob(File.join(out_dir, "trial-*"))])
+ndjson = File.open(File.join(out_dir, "results.ndjson"), "w")
+started = Time.now
+
+at_exit { clear_files }
+
+trials = []
+cells.group_by(&:seed).each do |seed_id, group|
+  warn "== seed #{seed_id} (#{options[:baseline]} runs)"
+  seed_home = build_seed(siftr, seeds_dir, SEEDS.fetch(seed_id), options[:baseline])
+  group.each do |cell|
+    options[:reps].times do |rep|
+      home = File.join(out_dir, "trial-#{cell.id}-#{rep}")
+      FileUtils.rm_rf(home)
+      FileUtils.cp_r(seed_home, home)
+      record = score(cell, siftr_run(siftr, home, cell.env, cell.files))
+      record.merge!("seed" => seed_id, "rep" => rep, "expect" => cell.expect.to_s,
+                    "fault" => cell.fault, "magnitude" => cell.magnitude)
+      FileUtils.rm_rf(home)
+      ndjson.puts(JSON.generate(record))
+      ndjson.flush
+      trials << record
+      warn "   #{cell.id}.#{rep} #{record["detected"] ? "hit" : "miss"}" \
+           "#{record["group_rank"] ? " group #{record["group_rank"]}/#{record["groups_total"]}" : ""}"
+    end
+  end
+end
+ndjson.close
+
+# ---------------------------------------------------------------------------- report
+
+def brief(values)
+  seen = values.compact.uniq
+  return "—" if seen.empty?
+
+  seen.size == 1 ? seen.first.to_s : "#{seen.min}–#{seen.max}"
+end
+
+# A cell flipped (`firm`) when a detection the rules claim is gone, or when a rule fired
+# where it claims not to — one false positive is a flip, since precision is the claim.
+# It merely wobbled (`partial`) when a detection survived in most but not all trials, which
+# on a loaded machine says more about the machine than about the rules.
+def verdict_for(expect, hits, trials)
+  return :ok if expect == :hit ? hits == trials : hits.zero?
+  return :firm if expect == :miss || hits * 2 < trials
+
+  :partial
+end
+
+rows = cells.map do |cell|
+  got = trials.select { it["cell"] == cell.id }
+  hits = got.count { it["detected"] }
+  verdict = verdict_for(cell.expect, hits, got.size)
+  expected = verdict == :ok
+  {
+    "verdict" => verdict.to_s,
+    "cell" => cell.id,
+    "fault" => cell.fault,
+    "magnitude" => cell.magnitude,
+    "expect" => cell.expect.to_s,
+    "hits" => hits,
+    "trials" => got.size,
+    "as_expected" => expected,
+    # Rank is the claim under test: siftr says the developer reads the top of the report, and
+    # only the top 3 groups are shown, so a true signal in group 4 is close to a miss.
+    "rank" => hits.zero? ? "—" : "#{brief(got.map { it["group_rank"] })} of #{brief(got.map { it["groups_total"] })}",
+    "heads" => hits.zero? ? "—" : (got.all? { it["headline"] } ? "yes" : "no"),
+    "group_rank" => brief(got.map { it["group_rank"] }),
+    "groups_total" => brief(got.map { it["groups_total"] }),
+    "tier" => brief(got.map { it["tier"] }),
+    "confidence" => brief(got.map { it["confidence"] }),
+    "measured" => brief(got.map { |t| t["baseline_median"] && "#{t["baseline_median"].round}→#{t["current"].round}" }),
+    "why" => cell.why,
+  }
+end
+
+widths = { "cell" => 4, "fault" => 17, "magnitude" => 16, "expect" => 6, "hits" => 6,
+           "rank" => 7, "heads" => 5, "tier" => 4, "confidence" => 10, "measured" => 12 }
+header = ["cell", "fault", "magnitude", "expect", "hits", "rank", "heads", "tier", "confidence", "measured"]
+puts
+puts header.map { it.ljust(widths[it]) }.join(" ")
+puts header.map { "-" * widths[it] }.join(" ")
+rows.each do |r|
+  cells_out = header.map do |k|
+    value = k == "hits" ? "#{r["hits"]}/#{r["trials"]}" : r[k].to_s
+    value = "#{value}#{r["as_expected"] ? "" : " !"}" if k == "hits"
+    value.ljust(widths[k])
+  end
+  puts cells_out.join(" ")
+end
+
+firm = rows.select { it["verdict"] == "firm" }
+partial = rows.select { it["verdict"] == "partial" }
+# The clean cells carry the precision claim, so their signals are counted on their own:
+# a rule that fires on an unchanged suite costs more than one that misses a small fault.
+controls = trials.select { |t| cells.find { it.id == t["cell"] }&.fault == "none" }
+false_positives = controls.sum { it["other_signals"].size }
+walls = trials.map { it["wall_ms"] }.compact.sort
+
+summary = {
+  "generated" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "seconds" => (Time.now - started).round,
+  "siftr" => siftr,
+  "commit" => `git -C #{ROOT} rev-parse --short HEAD`.strip,
+  "reps" => options[:reps],
+  "baseline_runs" => options[:baseline],
+  "cells" => rows.size,
+  "as_expected" => rows.count { it["as_expected"] },
+  "flipped" => firm.map { it["cell"] },
+  "wobbled" => partial.map { it["cell"] },
+  "control_trials" => controls.size,
+  "control_false_positives" => false_positives,
+  # Wall time spread says how loaded the machine was, which is what a wobble usually means.
+  "wall_ms" => { "min" => walls.first, "median" => walls[walls.size / 2], "max" => walls.last },
+  "rows" => rows,
+}
+File.write(File.join(out_dir, "summary.json"), JSON.pretty_generate(summary))
+
+puts
+puts "#{summary["as_expected"]}/#{rows.size} cells as expected" \
+     "#{firm.empty? ? "" : "; FLIPPED #{firm.map { it["cell"] }.join(", ")}"}" \
+     "#{partial.empty? ? "" : "; wobbled #{partial.map { it["cell"] }.join(", ")}"}"
+puts "#{false_positives} signal(s) on #{controls.size} control trials (unchanged suite)"
+puts "run wall time #{walls.first}–#{walls.last}ms, median #{walls[walls.size / 2]}ms"
+puts "#{summary["seconds"]}s; per-trial records in #{out_dir}/results.ndjson"
+exit(firm.empty? ? 0 : 1)
