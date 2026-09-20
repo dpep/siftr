@@ -82,7 +82,7 @@ fn a_failure_after_one_clean_run_reads_right() {
     let signal: Value =
         serde_json::from_slice(&sandbox.siftr(&["explain", "s1", "-j"]).stdout).unwrap();
     let behavior = &signal["signal"]["behavior"]["id"].as_str().unwrap()[..10];
-    let evidence = sandbox.text(&["evidence", behavior, "--run", "r2"]);
+    let evidence = sandbox.text(&["explain", behavior, "--run", "r2"]);
     assert!(
         evidence.contains("\nr2: 1 occurrence, 1 error; 1 line kept\n  RSpec::Expectations::ExpectationNotMetError: "),
         "{evidence}"
@@ -171,7 +171,7 @@ fn a_change_after_the_last_example_reads_as_teardown() {
 }
 
 /// Confidence ranks below chance (`docs/findings/confidence.md`) and reads as severity wherever it is printed.
-/// It is `-j` only: this sweeps every human command, so the next place it could reappear is caught here.
+/// It is `-j` only: this sweeps every human command so the next place it could reappear is caught here.
 #[test]
 fn no_human_output_prints_a_confidence_score() {
     let sandbox = Sandbox {
@@ -182,14 +182,14 @@ fn no_human_output_prints_a_confidence_score() {
     for scenario in ["baseline_2", "baseline_documentation", "n_plus_one", "fail"] {
         reports.push(sandbox.ingest(scenario));
     }
-    let doc: Value =
+    let behavior: Value =
         serde_json::from_slice(&sandbox.siftr(&["explain", "s1", "-j"]).stdout).unwrap();
-    let behavior = &doc["signal"]["behavior"]["id"].as_str().unwrap()[..10];
+    let behavior = &behavior["signal"]["behavior"]["id"].as_str().unwrap()[..10];
     for args in [
         vec!["changes"],
         vec!["changes", "r4"],
         vec!["explain", "s1"],
-        vec!["evidence", behavior],
+        vec!["explain", behavior],
         vec!["summary", "r4"],
         vec!["history"],
         vec!["history", "--signals"],
@@ -204,6 +204,63 @@ fn no_human_output_prints_a_confidence_score() {
             "a score a reader will rank on: {report}"
         );
     }
+}
+
+/// One command for either kind of id, and `--run` on both: the two halves used to be two commands, and a
+/// reader with an id in hand had to know which.
+#[test]
+fn explain_takes_either_kind_of_id_and_a_run() {
+    let sandbox = Sandbox {
+        home: tempfile::tempdir().unwrap(),
+        project: tempfile::tempdir().unwrap(),
+    };
+    for scenario in ["baseline", "baseline_2", "baseline_documentation", "fail"] {
+        sandbox.ingest(scenario);
+    }
+    let signal = sandbox.text(&["explain", "s1"]);
+    assert!(
+        signal.starts_with("s1  ERROR  in r4, group 1 headline\n"),
+        "{signal}"
+    );
+
+    let doc: Value =
+        serde_json::from_slice(&sandbox.siftr(&["explain", "s1", "-j"]).stdout).unwrap();
+    let behavior = &doc["signal"]["behavior"]["id"].as_str().unwrap()[..10];
+    assert_eq!(doc["evidence"]["run"], "r4");
+    // `explain s1 --run r3` was an argument error while only `evidence` took `--run`.
+    let earlier: Value = serde_json::from_slice(
+        &sandbox
+            .siftr(&["explain", "s1", "--run", "r3", "-j"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(earlier["evidence"]["run"], "r3");
+    assert_eq!(
+        earlier["signal"]["id"], "s1",
+        "still the signal's own report"
+    );
+
+    // The same id typed as a behavior reads that behavior's lines, under the same command and flags.
+    let lines = sandbox.text(&["explain", behavior, "--run", "r3", "-n", "1"]);
+    assert!(
+        lines.starts_with(&format!("{behavior}  test.example  ")),
+        "{lines}"
+    );
+    assert!(
+        lines.contains("\nr3: 1 occurrence, 0 errors; 1 line kept\n"),
+        "{lines}"
+    );
+
+    // A run outside the comparison is refused rather than answered with unrelated lines.
+    let stray = sandbox.siftr_raw(&["explain", "s1", "--run", "r1"]);
+    assert_eq!(stray.status.code(), Some(0), "r1 is a baseline run");
+    let unknown = sandbox.siftr_raw(&["explain", "s1", "--run", "r99"]);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("no r99 in s1's comparison"),
+        "{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
 }
 
 /// The order is the ranking, said once, and only where there is an order to speak of.

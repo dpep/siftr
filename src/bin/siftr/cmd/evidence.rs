@@ -1,38 +1,24 @@
-//! `siftr evidence <BEHAVIOR>`: the raw lines kept for a behavior in one run.
+//! `siftr explain <BEHAVIOR>`: the raw lines kept for a behavior in one run.
+//!
+//! The behavior half of [`super::explain`], which owns the arguments and decides which half an id asks for.
 
-use std::collections::BTreeMap;
 use std::process::ExitCode;
 
 use anyhow::Result;
 use serde_json::json;
 use siftr::aggregate::Stats;
-use siftr::store::{Feedback, FeedbackKind, RunId};
+use siftr::store::{Feedback, FeedbackKind};
 
+use super::explain::{Args, captures};
 use super::{Globals, found, record_feedback};
 use crate::output::{self, behavior_json, exception, exemplar_json, plural, printable, stats_json};
 use crate::project;
 
-#[derive(clap::Args)]
-pub struct Args {
-    /// Behavior id, or a unique prefix of at least 4 hex digits
-    behavior: String,
-
-    /// Run to take evidence from [default: the latest run in this project where the behavior occurred]
-    #[arg(long)]
-    run: Option<RunId>,
-
-    /// How many lines to show
-    #[arg(short = 'n', long, default_value_t = 8)]
-    limit: usize,
-}
-
-pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
-    check_id(&args.behavior)?;
+pub fn show(id: &str, args: &Args, globals: &Globals) -> Result<ExitCode> {
     let store = globals.open_store()?;
-    let behavior = store.resolve_behavior(&args.behavior)?.ok_or_else(|| {
+    let behavior = store.resolve_behavior(id)?.ok_or_else(|| {
         output::not_found(format!(
-            "no behavior matches {}; siftr summary lists a run's behaviors",
-            args.behavior
+            "no behavior matches {id}; siftr summary lists a run's behaviors"
         ))
     })?;
     let run = match args.run {
@@ -72,17 +58,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         .map(|(_, stats)| stats)
         .unwrap_or_default();
     let exemplars = store.exemplars(run, behavior.id, args.limit)?;
-    // Only the captures still on disk: `SIFTR_CAPTURE=off` and retention both leave the path unwritten, and a
-    // file that isn't there sends the reader somewhere empty.
-    let captures: BTreeMap<String, String> = exemplars
-        .iter()
-        .filter_map(|e| {
-            let path = store.capture_file(run, &e.stream);
-            path.is_file()
-                .then(|| (e.stream.to_string(), path.display().to_string()))
-        })
-        .collect();
-
+    let captures = captures(&store, run, &exemplars);
     let events: Vec<Option<String>> = exemplars
         .iter()
         .map(|e| super::listener_event(&store, run, e))
@@ -131,29 +107,11 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         &store,
         &[Feedback::on_behavior(
             FeedbackKind::EvidenceRequested,
-            "evidence",
+            "explain",
             globals.interface(),
             run,
             behavior.id,
         )],
     );
     Ok(found(!exemplars.is_empty()))
-}
-
-/// Behavior ids are hex. A signal id is the likeliest thing to land here, so that error names the command taking one.
-fn check_id(id: &str) -> Result<()> {
-    let signal = id
-        .strip_prefix('s')
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-    if signal {
-        return Err(output::usage(format!(
-            "{id} is a signal id, and evidence takes a behavior id; siftr explain {id} shows the signal's behavior and evidence"
-        )));
-    }
-    if !((4..=16).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit())) {
-        return Err(output::usage(format!(
-            "invalid behavior id {id:?} (expected 4 to 16 hex digits, as siftr summary shows)"
-        )));
-    }
-    Ok(())
 }

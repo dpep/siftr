@@ -118,7 +118,7 @@ fn what_retention_pruned_is_named_never_read_as_empty() {
         .as_str()
         .unwrap()
         .to_owned();
-    let evidence = sandbox.siftr(&["evidence", &behavior, "--run", "r4"]);
+    let evidence = sandbox.siftr(&["explain", &behavior, "--run", "r4"]);
     assert_eq!(evidence.status.code(), Some(2));
     assert!(
         stderr(&evidence).contains("r4's evidence was pruned: siftr keeps evidence for the last 2 runs of each command (SIFTR_KEEP_EVIDENCE)"),

@@ -62,7 +62,7 @@ fn nothing_found_is_still_a_document() {
     assert!(recorded.status.success());
     let summary = document(&siftr(home.path(), elsewhere.path(), &["summary", "-j"]));
     let behavior = summary["behaviors"][0]["behavior"]["id"].as_str().unwrap();
-    let output = siftr(home.path(), project.path(), &["evidence", behavior, "-j"]);
+    let output = siftr(home.path(), project.path(), &["explain", behavior, "-j"]);
     assert_eq!(output.status.code(), Some(1));
     let evidence = document(&output);
     assert_eq!(
@@ -82,7 +82,7 @@ fn an_error_is_a_document_with_a_stable_code() {
     let cases: [(&[&str], &str); 6] = [
         (&["-j", "changes", "bogus"], "usage"),
         (&["summary", "--json", "--by", "size"], "usage"),
-        (&["-j", "evidence", "s1"], "usage"),
+        (&["-j", "explain", "zz"], "usage"),
         (&["-j", "changes", "r99"], "not_found"),
         (&["-j", "explain", "s99"], "not_found"),
         (&["-j", "ack", "s1"], "not_found"),
@@ -99,11 +99,15 @@ fn an_error_is_a_document_with_a_stable_code() {
         );
     }
 
-    let wrong_id = siftr(home.path(), project.path(), &["evidence", "s1"]);
+    // An id of neither kind names both spellings: one command takes both, so neither is "the wrong one".
+    let wrong_id = siftr(home.path(), project.path(), &["explain", "zz"]);
     assert_eq!(wrong_id.status.code(), Some(2));
     assert!(wrong_id.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&wrong_id.stderr);
-    assert!(stderr.contains("siftr explain s1"), "{stderr}");
+    assert!(
+        stderr.contains("a signal id like s3") && stderr.contains("hex digits of a behavior id"),
+        "{stderr}"
+    );
 
     let help = siftr(home.path(), project.path(), &["-j", "changes", "--help"]);
     assert_eq!(help.status.code(), Some(0), "help is not an error");

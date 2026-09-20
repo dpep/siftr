@@ -41,9 +41,9 @@ fn accounting(dir: &Path, run: &str) -> Option<Value> {
         .cloned()
 }
 
-/// The evidence line kept for a behavior: what `siftr evidence` shows a person.
+/// The evidence line kept for a behavior: what `siftr explain <behavior>` shows a person.
 fn evidence_line(dir: &Path, run: &str, behavior: &str) -> String {
-    let doc = document(&siftr(dir, &["evidence", behavior, "--run", run, "-j"]));
+    let doc = document(&siftr(dir, &["explain", behavior, "--run", run, "-j"]));
     doc["exemplars"][0]["line"]
         .as_str()
         .unwrap_or_else(|| panic!("an exemplar line: {doc}"))

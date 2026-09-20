@@ -164,7 +164,7 @@ fn a_regression_surfaces_as_new_disappeared_and_frequency_signals() {
     );
 
     let behavior = &changes["signals"][1]["behavior"]["id"].as_str().unwrap()[..10];
-    let evidence = sandbox.output(&["evidence", behavior, "-j"]);
+    let evidence = sandbox.output(&["explain", behavior, "-j"]);
     assert_eq!(code(&evidence), 0, "{}", stderr(&evidence));
     let evidence = json(&evidence);
     assert_eq!(evidence["run"], "r4");
@@ -217,7 +217,7 @@ fn queries_exit_1_when_empty_and_2_on_error() {
         (&["history"], 1),
         (&["changes", "r99"], 2),
         (&["explain", "s1"], 2),
-        (&["evidence", "not-hex"], 2),
+        (&["explain", "not-hex"], 2),
     ];
     for (args, expected) in cases {
         let output = sandbox.output(args);

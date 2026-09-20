@@ -398,7 +398,13 @@ sources, so an ingested run is always null:
 
 ### `explain`
 
-An object.
+An object, in one of two shapes: `explain` takes either kind of id, and which
+one was given decides the document. A signal id gives the shape with `signal`
+and `rule` at the top level; a behavior id (4 to 16 hex digits) gives the shape
+with `behavior` and `stats`. The key sets are disjoint, so `.signal != null`
+tells them apart.
+
+#### a signal id
 
 ```json
 {
@@ -411,7 +417,8 @@ An object.
              "roles": [] },
   "scope_runs": [ { "run": "r4", "value": 10.0 }, { "run": "r3", "value": 3.0 },
                   { "run": "r2", "value": 3.0 },  { "run": "r1", "value": 3.0 } ],
-  "evidence": { "run": "r4", "pruned": null, "exemplars": [ { "…": "exemplar objects" } ] },
+  "evidence": { "run": "r4", "pruned": null, "exemplars": [ { "…": "exemplar objects" } ],
+                "captures": { "file:log/test.log": "/path/to/home/runs/r4/file-log_test.log" } },
   "group": ["s2", "s3", "s4"],
   "resources": null
 }
@@ -430,15 +437,18 @@ null for a signal not attributable to one example.
 signal above is `s1`, and its group is `["s2", "s3", "s4"]`.
 
 `evidence.run` is this run, or for a disappearance the latest baseline run that
-had the behavior, or null when none did. `evidence.pruned` names the retention
-setting that removed the lines, when that is why there are none. `resources`,
-when present, is `{current, baseline}` of what the kernel charged the run — CPU,
-peak RSS and context switches. It is evidence only; no rule reads it.
+had the behavior, or null when none did; `--run` takes the lines from another of
+the runs this signal was compared over, and naming any other run is an error.
+`evidence.pruned` names the retention setting that removed the lines, when that
+is why there are none. `evidence.exemplars` is limited by `-n`, default 8.
+`resources`, when present, is `{current, baseline}` of what the kernel charged
+the run — CPU, peak RSS and context switches. It is evidence only; no rule reads
+it.
 
-### `evidence`
+#### a behavior id
 
-An object. `captures` maps a stream to the run's capture file **only for captures
-still on disk**, so it is `{}` under `SIFTR_CAPTURE=off` or after retention.
+`captures` maps a stream to the run's capture file **only for captures still on
+disk**, so it is `{}` under `SIFTR_CAPTURE=off` or after retention.
 
 ```json
 {
@@ -449,6 +459,9 @@ still on disk**, so it is `{}` under `SIFTR_CAPTURE=off` or after retention.
   "captures": { "file:log/test.log": "/path/to/home/runs/r5/file-log_test.log" }
 }
 ```
+
+`run` is `--run` when given, else the latest run in this project where the
+behavior occurred; it is null, with empty `exemplars`, when it occurred in none.
 
 ### `sources`
 
@@ -503,7 +516,7 @@ The feedback object that was recorded:
 `kind` is `surfaced`, `investigated`, `evidence_requested`, `dismissed` or
 `acked`. `ack` writes `acked`, `ack --wrong` writes `dismissed`, and `command`
 is `"ack"` for both: one verb in the CLI, two facts in the ledger. `signal` is
-null when a behavior was named rather than a signal, as by `evidence`.
+null when a behavior was named rather than a signal, as by `explain <behavior>`.
 
 ### `gc` and `cron`
 
@@ -555,7 +568,7 @@ available", never "the answer is none".
 totals beside their limited arrays (`groups_total`/`signals_total`,
 `behaviors_total`), so a slice is always detectable — and `changes -n` has no
 default, so its document is complete unless you asked otherwise. `history`,
-`history --signals`, `history --sources` and `evidence` carry no total and do
+`history --signals`, `history --sources` and `explain` carry no total and do
 default to a limit, so for those a limited array cannot be distinguished from a
 complete one.
 

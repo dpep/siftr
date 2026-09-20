@@ -48,27 +48,33 @@
 //! - feedback (`ack -j`, `dismiss -j`): `kind` (surfaced|investigated|evidence_requested|dismissed|acked),
 //!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
 //!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
-//!   behavior was named, as by `evidence`), `note`.
+//!   behavior was named, as by `explain <behavior>`), `note`.
 //! - signal outcomes (`history --signals`), newest run first: `signal`, `outcome` (open|resolved|recurred, or
 //!   unknown), `unknown_reason` (null, or why: today's rules no longer reproduce the signal on its own run, or
 //!   retention pruned its baseline runs, naming the setting), `resolved_in` and `recurred_in`
 //!   (run ids or null), `later_runs` (finished runs of the context judged against the signal's own baseline),
 //!   `investigated` (an explain, evidence or ack on its behavior before it resolved), `dismissed`, `feedback`
 //!   (on its behavior, from its run until the run it resolved in, oldest first).
-//! - exemplar (`explain`, `evidence`): `stream`, `seq` (line number in the run's capture of that stream), `line`
+//! - exemplar (`explain`): `stream`, `seq` (line number in the run's capture of that stream), `line`
 //!   (the kept line, cut at 1024 bytes, credentials masked as `<TOKEN_1>` and, under `SIFTR_REDACT=pii`, emails, IPs
 //!   and home directories too), `exception` ({`class`, `message`}, the message whole, read from the capture, when the
 //!   line is a test listener event that carries one; else null).
-//! - explain (`explain -j`): `signal`, `rule`, `runs` [{`run`, `value`}], `scope` (behavior or null), `scope_runs`,
-//!   `evidence` {`run` (this run, or for a disappearance the latest baseline run that had the behavior; null when none
-//!   did), `pruned` (null, or the retention setting that pruned that run's lines, e.g. `SIFTR_KEEP_EVIDENCE`),
-//!   `exemplars`}, `group` (signal ids), `resources` (null, or {`current`, `baseline` (the median across the
-//!   baseline runs, or null when none recorded it)}, each {`cpu_ms`, `cpu_user_ms`, `cpu_system_ms`,
-//!   `max_rss_bytes`, `voluntary_switches`, `involuntary_switches`}: what the kernel charged the run, in whole
-//!   milliseconds and bytes on every platform. Evidence only — no signal rule reads them, so they never raise
-//!   or strengthen a change; they say whether the machine was loaded while it happened).
+//! - explain (`explain -j`) emits one of two documents, told apart by their keys: which one depends on the kind
+//!   of id given.
+//!   - a signal id: `signal`, `rule` (why the rule fired; no confidence — that is `signal.confidence`),
+//!     `runs` [{`run`, `value`}], `scope` (behavior or null), `scope_runs`,
+//!     `evidence` {`run` (this run, or for a disappearance the latest baseline run that had the behavior; null when
+//!     none did, and `--run` names another of the compared runs instead), `pruned` (null, or the retention setting
+//!     that pruned that run's lines, e.g. `SIFTR_KEEP_EVIDENCE`), `exemplars`, `captures`},
+//!     `group` (signal ids), `resources` (null, or {`current`, `baseline` (the median across the
+//!     baseline runs, or null when none recorded it)}, each {`cpu_ms`, `cpu_user_ms`, `cpu_system_ms`,
+//!     `max_rss_bytes`, `voluntary_switches`, `involuntary_switches`}: what the kernel charged the run, in whole
+//!     milliseconds and bytes on every platform. Evidence only — no signal rule reads them, so they never raise
+//!     or strengthen a change; they say whether the machine was loaded while it happened).
+//!   - a behavior id: `behavior`, `run`, `stats`, `exemplars`, `captures` (stream → the run's capture file, only
+//!     for captures still on disk).
 //! - nothing found (exit 1) is still the command's document: `changes` with `run` null and empty arrays,
-//!   `summary` with `run` null, `evidence` with `run` null, `history` an empty array.
+//!   `summary` with `run` null, `explain` of a behavior with `run` null, `history` an empty array.
 //! - not recorded (`run -j` when the store was unusable or busy, or analysis failed; the exit code is still the
 //!   command's): that same empty `changes` document plus `not_recorded` {`code`, `message`}, `code` as for an error.
 //! - error (exit 2; `run` keeps its own codes), on stdout: {`error`: {`code`, `message`}}. `code` is `usage`
@@ -753,14 +759,15 @@ pub fn rule(s: &Signal) -> String {
         SignalKind::New => format!("absent from all {n} baseline runs"),
         SignalKind::Disappeared => format!("present in all {n} baseline runs"),
         SignalKind::Latency => "slower than every baseline run by more than max(100ms, 3x median), with no neighbouring example or suite stall to explain it".to_owned(),
-        SignalKind::Error => "failed now; no baseline failure had the same exception".to_owned(),
+        SignalKind::Error => {
+            "failed now; no baseline failure had the same exception".to_owned()
+        }
         SignalKind::Incomplete if s.measure == siftr::signal::measure::PAST_CAP => {
-            "the cap cut behaviors out of this run, so a behavior it lacks may simply not have fitted"
-                .to_owned()
+            "the cap cut behaviors out of this run, so a behavior it lacks may simply not have fitted".to_owned()
         }
-        SignalKind::Incomplete => {
-            format!("didn't run what all {n} baseline runs did, so what it lacks isn't signalled")
-        }
+        SignalKind::Incomplete => format!(
+            "didn't run what all {n} baseline runs did, so what it lacks isn't signalled"
+        ),
     }
 }
 

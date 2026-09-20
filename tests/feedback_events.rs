@@ -118,7 +118,7 @@ fn reading_and_acting_on_signals_is_recorded_where_it_happened() {
         .find(|s| s["kind"] == "disappeared")
         .expect("the renamed example");
     let gone_behavior = gone["behavior"]["id"].as_str().unwrap();
-    let evidence = sandbox.siftr(&["evidence", &gone_behavior[..10]]);
+    let evidence = sandbox.siftr(&["explain", &gone_behavior[..10]]);
     assert!(evidence.status.success(), "{}", stderr(&evidence));
 
     let ack = sandbox.siftr(&["ack", "s1", "-m", "fixing the N+1"]);
@@ -153,7 +153,7 @@ fn reading_and_acting_on_signals_is_recorded_where_it_happened() {
     }
     expected.extend([
         "investigated explain json r4 s1 -".to_owned(),
-        "evidence_requested evidence human r3 - -".to_owned(),
+        "evidence_requested explain human r3 - -".to_owned(),
         "acked ack human r4 s1 fixing the N+1".to_owned(),
         "dismissed ack json r4 s2 -".to_owned(),
     ]);
@@ -221,7 +221,7 @@ fn feedback_that_cannot_be_recorded_warns_and_never_fails_a_reading_command() {
 
     let explain = sandbox.siftr(&["explain", "s1"]);
     assert_eq!(explain.status.code(), Some(0), "{}", stderr(&explain));
-    assert!(stdout(&explain).contains("next: siftr evidence"));
+    assert!(stdout(&explain).contains("next: siftr summary"));
     assert!(
         stderr(&explain).contains("siftr: warning: feedback not recorded"),
         "{}",

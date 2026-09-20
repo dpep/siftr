@@ -1,5 +1,9 @@
-//! `siftr explain <SIGNAL>`: signal → behavior → per-run numbers → scope → exemplar raw lines.
+//! `siftr explain <ID>`: one command for either kind of id a user has in hand.
+//!
+//! A signal id reads signal → behavior → per-run numbers → scope → exemplar raw lines; a behavior id reads
+//! straight to that behavior's lines in one run ([`super::evidence`]). Both take `--run` and `-n`.
 
+use std::collections::BTreeMap;
 use std::process::ExitCode;
 
 use anyhow::Result;
@@ -7,7 +11,7 @@ use serde_json::{Value, json};
 use siftr::aggregate::{Phase, RunStats};
 use siftr::interpret::resources::Resources;
 use siftr::signal::{self, measure};
-use siftr::store::{Feedback, FeedbackKind, Pruned, RunId, SignalId};
+use siftr::store::{Feedback, FeedbackKind, Pruned, RunId, SignalId, Store};
 
 use super::{Globals, record_feedback};
 use crate::output::{
@@ -17,11 +21,64 @@ use crate::output::{
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Signal id, like s3
-    signal: SignalId,
+    /// Signal id like s3, or a behavior id (4 to 16 hex digits)
+    id: String,
+
+    /// Run to take evidence from [default: the run that has it]
+    #[arg(long)]
+    pub run: Option<RunId>,
+
+    /// How many evidence lines to show
+    #[arg(short = 'n', long, default_value_t = 8)]
+    pub limit: usize,
 }
 
-const EXEMPLARS: usize = 5;
+/// Which kind of id was given. The two never collide: `s` is not a hex digit, and a behavior id is at least
+/// four of them, so a signal always carries its prefix here.
+enum Id {
+    Signal(SignalId),
+    Behavior(String),
+}
+
+fn parse_id(id: &str) -> Result<Id> {
+    let signal = id
+        .strip_prefix('s')
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    if signal {
+        return Ok(Id::Signal(id.parse()?));
+    }
+    if (4..=16).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Ok(Id::Behavior(id.to_owned()));
+    }
+    Err(output::usage(format!(
+        "invalid id {id:?}; expected a signal id like s3, as siftr changes shows, \
+         or 4 to 16 hex digits of a behavior id, as siftr summary shows"
+    )))
+}
+
+pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
+    match parse_id(&args.id)? {
+        Id::Signal(signal) => explain(signal, &args, globals),
+        Id::Behavior(behavior) => super::evidence::show(&behavior, &args, globals),
+    }
+}
+
+/// Only the captures still on disk: `SIFTR_CAPTURE=off` and retention both leave the path unwritten, and a
+/// file that isn't there sends the reader somewhere empty.
+pub fn captures(
+    store: &Store,
+    run: RunId,
+    exemplars: &[siftr::aggregate::Exemplar],
+) -> BTreeMap<String, String> {
+    exemplars
+        .iter()
+        .filter_map(|e| {
+            let path = store.capture_file(run, &e.stream);
+            path.is_file()
+                .then(|| (e.stream.to_string(), path.display().to_string()))
+        })
+        .collect()
+}
 
 /// Whole milliseconds, the precision the measures were built with: the kernel reports microseconds but
 /// accounts in ticks, so finer digits would be noise dressed as evidence.
@@ -37,12 +94,11 @@ fn resources_json(r: &Resources) -> Value {
     })
 }
 
-pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
+fn explain(signal: SignalId, args: &Args, globals: &Globals) -> Result<ExitCode> {
     let store = globals.open_store()?;
-    let stored = store.signal(args.signal)?.ok_or_else(|| {
+    let stored = store.signal(signal)?.ok_or_else(|| {
         output::not_found(format!(
-            "no signal {}; siftr history --signals lists recent signals",
-            args.signal
+            "no signal {signal}; siftr history --signals lists recent signals"
         ))
     })?;
     let behavior = &stored.behavior;
@@ -88,18 +144,33 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             .collect()
     });
     // Evidence from where the behavior occurred: this run, or for a disappearance the latest baseline run that had it.
-    let evidence_run = runs
-        .iter()
-        .find(|(_, stats)| stats.count(behavior.id) > 0)
-        .map(|(run, _)| *run);
+    // `--run` picks another of the runs compared here; anything else would file lines from an unrelated
+    // comparison under this signal's evidence.
+    let evidence_run = match args.run {
+        Some(run) if !runs.iter().any(|&(id, _)| id == run) => {
+            return Err(output::not_found(format!(
+                "no {run} in {}'s comparison; its runs are {}",
+                stored.id,
+                output::ids(&runs.iter().map(|&(id, _)| id).collect::<Vec<_>>()).join(" ")
+            )));
+        }
+        Some(run) => Some(run),
+        None => runs
+            .iter()
+            .find(|(_, stats)| stats.count(behavior.id) > 0)
+            .map(|(run, _)| *run),
+    };
     // Pruned evidence costs the lines, not the explanation: the numbers above don't need it.
     let (exemplars, evidence_pruned) = match evidence_run {
-        Some(run) => match store.exemplars(run, behavior.id, EXEMPLARS) {
+        Some(run) => match store.exemplars(run, behavior.id, args.limit) {
             Ok(exemplars) => (exemplars, None),
             Err(error) => (Vec::new(), Some(error.downcast::<Pruned>()?)),
         },
         None => (Vec::new(), None),
     };
+    let captures = evidence_run
+        .map(|run| captures(&store, run, &exemplars))
+        .unwrap_or_default();
     let signals = store.signals(stored.run)?;
     let group = groups(&signals)
         .into_iter()
@@ -143,6 +214,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                     .zip(&events)
                     .map(|(e, event)| exemplar_json(e, event.as_deref()))
                     .collect::<Vec<_>>(),
+                "captures": captures,
             },
             "group": group.iter().map(|m| m.id.to_string()).collect::<Vec<_>>(),
             "resources": resources.map(|now| json!({
@@ -224,6 +296,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             let at = format!("{}:{}", exemplar.stream, exemplar.seq);
             writeln!(w, "          {at:<20} {}", printable(&exemplar.line, 160))?;
         }
+        for (stream, path) in &captures {
+            writeln!(w, "capture   {stream}  {path}")?;
+        }
         for member in &group {
             writeln!(
                 w,
@@ -234,15 +309,11 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                 change(member)
             )?;
         }
-        let run = evidence_run.unwrap_or(stored.run);
-        match evidence_pruned {
-            Some(_) => writeln!(w, "next: siftr summary {run}"),
-            None => writeln!(
-                w,
-                "next: siftr evidence {} --run {run}",
-                behavior.id.short()
-            ),
-        }
+        writeln!(
+            w,
+            "next: siftr summary {}",
+            evidence_run.unwrap_or(stored.run)
+        )
     })?;
     record_feedback(
         &store,

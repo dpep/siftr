@@ -43,7 +43,7 @@ What siftr stores (the command's own output always passes through unchanged):
   SIFTR_REDACT=secrets  default: credentials (tokens, keys, passwords, cookies) are masked before anything is stored
   SIFTR_REDACT=pii      also emails, public IPs and home directories in raw captures and kept lines
   SIFTR_REDACT=off      raw captures keep the output as it was; the database still never holds a credential
-  SIFTR_CAPTURE=off     no raw capture on disk; explain and evidence then show kept lines, not whole messages
+  SIFTR_CAPTURE=off     no raw capture on disk; explain then shows kept lines, not whole messages
 
 Examples:
   siftr run -- bundle exec rspec
@@ -53,7 +53,8 @@ Examples:
   siftr sources -- bundle exec rspec
   siftr cron
   siftr changes
-  siftr explain s3
+  siftr explain s3                            a signal: its numbers, and the lines behind them
+  siftr explain 39b38737bf --run r5           a behavior: the lines kept for it in one run
   siftr ack s3 -m 'fixing the N+1'";
 
 #[derive(Parser)]
@@ -91,9 +92,7 @@ enum Command {
     Changes(cmd::changes::Args),
     /// A run's top behaviors by count or time
     Summary(cmd::summary::Args),
-    /// Raw lines kept as evidence for a behavior
-    Evidence(cmd::evidence::Args),
-    /// A signal's current and baseline numbers, and its evidence
+    /// A signal's numbers and evidence, or a behavior's kept lines
     Explain(cmd::explain::Args),
     /// Answer a signal — acting on it, or `--wrong` for noise — and stop being reminded of it
     Ack(cmd::feedback::Args),
@@ -143,7 +142,6 @@ fn main() -> ExitCode {
         Command::Cron(args) => cmd::cron::run(args, &globals),
         Command::Changes(args) => cmd::changes::run(args, &globals),
         Command::Summary(args) => cmd::summary::run(args, &globals),
-        Command::Evidence(args) => cmd::evidence::run(args, &globals),
         Command::Explain(args) => cmd::explain::run(args, &globals),
         Command::Ack(args) => cmd::feedback::run(args, &globals),
         Command::History(args) => cmd::history::run(args, &globals),

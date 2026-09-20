@@ -235,7 +235,7 @@ fn evidence_names_a_capture_only_when_there_is_one_to_open() {
 
     let kept = Sandbox::new();
     kept.ingest(&exposure(), &[]);
-    let output = kept.siftr(&["evidence", &first_behavior(&kept)], &[]);
+    let output = kept.siftr(&["explain", &first_behavior(&kept)], &[]);
     let listed = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(
         listed.contains("capture "),
@@ -246,7 +246,7 @@ fn evidence_names_a_capture_only_when_there_is_one_to_open() {
     let off = Sandbox::new();
     off.ingest(&exposure(), &[("SIFTR_CAPTURE", "off")]);
     let behavior = first_behavior(&off);
-    let output = off.siftr(&["evidence", &behavior], &[]);
+    let output = off.siftr(&["explain", &behavior], &[]);
     let listed = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(
         listed.contains("<TOKEN_1>"),
@@ -257,7 +257,7 @@ fn evidence_names_a_capture_only_when_there_is_one_to_open() {
         "nothing was captured, so there is no file to name: {listed}"
     );
     let json: Value =
-        serde_json::from_slice(&off.siftr(&["-j", "evidence", &behavior], &[]).stdout).unwrap();
+        serde_json::from_slice(&off.siftr(&["-j", "explain", &behavior], &[]).stdout).unwrap();
     assert_eq!(json["captures"], serde_json::json!({}), "{json}");
 }
 

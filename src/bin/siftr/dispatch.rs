@@ -14,8 +14,8 @@ use std::path::Path;
 use crate::output;
 
 pub const SUBCOMMANDS: &[&str] = &[
-    "run", "ingest", "follow", "changes", "summary", "evidence", "explain", "ack", "history",
-    "sources", "status", "gc",
+    "run", "ingest", "follow", "changes", "summary", "explain", "ack", "history", "sources",
+    "status", "gc",
 ];
 pub const PRESETS: &[&str] = &["cron"];
 
@@ -103,9 +103,12 @@ fn is_flag(arg: &OsString) -> bool {
 }
 
 /// Commands that were removed, and the exact thing to type instead. A word a user's fingers still
-/// type deserves the answer rather than the whole list — and the edit distance below cannot find it:
-/// `dismiss` is nowhere near `ack`.
-const RETIRED: &[(&str, &str)] = &[("dismiss", "siftr ack SIGNAL --wrong")];
+/// type deserves the answer rather than the whole list — and the edit distance below cannot reach
+/// either of these: `dismiss` is nowhere near `ack`, nor `evidence` near `explain`.
+const RETIRED: &[(&str, &str)] = &[
+    ("dismiss", "siftr ack SIGNAL --wrong"),
+    ("evidence", "siftr explain BEHAVIOR"),
+];
 
 fn unknown(word: &str) -> String {
     if let Some((_, replacement)) = RETIRED.iter().find(|(name, _)| *name == word) {
