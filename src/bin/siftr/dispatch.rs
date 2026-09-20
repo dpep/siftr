@@ -268,14 +268,12 @@ mod tests {
     /// the edit distance to find: answer it instead of handing back the whole list.
     #[test]
     fn a_retired_command_names_what_replaced_it() {
-        let gone = with(&[], &[], false, &["dismiss"]).unwrap_err();
-        assert_eq!(
-            gone,
-            "'dismiss' was removed; use `siftr ack SIGNAL --wrong`"
-        );
-        assert!(
-            distance("dismiss", "ack") > 2,
-            "the fallback could have found it"
-        );
+        for (word, replacement) in RETIRED {
+            let gone = with(&[], &[], false, &[word]).unwrap_err();
+            assert_eq!(gone, format!("'{word}' was removed; use `{replacement}`"));
+        }
+        // Each is beyond the did-you-mean fallback, which is the only reason this table exists.
+        assert!(distance("dismiss", "ack") > 2);
+        assert!(distance("evidence", "explain") > 2);
     }
 }
