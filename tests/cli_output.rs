@@ -13,14 +13,19 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    fn siftr(&self, args: &[&str]) -> Output {
-        let output = Command::new(env!("CARGO_BIN_EXE_siftr"))
+    /// Whatever the command did, including its exit code.
+    fn siftr_raw(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_siftr"))
             .args(args)
             .current_dir(self.project.path())
             .env("SIFTR_HOME", self.home.path())
             .env_remove("XDG_DATA_HOME")
             .output()
-            .unwrap();
+            .unwrap()
+    }
+
+    fn siftr(&self, args: &[&str]) -> Output {
+        let output = self.siftr_raw(args);
         assert!(
             output.status.success(),
             "{args:?}: {}",
@@ -155,12 +160,84 @@ fn a_change_after_the_last_example_reads_as_teardown() {
     );
     let explain = sandbox.text(&["explain", "s1"]);
     assert!(
-        explain.starts_with("s1  NEW  conf 0.80  in r4, group 1 headline\n"),
+        explain.starts_with("s1  NEW  in r4, group 1 headline\n"),
         "{explain}"
     );
     assert!(explain.contains(" (after the last example)\n"), "{explain}");
     assert!(
         explain.contains("\nscope     after the last example (teardown)\n"),
         "{explain}"
+    );
+}
+
+/// Confidence ranks below chance (`docs/findings/confidence.md`) and reads as severity wherever it is printed.
+/// It is `-j` only: this sweeps every human command, so the next place it could reappear is caught here.
+#[test]
+fn no_human_output_prints_a_confidence_score() {
+    let sandbox = Sandbox {
+        home: tempfile::tempdir().unwrap(),
+        project: tempfile::tempdir().unwrap(),
+    };
+    let mut reports = vec![sandbox.ingest("baseline")];
+    for scenario in ["baseline_2", "baseline_documentation", "n_plus_one", "fail"] {
+        reports.push(sandbox.ingest(scenario));
+    }
+    let doc: Value =
+        serde_json::from_slice(&sandbox.siftr(&["explain", "s1", "-j"]).stdout).unwrap();
+    let behavior = &doc["signal"]["behavior"]["id"].as_str().unwrap()[..10];
+    for args in [
+        vec!["changes"],
+        vec!["changes", "r4"],
+        vec!["explain", "s1"],
+        vec!["evidence", behavior],
+        vec!["summary", "r4"],
+        vec!["history"],
+        vec!["history", "--signals"],
+        vec!["status"],
+    ] {
+        // Raw: `status` exits 1 when the data dir needs attention, and its output still counts.
+        reports.push(String::from_utf8(sandbox.siftr_raw(&args).stdout).unwrap());
+    }
+    for report in reports {
+        assert!(
+            !report.contains("conf ") && !report.contains("confidence"),
+            "a score a reader will rank on: {report}"
+        );
+    }
+}
+
+/// The order is the ranking, said once, and only where there is an order to speak of.
+#[test]
+fn a_report_of_several_changes_says_the_order_is_the_ranking() {
+    let sandbox = Sandbox {
+        home: tempfile::tempdir().unwrap(),
+        project: tempfile::tempdir().unwrap(),
+    };
+    for scenario in ["baseline", "baseline_2", "baseline_documentation"] {
+        sandbox.ingest(scenario);
+    }
+    let one = sandbox.ingest("n_plus_one");
+    assert!(
+        one.starts_with("r4 vs 3 baseline runs (r1 r2 r3): 1 change\n"),
+        "{one}"
+    );
+    assert!(
+        !one.contains("most important first"),
+        "one change has no order: {one}"
+    );
+
+    let several = sandbox.ingest("fail_fast");
+    assert_eq!(
+        several.matches("most important first").count(),
+        1,
+        "said once, in the header: {several}"
+    );
+    assert!(
+        several
+            .lines()
+            .next()
+            .unwrap()
+            .ends_with("2 changes, most important first"),
+        "{several}"
     );
 }

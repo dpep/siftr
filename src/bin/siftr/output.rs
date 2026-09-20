@@ -457,12 +457,20 @@ impl Changes<'_> {
                 [] => String::new(),
                 skipped => format!("; skipped {}", skipped_label(skipped, &named)),
             };
+            // The order is the ranking, so the report says so once instead of printing a score per line.
+            let order = if code.len() > 1 {
+                ", most important first"
+            } else {
+                ""
+            };
             // "0 changes" beside a still-open reminder reads as "did it change or not?".
             let moved = match (code.len() as u64, open.len()) {
                 (0, 0) => plural(0, "change"),
                 (0, open) => format!("no new changes · {open} still open"),
-                (changes, 0) => plural(changes, "change"),
-                (changes, open) => format!("{} · {open} still open", plural(changes, "change")),
+                (changes, 0) => format!("{}{order}", plural(changes, "change")),
+                (changes, open) => {
+                    format!("{}{order} · {open} still open", plural(changes, "change"))
+                }
             };
             write!(
                 w,
@@ -618,8 +626,8 @@ fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
 
 /// How much baseline backs a change, where the report used to print `conf`. For every kind but LATENCY the
 /// confidence is `(n+1)/(n+2)` exactly — a bijection of this count — so the count says strictly more and
-/// implies strictly less than a 0–1 score does (`docs/findings/confidence.md`). The number itself stays in
-/// `-j` and in `explain`, which prints the formula beside it.
+/// implies strictly less than a 0–1 score does (`docs/findings/confidence.md`). The number itself is `-j` only:
+/// no human output prints it, since at ranking it scored below chance and readers ranked on it anyway.
 fn backing(s: &Signal) -> String {
     plural(u64::from(s.baseline.runs), "baseline run")
 }
@@ -730,36 +738,29 @@ pub fn change(stored: &StoredSignal) -> String {
     text
 }
 
-/// Why the rule fired and how its confidence was built.
+/// Why the rule fired. Says nothing about confidence: the score it used to quote ranks below chance
+/// (`docs/findings/confidence.md`), and a formula beside a rule reads as the rule's strength.
 pub fn rule(s: &Signal) -> String {
     let b = &s.baseline;
     let n = b.runs;
-    let c = format!("{:.2}", s.confidence);
     match s.kind {
-        SignalKind::Frequency if b.min == b.max => format!(
-            "identical in all {n} baseline runs, so any change counts; confidence (n+1)/(n+2) = {c}"
-        ),
-        SignalKind::Frequency => format!(
-            "outside the baseline range by more than twice its width; confidence (n+1)/(n+2) x (1 - width/distance) = {c}"
-        ),
-        SignalKind::New => {
-            format!("absent from all {n} baseline runs; confidence (n+1)/(n+2) = {c}")
+        SignalKind::Frequency if b.min == b.max => {
+            format!("identical in all {n} baseline runs, so any change counts")
         }
-        SignalKind::Disappeared => {
-            format!("present in all {n} baseline runs; confidence (n+1)/(n+2) = {c}")
+        SignalKind::Frequency => {
+            "outside the baseline range by more than twice its width".to_owned()
         }
-        SignalKind::Latency => format!(
-            "slower than every baseline run by more than max(100ms, 3x median), with no neighbouring example or suite stall to explain it; confidence (n+1)/(n+2) x e/(1+e) = {c}"
-        ),
-        SignalKind::Error => format!(
-            "failed now; no baseline failure had the same exception; confidence 1 - (failures+1)/(n+2) = {c}"
-        ),
-        SignalKind::Incomplete if s.measure == siftr::signal::measure::PAST_CAP => format!(
-            "the cap cut behaviors out of this run, so a behavior it lacks may simply not have fitted; confidence (n+1)/(n+2) = {c}"
-        ),
-        SignalKind::Incomplete => format!(
-            "didn't run what all {n} baseline runs did, so what it lacks isn't signalled; confidence (n+1)/(n+2) = {c}"
-        ),
+        SignalKind::New => format!("absent from all {n} baseline runs"),
+        SignalKind::Disappeared => format!("present in all {n} baseline runs"),
+        SignalKind::Latency => "slower than every baseline run by more than max(100ms, 3x median), with no neighbouring example or suite stall to explain it".to_owned(),
+        SignalKind::Error => "failed now; no baseline failure had the same exception".to_owned(),
+        SignalKind::Incomplete if s.measure == siftr::signal::measure::PAST_CAP => {
+            "the cap cut behaviors out of this run, so a behavior it lacks may simply not have fitted"
+                .to_owned()
+        }
+        SignalKind::Incomplete => {
+            format!("didn't run what all {n} baseline runs did, so what it lacks isn't signalled")
+        }
     }
 }
 

@@ -160,9 +160,10 @@ with `headline: true` is its head.
 For every kind but `latency` it is exactly `(n+1)/(n+2)` over `baseline.runs` —
 a bijection of that count, carrying no effect size — so it ranks nothing and
 should not be thresholded. Rank on `tier`, and judge size from `current`
-against `baseline`. Human output prints the baseline run count in its place for
-this reason; the measurement behind that is
-[findings/confidence.md](findings/confidence.md).
+against `baseline`. **No human output prints it**: it scored below chance at
+ranking and readers ranked on it anyway, so `-j` is the only place it appears
+([findings/confidence.md](findings/confidence.md)). The human report prints the
+baseline run count instead, and lists changes most important first.
 
 ### `exemplar`
 
@@ -402,7 +403,7 @@ An object.
 ```json
 {
   "signal": { "…": "the signal object" },
-  "rule": "identical in all 3 baseline runs, so any change counts; confidence (n+1)/(n+2) = 0.80",
+  "rule": "identical in all 3 baseline runs, so any change counts",
   "runs": [ { "run": "r4", "value": 10.0 }, { "run": "r3", "value": 3.0 },
             { "run": "r2", "value": 3.0 },  { "run": "r1", "value": 3.0 } ],
   "scope": { "id": "872cda219ee77788", "kind": "test.example",
@@ -415,6 +416,10 @@ An object.
   "resources": null
 }
 ```
+
+`rule` says why the rule fired and nothing about confidence: the score it used
+to quote is `signal.confidence`, and reading a formula as the rule's strength is
+the mistake that took it out of human output.
 
 `runs` is the measure's value in this run followed by each baseline run, newest
 first; a null `value` means the behavior was absent from that run. `scope` is the

@@ -155,10 +155,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         let role = if s.headline { "headline" } else { "supporting" };
         writeln!(
             w,
-            "{}  {}  conf {:.2}  in {}, group {} {role}",
+            "{}  {}  in {}, group {} {role}",
             stored.id,
             label(s.kind),
-            s.confidence,
             stored.run,
             s.group
         )?;

@@ -123,7 +123,7 @@ fn a_run_stopped_early_says_how_far_it_got() {
     let recorded = sandbox.ingest(&fixture("fail_fast"));
     assert!(
         recorded.starts_with(
-            "r4 (incomplete: ran 6 of 10 examples) vs 3 baseline runs (r1 r2 r3): 2 changes\n"
+            "r4 (incomplete: ran 6 of 10 examples) vs 3 baseline runs (r1 r2 r3): 2 changes, most important first\n"
         ),
         "{recorded}"
     );
