@@ -1,0 +1,44 @@
+ad8fe1e 2025-07-04 Include HTTP method and URL in Faraday::Error messages for improved exception log transparency (#1628)
+da86eba 2025-07-04 Version bump to 2.13.2
+674fc15 2025-07-22 Fix type assumption in `Faraday::Error` (#1630)
+e76e60d 2025-07-22 Version bump to 2.13.3
+cf32578 2025-07-25 Improve error handling logic and add missing test coverage (#1633)
+d099faf 2025-07-25 Version bump to 2.13.4
+f0aab63 2025-08-12 Lint: use filter_map (#1637)
+bc27144 2025-08-12 Bump actions/checkout from 4 to 5 (#1636)
+fd81a73 2025-09-20 Convert strings to UTF-8 (#1624)
+c399e43 2025-09-20 Fixes typo (#1635)
+0e008c5 2025-09-21 Use newer Unprocessable Content naming for 422 (#1638)
+edd8cc5 2025-09-28 Fix `Faraday::Response#to_hash` when request is not finished yet (#1639)
+3201a42 2025-09-28 Version bump to 2.14.0
+56c18ec 2025-10-04 Add AI agent guidelines specific to Faraday repository
+d98c65c 2025-10-04 Update Faraday-specific AI agent guidelines
+397e3de 2025-10-04 Add comprehensive AI agent guidelines for Claude, Cursor, and GitHub Copilot (#1642)
+894f65c 2025-11-16 Add RFC document for Options architecture refactoring plan (#1644)
+51a49bc 2025-11-23 Ensure Claude reads the guidelines and allow to plan in a gitignored .ai/PLAN.md doc
+49ba4ac 2025-11-24 Bump actions/checkout from 5 to 6 (#1655)
+b23f710 2025-12-09 Explicit top-level namespace reference (#1657)
+a6d3a3a 2026-02-07 Merge commit from fork
+16cbd38 2026-02-07 Version bump to 2.14.1
+32e010f 2026-02-07 Add Ruby 4 to CI (#1659)
+c6988a8 2026-02-09 Modernize RuboCop configuration and fix offenses (#1660)
+7df3f24 2026-03-10 Lint: Style/OneClassPerFile (#1668)
+a01039c 2026-03-10 fix(docs): fix incorrect link label in request-options and remove dead link in url-encoding (#1667)
+8b4d1fd 2026-03-16 Create SECURITY.md
+81dc168 2026-04-08 Upgrade package.json packages using audit fix (#1669)
+3f1280c 2026-05-15 Merge commit from fork
+2ecd5e0 2026-05-15 Update version.rb
+469f25c 2026-05-16 Upgrade CI lint step from Ruby 3 to 4 (#1673)
+59334e0 2026-05-18 feat(test): add Stubs#clear to remove all stubs (#1675)
+36764bf 2026-06-16 Merge commit from fork
+f1ace87 2026-06-16 Version bump to 2.14.3
+06bc5ad 2026-06-22 Bump actions/checkout from 6 to 7 (#1678)
+3725183 2026-06-23 Update copyright year to 2026 (#1683)
+b25b1b2 2026-08-12 Support JSON 3 (#1687)
+9458f04 2026-08-27 Preserve caller-owned JSON parser options
+e7e23ae 2026-09-02 Define HTTP verb methods on Faraday so tools can see them
+20d93f8 2026-06-04 Document Options struct attributes for YARD
+6aa82a5 2026-09-14 Configure SimpleCov for 1.0, too
+3ece9bd 2026-09-15 v2.14.4
+990f5f1 2026-09-05 Keep Coveralls token out of pull request jobs
+d37e1e0 2026-09-05 Update the local documentation server
