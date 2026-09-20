@@ -75,6 +75,19 @@ impl B {
         self.0.scopes.sort_by_key(|s| s.scope);
         self
     }
+    /// `count` occurrences of `ms` each, as a behavior that recurs through a run carries them.
+    fn ms_each(mut self, ms: f64, count: u64) -> Self {
+        let each = Duration::from_secs_f64(ms / 1e3);
+        self.0.stats.count = count;
+        self.0.stats.duration = Some(DurationSummary {
+            count,
+            total: Duration::from_secs_f64(ms * count as f64 / 1e3),
+            p50: each,
+            p95: each,
+            max: each,
+        });
+        self
+    }
     fn queries(mut self, sum: f64) -> Self {
         self.0.measures = vec![Measure {
             name: "queries".to_owned(),
@@ -377,6 +390,69 @@ fn a_slow_example_is_latency_unless_its_neighbour_slowed_too() {
             .iter()
             .all(|r| r.3 != "duration_ms" || r.2 != SignalKind::Latency || r.4 != 304.0),
         "b is vetoed by c's slowdown: {stall:?}"
+    );
+}
+
+/// The traffic regression of `docs/findings/traffic-vs-dev-loop.md`: eight identical requests a run at
+/// 1ms, then at 430ms. No examples, so no neighbour and no suite — the duration the run already
+/// recorded is the whole of the evidence.
+#[test]
+fn a_slow_request_is_latency_with_no_example_in_sight() {
+    let requests = |ms: f64| {
+        run(&[
+            b(Kind::HttpRequest, "GET PostsController#index 2xx").ms_each(ms, 8),
+            b(Kind::DbQuery, "Post Load").ms_each(0.1, 8),
+        ])
+    };
+    let baseline = vec![requests(1.0), requests(1.1), requests(1.0)];
+    assert_eq!(
+        rows(&requests(430.0), &baseline),
+        [row(
+            1,
+            true,
+            SignalKind::Latency,
+            "duration_ms",
+            430.0,
+            0.65
+        )],
+        "the query held its 0.1ms, far under the floor"
+    );
+}
+
+/// The window guard is what carries over to a behavior with no neighbour, and it is charged in totals:
+/// a request occurring 8 times a run moves the window by 8 times its per-occurrence delta, so charging
+/// it one delta would leave the other seven looking like the rest of the run stalling.
+#[test]
+fn a_recurring_behavior_is_vetoed_only_when_its_window_moved_without_it() {
+    let pair = |index: f64, show: f64| {
+        run(&[
+            b(Kind::HttpRequest, "GET PostsController#index 2xx")
+                .ms_each(index, 8)
+                .seq(1),
+            b(Kind::HttpRequest, "GET PostsController#show 2xx")
+                .ms_each(show, 8)
+                .seq(2),
+        ])
+    };
+    let baseline = vec![pair(1.0, 1.0), pair(1.1, 1.2), pair(1.0, 1.1)];
+    assert_eq!(
+        rows(&pair(430.0, 1.0), &baseline),
+        [row(
+            1,
+            true,
+            SignalKind::Latency,
+            "duration_ms",
+            430.0,
+            0.65
+        )],
+        "one endpoint slowed and the other didn't: that is the change"
+    );
+    // The guard vetoes a minority of the window's move, here and for examples alike. The largest mover
+    // is what neither it nor anything else vetoes off the example path: `docs/findings/latency.md`.
+    let stall = rows(&pair(430.0, 2000.0), &baseline);
+    assert!(
+        stall.iter().all(|r| r.4 != 430.0),
+        "index moved less than the window it sits in: a stall, not its own change ({stall:?})"
     );
 }
 

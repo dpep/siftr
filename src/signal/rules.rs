@@ -13,6 +13,7 @@ pub const LATENCY_FLOOR_MS: f64 = 100.0;
 /// …and this ratio to the baseline median, since relative noise stays at 2–4x at every speed.
 pub const LATENCY_RATIO: f64 = 4.0;
 /// An adjacent example slowed by this share of the slowdown means the machine stalled, not the code.
+/// Examples only: see [`latency`].
 pub const NEIGHBOUR_SHARE: f64 = 0.5;
 /// The rest of the run slowing by more than this many robust spreads is also a stall.
 pub const STALL_SPREADS: f64 = 3.0;
@@ -97,11 +98,16 @@ pub fn error(failures: usize, n: usize, known_flaky: bool) -> Option<f64> {
     Some(confidence(1.0 - (failures as f64 + 1.0) / (n as f64 + 2.0)))
 }
 
-/// The suite's duration (ms), for telling a stall from a slow example.
+/// The window a slowdown would have to hide in (ms of total time), for telling a stall from a real
+/// change: the suite for an example, the run's total time in that kind of work for anything else.
 #[derive(Debug, Clone, Copy)]
-pub struct Suite<'a> {
+pub struct Window<'a> {
     pub baseline: &'a [f64],
     pub current: f64,
+    /// How much of `current − median(baseline)` this behavior accounts for, in the same unit. Totals,
+    /// not per-occurrence: a behavior occurring 8 times a run moves the window by 8 times its delta,
+    /// and charging it only its delta would read the other 7 as the rest of the run stalling.
+    pub excess: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -110,13 +116,15 @@ pub struct Latency {
     pub confidence: f64,
 }
 
-/// One example's duration (ms) against the runs that ran it. `neighbour_excess`: the largest slowdown
-/// (current − baseline median) of the examples run just before and after it, when known.
+/// One behavior's mean duration per occurrence (ms) against the runs that timed it. `neighbour_excess`:
+/// the largest slowdown (current − baseline median) of the examples run just before and after it —
+/// examples only, since nothing else has an adjacent anything. `window`: what it would have to have
+/// slowed alongside to be a stall rather than a change.
 pub fn latency(
     baseline: &[f64],
     current: f64,
     neighbour_excess: Option<f64>,
-    suite: Option<Suite<'_>>,
+    window: Option<Window<'_>>,
 ) -> Option<Latency> {
     let n = baseline.len();
     if n < MIN_RUNS {
@@ -132,11 +140,12 @@ pub fn latency(
     if neighbour_excess.unwrap_or(0.0) >= NEIGHBOUR_SHARE * delta {
         return None;
     }
-    if let Some(suite) = suite
-        && let (Some(suite_median), Some(suite_mad)) = (median(suite.baseline), mad(suite.baseline))
+    if let Some(window) = window
+        && let (Some(window_median), Some(window_mad)) =
+            (median(window.baseline), mad(window.baseline))
     {
-        let rest = (suite.current - suite_median) - delta;
-        if rest > delta && rest > STALL_SPREADS * MAD_TO_SIGMA * suite_mad {
+        let rest = (window.current - window_median) - window.excess;
+        if rest > window.excess && rest > STALL_SPREADS * MAD_TO_SIGMA * window_mad {
             return None;
         }
     }
@@ -151,24 +160,24 @@ pub fn latency(
 mod tests {
     use super::*;
 
-    /// `(vector, baseline, current, neighbour excess, suite, expected confidence)`.
+    /// `(vector, baseline, current, neighbour excess, window, expected confidence)`.
     type LatencyCase<'a> = (
         u8,
         &'a [f64],
         f64,
         Option<f64>,
-        Option<Suite<'a>>,
+        Option<Window<'a>>,
         Option<f64>,
     );
     /// `(vector, baseline, current, expected (exact, confidence))`.
     type FrequencyCase<'a> = (u8, &'a [f64], f64, Option<(bool, f64)>);
 
-    /// signals.md §6, vectors 1–13.
+    /// signals.md §6, vectors 1–13 and 31.
     #[test]
     fn latency_vectors() {
         let tens = [1.0; 10];
         let quiet = [100.0, 105.0, 110.0];
-        let cases: [LatencyCase<'_>; 13] = [
+        let cases: [LatencyCase<'_>; 14] = [
             (1, &[1.0, 1.1, 0.9], 304.0, None, None, Some(0.60)),
             (2, &[1.0, 1.1], 304.0, None, None, Some(0.56)),
             (3, &[1.0], 304.0, None, None, None),
@@ -185,9 +194,10 @@ mod tests {
                 &[10.0, 11.0, 12.0],
                 120.0,
                 None,
-                Some(Suite {
+                Some(Window {
                     baseline: &quiet,
                     current: 707.0,
+                    excess: 109.0,
                 }),
                 None,
             ),
@@ -196,15 +206,31 @@ mod tests {
                 &[10.0, 11.0, 12.0],
                 120.0,
                 None,
-                Some(Suite {
+                Some(Window {
                     baseline: &quiet,
                     current: 215.0,
+                    excess: 109.0,
+                }),
+                Some(0.42),
+            ),
+            // Vector 12's window, for a behavior occurring 8 times a run: its own 109ms per occurrence
+            // is 872ms of the window's move, which leaves no rest to blame. Charging it 109ms, as an
+            // example is charged, would veto it — the trap the `excess` unit exists to close.
+            (
+                31,
+                &[10.0, 11.0, 12.0],
+                120.0,
+                None,
+                Some(Window {
+                    baseline: &quiet,
+                    current: 977.0,
+                    excess: 872.0,
                 }),
                 Some(0.42),
             ),
         ];
-        for (vector, baseline, current, neighbour, suite, expected) in cases {
-            let got = latency(baseline, current, neighbour, suite).map(|l| l.confidence);
+        for (vector, baseline, current, neighbour, window, expected) in cases {
+            let got = latency(baseline, current, neighbour, window).map(|l| l.confidence);
             assert_eq!(got, expected, "vector {vector}");
         }
     }

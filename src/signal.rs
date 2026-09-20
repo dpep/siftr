@@ -770,26 +770,23 @@ impl<'a> Comparison<'a> {
         }
     }
 
-    /// LATENCY per example, in execution order so a neighbour's slowdown can veto a machine stall.
+    /// LATENCY on every behavior that carries a duration: what the run timed is what can have slowed.
+    /// An example's duration is one sample a run, so a GC pause lands on it whole and the examples
+    /// either side veto it; a behavior that recurs through a run is a mean over its occurrences, which
+    /// divides such a pause by their number and leaves the window as the guard that fits it.
     fn latency(&self, found: &mut Vec<Found>) {
-        let mut examples: Vec<&BehaviorStats> = self
-            .current
-            .iter()
-            .filter(|b| b.behavior.kind == Kind::TestExample)
-            .collect();
-        examples.sort_by_key(|b| (b.first.as_ref().map(|(_, seq)| *seq), b.behavior.id));
         let history = |id: BehaviorId| -> Vec<f64> {
             self.runs
                 .iter()
                 .filter_map(|run| run.get(id).and_then(duration_ms))
                 .collect()
         };
-        let excess: Vec<Option<f64>> = examples
-            .iter()
-            .map(|b| Some(duration_ms(b)? - median(&history(b.behavior.id))?))
-            .collect();
-        // The reporter's suite duration when it has one, else the examples' own time.
-        let suite_ms = |run: &RunStats| -> f64 {
+        let total_ms = |b: &BehaviorStats| Some(b.stats.duration?.total.as_secs_f64() * 1e3);
+        // The window a slowdown would have to hide in: the run's whole time in this kind of work.
+        // Never across kinds — a query's time is inside its request, so a request that slowed with it
+        // is that query's consequence, not the rest of the run stalling. Examples use the reporter's
+        // suite duration when it reported one: the same total, measured from outside.
+        let window_ms = |run: &RunStats, kind: Kind| -> f64 {
             let summed = |kind| {
                 run.iter()
                     .filter(|b| b.behavior.kind == kind)
@@ -797,31 +794,84 @@ impl<'a> Comparison<'a> {
                     .map(|d| d.total.as_secs_f64() * 1e3)
                     .sum::<f64>()
             };
-            Some(summed(Kind::TestSummary))
-                .filter(|&ms| ms > 0.0)
-                .unwrap_or_else(|| summed(Kind::TestExample))
+            match kind {
+                Kind::TestExample => Some(summed(Kind::TestSummary))
+                    .filter(|&ms| ms > 0.0)
+                    .unwrap_or_else(|| summed(Kind::TestExample)),
+                _ => summed(kind),
+            }
         };
-        let suite_baseline: Vec<f64> = self
-            .runs
+
+        let mut examples: Vec<&BehaviorStats> = self
+            .current
             .iter()
-            .map(|run| suite_ms(run))
-            .filter(|&ms| ms > 0.0)
+            .filter(|b| b.behavior.kind == Kind::TestExample)
             .collect();
-        let suite = rules::Suite {
-            baseline: &suite_baseline,
-            current: suite_ms(self.current),
-        };
-        for (i, b) in examples.iter().enumerate() {
-            let Some(current) = duration_ms(b) else {
+        examples.sort_by_key(|b| (b.first.as_ref().map(|(_, seq)| *seq), b.behavior.id));
+        let excess: Vec<Option<f64>> = examples
+            .iter()
+            .map(|b| Some(duration_ms(b)? - median(&history(b.behavior.id))?))
+            .collect();
+        // Examples run one at a time, so the ones either side are the same machine moments earlier and
+        // a slowdown they share is the machine. Nothing else has an adjacent anything — behaviors that
+        // recur are interleaved, and their causally related neighbours are the ones a real regression
+        // moves too — so this veto stays an example's alone.
+        let neighbours: HashMap<BehaviorId, f64> = examples
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| {
+                let worst = [i.checked_sub(1), Some(i + 1)]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|j| excess.get(j).copied().flatten())
+                    .reduce(f64::max)?;
+                Some((b.behavior.id, worst))
+            })
+            .collect();
+
+        let mut candidates: Vec<(&BehaviorStats, Class)> = self
+            .current
+            .iter()
+            .filter(|b| b.stats.duration.is_some())
+            .filter_map(|b| Some((b, self.class(b.behavior.id)?)))
+            .collect();
+        candidates.sort_by_key(|(b, _)| (b.first.as_ref().map(|(_, seq)| *seq), b.behavior.id));
+        let mut windows: Vec<(Kind, Vec<f64>, f64)> = Vec::new();
+        for kind in candidates.iter().map(|(b, _)| b.behavior.kind) {
+            if !windows.iter().any(|(seen, ..)| *seen == kind) {
+                let baseline: Vec<f64> = self
+                    .runs
+                    .iter()
+                    .map(|run| window_ms(run, kind))
+                    .filter(|&ms| ms > 0.0)
+                    .collect();
+                windows.push((kind, baseline, window_ms(self.current, kind)));
+            }
+        }
+
+        for (b, class) in candidates {
+            let id = b.behavior.id;
+            let (Some(current), Some(total)) = (duration_ms(b), total_ms(b)) else {
                 continue;
             };
-            let baseline = history(b.behavior.id);
-            let neighbours = [i.checked_sub(1), Some(i + 1)]
-                .into_iter()
-                .flatten()
-                .filter_map(|j| excess.get(j).copied().flatten())
-                .reduce(f64::max);
-            let Some(l) = rules::latency(&baseline, current, neighbours, Some(suite)) else {
+            let baseline = history(id);
+            let window = windows
+                .iter()
+                .find(|(kind, ..)| *kind == b.behavior.kind)
+                .and_then(|(_, window_baseline, window_current)| {
+                    let totals: Vec<f64> = self
+                        .runs
+                        .iter()
+                        .filter_map(|run| run.get(id).and_then(total_ms))
+                        .collect();
+                    Some(rules::Window {
+                        baseline: window_baseline,
+                        current: *window_current,
+                        excess: total - median(&totals)?,
+                    })
+                });
+            let Some(l) = rules::latency(&baseline, current, neighbours.get(&id).copied(), window)
+            else {
                 continue;
             };
             let ms = |v: f64| round_sig(v, 3);
@@ -835,8 +885,8 @@ impl<'a> Comparison<'a> {
             };
             self.push(
                 found,
-                b.behavior.id,
-                Class::Example,
+                id,
+                class,
                 SignalKind::Latency,
                 measure::DURATION_MS,
                 ms(current),
