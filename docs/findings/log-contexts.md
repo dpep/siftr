@@ -124,6 +124,38 @@ whitespace. They are a denser population than the corpus average (30% one-offs a
 they are well-behaved templates that this partition simply cannot address, not a
 normalizer defect. How to identify a source for them is open.
 
+## 7b. Replicated on a second corpus: width is the variable
+
+Everything above rests on one capture, so it was repeated on a structurally different
+log — `/var/log/install.log`, 146,467 lines, split into three disjoint windows of 48,822
+and ingested the same way. No content from it is quoted.
+
+| | unified log | install.log |
+|---|---|---|
+| templates in window 1 | 11,051 | **455** |
+| singletons | 67% of templates, 4.8% of lines | 34%, **0.3%** |
+| singleton recurrence, w1 → w2 | **10%** | **23%** |
+| recurring recurrence, w1 → w2 | 75% | 82% |
+| distinct sources | 291 | **28** |
+| lines attributable to a source | 67% | **96%** |
+| outcome of window 3 | 10,362 signals, **refused** | **443 changes, reported** |
+
+The qualitative result replicates: one-offs recur far less often than templates seen more
+than once (23% against 82%), and the tail carries a fraction of a percent of the volume.
+
+The magnitudes do not, and that is the useful part. **This corpus does not flood.** It
+reports normally with no partitioning, and it has 28 sources where the unified log has
+291. So the variable is not "log versus test suite" but **how many sources a context
+mixes together** — a log that is already narrow behaves exactly as §6 predicts a
+per-source context would. That is a natural experiment in favour of recommendation 1
+rather than a counter-example to it.
+
+Two honest qualifications. 443 changes is under the refusal threshold but is not a set of
+findings anyone reads; 209 of its 280 NEW candidates are one-offs, so recommendation 2
+would cut it substantially, which is further evidence the two belong together. And this
+corpus is friendlier in every dimension at once — fewer sources, denser templates, 96%
+attributable — so it bounds the claim rather than proving the general case.
+
 ## 8. Recommendations
 
 1. **A log context should be per-source, not per-file.** **Needs evidence** for the
