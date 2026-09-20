@@ -46,7 +46,15 @@ if [ -z "${SKIP_GATE:-}" ]; then
   cargo test --no-fail-fast --manifest-path "$WT/Cargo.toml" >"$SCRATCH/test.log" 2>&1 || true
   failed=$(grep -c '^test result: FAILED' "$SCRATCH/test.log" || true)
   ok=$(grep -c '^test result: ok' "$SCRATCH/test.log" || true)
-  echo "tests: $ok binaries ok, $failed failed (log: $SCRATCH/test.log)"
+  # No verdict lines at all means nothing was built, so nothing ran — a compile error, or a target
+  # dir another run left inconsistent. "0 binaries ok, 0 failed" reads as vacuous success and is
+  # indistinguishable from a passing gate at a glance; it sent one diagnosis down the wrong path.
+  if [ "$ok" = 0 ] && [ "$failed" = 0 ]; then
+    echo "tests: NO BINARIES RAN — nothing built, so this is not a verdict (log: $SCRATCH/test.log)"
+    failed=1
+  else
+    echo "tests: $ok binaries ok, $failed failed (log: $SCRATCH/test.log)"
+  fi
   # Each failing step sets `failed`, or the script exits 0 while printing FAILED: lint and format
   # verdicts were reported and then discarded, so a caller gating on the exit status shipped them.
   cargo clippy --all-targets --manifest-path "$WT/Cargo.toml" -- -D warnings >"$SCRATCH/clippy.log" 2>&1 \
