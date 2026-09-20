@@ -209,6 +209,12 @@ share.
   platform sees an identity conversion, and watch the push's CI. Cross-checking
   locally with `--target x86_64-unknown-linux-gnu` does not work on this machine:
   `libsqlite3-sys` is bundled, so it would need a C cross-compiler.
+- **A wrapped test command is invisible.** `sources::for_command` gates every source on
+  `suite(argv)`, so `siftr run -- bin/test` (or `make test`, or any script) reads only
+  stdout, stderr and rusage — no listener, no Rails log, no SQL at all — and `.siftr.toml`
+  can only switch a source *off*, never on. Nothing warns; the run just has less to say.
+  When wrapping siftr in a project's own test script, put siftr **inside** the wrapper so
+  its child is the command detection recognises. See `docs/findings/source-detection.md`.
 - **`streams` and `sources` are different sets, not two names for one thing.** A
   run's `streams` is what *arrived* — a stream opens on its first byte — while
   `Store::run_sources()` is what siftr *read*. A source that was read and stayed
