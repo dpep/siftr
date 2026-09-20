@@ -127,6 +127,20 @@ So there is no path today by which a production Rails log becomes anything but `
 behaviors — which is the same state `dogfood-system-logs.md` found the unified log in, and
 for the same reason: no interpreter claims it.
 
+**Confirmed independently (lead, 2026-09-20, shipped 0.2.0 binary.)** The sharpest form of
+§3 is the same bytes down two paths. `fixtures/rails_demo/baseline/test.log`, ingested as a
+file and then replayed through the rspec path, with nothing else changed:
+
+```
+siftr ingest plain.log      30 log
+siftr ingest --dir …        17 log · 17 db.query · 2 http.request · 10 test.example · 1 test.summary
+```
+
+Every SQL statement and both requests are present in the bytes either way. Reading them as
+a file loses all of it. That is a **reachability** result, not a parsing one, and it sits
+upstream of everything this document set out to measure: partitioning a log by source is
+moot while the log has only one kind of behavior to partition.
+
 ## 4. Pre-registered check, for when a corpus exists
 
 Stated now so that the lane that finds a corpus runs it rather than redesigns it. Given a
