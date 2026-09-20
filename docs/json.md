@@ -538,4 +538,4 @@ groups; `signals` counts signals. A single N+1 is one change and four signals.
 Use `groups` to count changes, `signals` to count signals, and don't mix them.
 
 **`-j` on `run` implies `-q`**, and cannot be combined with
-`--quiet-unless-changed` — `-j` always prints its document.
+`--quiet-unless-changed` or `--no-report` — `-j` always prints its document.

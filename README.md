@@ -64,6 +64,7 @@ Runs `CMD`, passes its output through, records the run, and prints changes to st
 - `-q` hides the command's output and keeps only siftr's report.
 - `-j` prints the changes as JSON on stdout (implies `-q`).
 - `--quiet-unless-changed` prints siftr's report only when there's something to read: a change, or one still open. Otherwise siftr adds nothing, so a job wrapped for cron, CI or a git hook prints only what the command did. It can't be combined with `-j`, which always prints its document.
+- `--no-report` prints nothing of siftr's own, ever — the run is still recorded, only silently. Warnings and errors still print. Use it when a wrapped command must look untouched to whoever runs it, not just quiet when nothing changed. It can't be combined with `-j` or `--quiet-unless-changed`.
 
 siftr stays out of the command's way. `siftr run -- … | head` stops the command just as it would unwrapped, and the truncated run never becomes a baseline. If the data directory is busy (another siftr holding it) or unusable, the command runs anyway, unrecorded, with one warning. Under `-j` you still get a document, with `run: null` and `not_recorded: {code, message}`.
 
@@ -320,7 +321,7 @@ next: siftr changes r6
 
 ### `siftr ingest [FILE]`
 
-Records a file, or stdin, as a run's stdout, for output you already have. `--context NAME` groups comparable inputs (default `ingest`). `--dir DIR` replays a captured scenario: any of `stdout.txt`, `stderr.txt`, `rspec.ndjson`, `test.log`, `exit_code.txt`. `--quiet-unless-changed` works as for `run`.
+Records a file, or stdin, as a run's stdout, for output you already have. `--context NAME` groups comparable inputs (default `ingest`). `--dir DIR` replays a captured scenario: any of `stdout.txt`, `stderr.txt`, `rspec.ndjson`, `test.log`, `exit_code.txt`. `--quiet-unless-changed` and `--no-report` work as for `run`.
 
 ```
 $ siftr ingest --context demo --dir fixtures/rails_demo/baseline      # and baseline_2

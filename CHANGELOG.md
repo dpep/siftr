@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `siftr run` and `siftr ingest` take `--no-report`: siftr prints nothing of its own, ever, while the run is still recorded as normal. Unlike `--quiet-unless-changed`, this holds even when something changed — for a wrapper that must record silently, such as a CI recorder or git hook a developer isn't meant to see. Warnings and errors still print, and the command's own output and exit code are untouched. It's a usage error (exit 2) with `-j`, which always prints its document, and with `--quiet-unless-changed`, which it makes redundant.
+
 ## 0.1.7 — 2026-09-18
 
 - A regression that is fixed and breaks again is reported on every run it returns in, however long ago it was first raised. 0.1.6 said this and only half meant it: the reminder still stopped once the original signal's run left the 10-run baseline window, so a change that kept flapping went silent on its sixth return with the regression plainly present, and a CI gate keyed on `changes` and `open_signals` passed exactly that build. Expiry is now a property of the change rather than the age of the signal — one that keeps returning never settles, while one nobody ever fixed still stops being reported about 10 runs on, once every run siftr compares against has it. No rule, threshold or confidence formula moved, and the backtest is byte-identical.

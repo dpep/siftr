@@ -49,12 +49,16 @@ pub struct Args {
 #[derive(clap::Args)]
 pub struct Report {
     /// Print siftr's report only when something changed or is still open; warnings and errors always print
-    #[arg(long)]
+    #[arg(long, conflicts_with = "no_report")]
     quiet_unless_changed: bool,
+
+    /// Print nothing of siftr's own, ever; warnings and errors still print. The run is still recorded
+    #[arg(long)]
+    no_report: bool,
 }
 
 impl Report {
-    /// `-j` always prints its one document, so the flag would silently do nothing there.
+    /// `-j` always prints its one document, so either flag would silently do nothing there.
     pub fn check(&self, json: bool) -> Result<()> {
         if self.quiet_unless_changed && json {
             return Err(output::usage(
@@ -62,15 +66,22 @@ impl Report {
                  read its changes and open_signals instead",
             ));
         }
+        if self.no_report && json {
+            return Err(output::usage(
+                "--no-report can't be used with -j, which always prints its document; \
+                 read its changes and open_signals instead",
+            ));
+        }
         Ok(())
     }
 
     /// Worth reading: a change `changes` counts, or one still open. A first run, a setup-only change and an
-    /// interrupted run aren't.
+    /// interrupted run aren't. `--no-report` overrides all of that: nothing of siftr's own prints, ever.
     pub fn shows(&self, signals: &[StoredSignal], open: &[StoredSignal]) -> bool {
-        !self.quiet_unless_changed
-            || !open.is_empty()
-            || output::groups(signals).iter().any(|group| !group.setup)
+        !self.no_report
+            && (!self.quiet_unless_changed
+                || !open.is_empty()
+                || output::groups(signals).iter().any(|group| !group.setup))
     }
 }
 
