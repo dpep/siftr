@@ -224,7 +224,7 @@ r4: 9 occurrences, 0 errors; 3 lines kept
   file:log/test.log:33   Comment Load (0.0ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = ?  [["post_id", 1]]
   file:log/test.log:207   Comment Load (0.0ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = ?  [["post_id", 1]]
   file:log/test.log:208   Comment Load (0.0ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = ?  [["post_id", 2]]
-capture file:log/test.log: /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/scribe3-home/runs/r4/file-log_test.log
+capture file:log/test.log: ~/.local/share/siftr/runs/r4/file-log_test.log
 next: siftr summary r4
 ```
 
@@ -363,9 +363,9 @@ $ siftr cron
 scheduled jobs
   crontab -l               2 jobs
     0 3 * * *  /usr/local/bin/backup.sh --full
-      record it: 0 3 * * * /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/readme-cron/bin/siftr --quiet-unless-changed -- /usr/local/bin/backup.sh --full
+      record it: 0 3 * * * /usr/local/bin/siftr --quiet-unless-changed -- /usr/local/bin/backup.sh --full
     */15 * * * *  cd ~/notes && git pull -q
-      record it: */15 * * * * /private/tmp/claude-501/-Users-dpepper-code-lib-rust-siftr/297ebebd-ecce-49be-9b17-dbab814edaf1/scratchpad/readme-cron/bin/siftr --quiet-unless-changed -- sh -c 'cd ~/notes && git pull -q'
+      record it: */15 * * * * /usr/local/bin/siftr --quiet-unless-changed -- sh -c 'cd ~/notes && git pull -q'
   /etc/crontab             absent
   /etc/cron.d              absent
   ~/Library/LaunchAgents   1 job
