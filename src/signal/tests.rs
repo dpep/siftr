@@ -612,6 +612,31 @@ fn a_slow_request_is_latency_with_no_example_in_sight() {
     );
 }
 
+/// Two regressions on one endpoint are one finding: `docs/findings/latency.md` §7. Both signals are the
+/// same behavior in the same request, and the latency stood alone only because no scope records a
+/// duration, so the scope comparison that groups the count had nothing but zeroes to read.
+#[test]
+fn a_request_that_slowed_groups_with_the_count_that_moved_inside_it() {
+    use SignalKind::*;
+    let endpoint = b(Kind::HttpRequest, "GET PostsController#index");
+    let batch = |ms: f64, queries: f64| {
+        run(&[b(Kind::HttpRequest, "GET PostsController#index 2xx")
+            .ms_each(ms, 8)
+            .queries(queries)
+            .in_phase(Phase::Request(endpoint.id()), 8, Some(queries))])
+    };
+    let baseline = vec![batch(1.0, 16.0), batch(1.1, 16.0), batch(1.0, 16.0)];
+    let groups: Vec<_> = rows(&batch(414.0, 48.0), &baseline)
+        .into_iter()
+        .map(|r| (r.0, r.1, r.2))
+        .collect();
+    assert_eq!(
+        groups,
+        [(1, true, Frequency), (1, false, Latency)],
+        "one endpoint, one cause, one group"
+    );
+}
+
 /// The window guard is what carries over to a behavior with no neighbour, and it is charged in totals:
 /// a request occurring 8 times a run moves the window by 8 times its per-occurrence delta, so charging
 /// it one delta would leave the other seven looking like the rest of the run stalling.

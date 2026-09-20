@@ -1075,7 +1075,20 @@ impl<'a> Comparison<'a> {
                         Key::Prefix(self.template(id).chars().take(PREFIX_CHARS).collect()),
                         None,
                     ),
-                    _ => (Key::Behavior(id), None),
+                    // Grouping asks which unit of work a change is about; attribution asks how much of
+                    // the measure moved inside it. A behavior that occurs only inside one scope answers
+                    // the first on its own, so a duration — which no scope records, leaving `owners`
+                    // comparing zeroes — still groups with the rest of its request. No attribution: the
+                    // scope holds no number for such a measure, and 0 → 0 would read as one.
+                    _ => match self.sole_scope(id) {
+                        Some(scope) => {
+                            if scope.outside_examples() {
+                                tier = SETUP_TIER;
+                            }
+                            (Key::Scope(scope), None)
+                        }
+                        None => (Key::Behavior(id), None),
+                    },
                 }
             }
         };
@@ -1125,6 +1138,35 @@ impl<'a> Comparison<'a> {
                 median(&then).is_some_and(|m| m != now)
             })
             .collect()
+    }
+
+    /// The one scope every occurrence of `id` falls inside, in each run that has it; `None` when they
+    /// spread across scopes, or any falls outside them all.
+    ///
+    /// Structural, where [`Self::owners`] is measure-based, so this still answers for a measure no scope
+    /// records. It cannot disagree with `owners` on one they do record: a sole scope's value *is* the
+    /// behavior's own, and every rule that raises a signal needs the behavior's own value to have moved.
+    fn sole_scope(&self, id: BehaviorId) -> Option<Phase> {
+        let mut sole = None;
+        for b in std::iter::once(self.current)
+            .chain(self.runs.iter().copied())
+            .filter_map(|run| run.get(id))
+            .filter(|b| b.stats.count > 0)
+        {
+            if b.unattributed > 0 || b.unscoped_count() > 0 {
+                return None;
+            }
+            let mut occupied = b.scopes.iter().filter(|s| s.count > 0);
+            let (Some(only), None) = (occupied.next(), occupied.next()) else {
+                return None;
+            };
+            let phase = self.phase(only.scope);
+            if sole.is_some_and(|seen| seen != phase) {
+                return None;
+            }
+            sole = Some(phase);
+        }
+        sole
     }
 }
 
