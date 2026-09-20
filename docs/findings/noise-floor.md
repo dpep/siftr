@@ -91,10 +91,11 @@ As rates, to the precision 50 counts carry:
   holds even where a behavior's identity churns (§5), because the counts
   themselves stay exact, as `signals.md` §1 found.
 
-What a developer actually reads is groups, not signals. Per comparison,
-`network_resiliency` produced a median of **2 false headline groups (max 23,
-166 in total)**, `iriq` 0 (max 2), `rails_demo` 0 (max 1). Since only the top 3
-groups are shown, a clean `network_resiliency` run fills most of the report.
+What a developer actually reads is groups, not signals, and only the top 3 are
+shown. Per comparison, `network_resiliency` produced a median of **2 false
+groups (max 23, 166 in total)**, `iriq` 0 (max 2), `rails_demo` 0 (max 1). So a
+clean `network_resiliency` run fills two of the three slots on a median day and
+overflows them on a bad one.
 
 ## 4. `latency.md` §5, discharged: **PASS**
 
@@ -147,8 +148,14 @@ file**, at confidence 0.88 because the rule is correctly confident that these
 were not there before.
 
 The churn is one-directional: the 5 that vanish were present in only k < n
-baseline runs, so the intermittent rule declines to call them DISAPPEARED. The
-report grows a tier-4 group per run and never a matching removal.
+baseline runs, so the intermittent rule declines to call them DISAPPEARED. So
+the report gains a group every run and never a matching removal.
+
+Grouping contains the damage. All 5 collapse into **one** tier-4 group, and
+tier 4 loses to every LATENCY beside it — in a comparison carrying both, the
+NEW group ranks last of four and falls below the three shown. Its cost is one
+of the three slots on the 24 comparisons that carry nothing else, and a
+permanently drifting behavior table underneath.
 
 **The normalizer already handles all three shapes.** `siftr follow` on those
 lines returns `#<Demo::Stats:<hex> @lock=#<Thread::Mutex:<hex>>, @n=<int>>` and
