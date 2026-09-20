@@ -92,7 +92,7 @@ next: siftr explain s1
 
 A disappearance is never reminded. A query or spec you removed on purpose isn't a regression left in place.
 
-A reminder is reported on every run the change is actually present in, including one where you fixed it in between and broke it again. It is bounded by the baseline window, though: it lasts while the run that raised the change is still among the last 10 runs of the context. Leave the N+1 in place and keep running, and that run eventually ages out — after which the regression is simply what siftr has always seen here:
+A reminder is reported on every run the change is actually present in, including one where you fixed it in between and broke it again: a change that keeps coming back never settles, however long ago it was first raised. What ends a reminder on its own is the change becoming what this context does. Leave the N+1 in place and keep running, and once every run siftr compares against has it, no comparison can see it any more:
 
 ```
 r14 vs 10 baseline runs (r4…r13): no new changes · 1 still open
@@ -563,10 +563,10 @@ The `-j` fields that matter (full schema: top of [`src/bin/siftr/output.rs`](src
   - `kind`: `error`, `new`, `disappeared`, `frequency`, `latency` or `incomplete`.
   - `measure`: `count`, `queries`, `duration_ms`, `failed`, `examples` or `errors_outside_of_examples`.
   - `current`, compared with `baseline` {`runs`, `present_in`, `median`, `min`, `max`, `failures`}.
-  - `confidence` in [0, 1): how much baseline backs the claim, **not** how much it matters. For every kind but LATENCY it is exactly `(n+1)/(n+2)` over `baseline.runs`, so it carries no effect size and discriminates nothing — rank on `tier` and read `current` against `baseline`. The human report prints the run count itself (`3 baseline runs`) for that reason; the measurement is in [docs/findings/confidence.md](docs/findings/confidence.md).
+  - `confidence` in [0, 1): how much baseline backs the claim, **not** how much it matters. For NEW, DISAPPEARED, INCOMPLETE and a FREQUENCY on an exact baseline it is exactly `(n+1)/(n+2)` over `baseline.runs`; ERROR is the same unless a baseline run already failed, and only LATENCY and a FREQUENCY on a varying baseline carry an effect-size term at all. So it discriminates almost nothing — rank on `tier` and read `current` against `baseline`. The human report prints the run count itself (`3 baseline runs`) for that reason; the per-kind formulas and the measurement are in [docs/findings/confidence.md](docs/findings/confidence.md).
   - `tier`: 1 error through 5 outside examples.
   - `behavior` {`id`, `kind`, `template`}: what changed. Pass `id` to `evidence`.
-  - `attribution.scope`: the test example it happened in, or null outside examples. `attribution.phase`: `setup`, `example`, `between` or `teardown` (before the first example, in one, between two, after the last). `attribution.setup` is true only for `setup`.
+  - `attribution.scope`: the test example it happened in; null outside examples, and null for a request, whose scope is its endpoint rather than a behavior of its own. `attribution.phase`: `setup`, `example`, `between`, `teardown` or `request` (before the first example, in one, between two, after the last, or inside one HTTP request). `attribution.setup` is true only for `setup`.
   - `exception`: the exception class, for `error`.
 - `open_signals[]`: signals from earlier runs that are still open and weren't raised again, in the same shape as `signals[]`.
 - `not_recorded` (`run -j` only): null, or {`code`, `message`} when the command ran but siftr couldn't record it.
@@ -688,10 +688,10 @@ Signals that exist today:
 | ERROR | an example fails that passed in baseline runs. It stays quiet if a baseline run failed with the same exception, since that's known flaky |
 | NEW / DISAPPEARED | a behavior is present now and absent from every baseline run, or the reverse. Behaviors that come and go in the baseline never fire. A new error outside examples is NEW and ranks with ERROR |
 | FREQUENCY | a count moved: SQL statements by template, queries per request, queries per example |
-| LATENCY | one example got at least 100ms **and** 4x slower than its baseline median, and it isn't just a machine-wide stall |
+| LATENCY | a behavior carrying a duration — an example, a request, a query — got at least 100ms **and** 4x slower than its baseline median, and it isn't just a stall in that kind of work |
 | INCOMPLETE | the run skipped examples its baseline ran: a spec file failed to load, `--fail-fast` stopped it, or a focus filter |
 
-Related signals collapse into one group per example, and a deleted spec file's examples into one group. The top 3 groups are shown. The baseline is the last runs (up to 10) of the same project and command, minus runs that skipped examples the current run ran. Interrupted or killed runs are recorded for evidence but never used as a baseline.
+Related signals collapse into one group per enclosing scope — a test example, or the HTTP request that produced the lines when no example encloses them — and a spec file's examples that arrive or disappear together into one group. The top 3 groups are shown. The baseline is the last runs (up to 10) of the same project and command, minus runs that skipped examples the current run ran. Interrupted or killed runs are recorded for evidence but never used as a baseline.
 
 siftr needs **2 earlier runs** of a command before NEW, DISAPPEARED, FREQUENCY or LATENCY can fire. With 1, only ERROR and INCOMPLETE can.
 
@@ -700,7 +700,7 @@ The thresholds come from measured noise and a backtest: [docs/findings/signals.m
 ## Limitations
 
 - **Rich capture is RSpec + Rails only.** Other commands get generic templated lines and their counts. parallel_tests, spring, `rake spec` and RSpec older than 3.13 are untested.
-- **LATENCY is blunt on purpose.** It catches a single example slowing down by at least 100ms and 4x. It misses 30ms → 90ms, and it misses +50% on a 1-second test.
+- **LATENCY is blunt on purpose.** It catches a behavior slowing down by at least 100ms and 4x, whether that's an example, a request or a query. It misses 30ms → 90ms, and it misses +50% on a 1-second test.
 - **Not every number is a signal.** Measured noise says these would mostly cry wolf, so they aren't built: suite-duration LATENCY, per-query latency (the `(0.1ms)` in a log line), distribution drift, and setup-only changes (a cold database) as regressions.
 - **Context is the project plus the command line, as typed** — the fact stated under [30 seconds](#30-seconds), with its corner cases. `bundle exec rspec spec/models/user_spec.rb:12` has its own baseline, separate from the full suite's. The project is the nearest directory with a manifest (`Gemfile`, `Cargo.toml`, `package.json`, …), looking no higher than the git root; with none, it's the working directory. Two apps with their own Gemfiles in one repo get separate baselines, but in a repository with no manifest every directory is its own project.
 - **Focus filters in code don't change the command line.** A run with `fit` or `focus: true` is compared with full runs: it reports INCOMPLETE, and later full runs leave it out of their baseline.
