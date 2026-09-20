@@ -6,7 +6,26 @@ backed by concrete evidence. First workflow: `siftr run -- bundle exec rspec`,
 consumed by a developer or a coding agent asking "what changed, why does it
 matter, show me the evidence".
 
-Not a cloud service, dashboard, config language, or log search tool.
+**The job is noise reduction.** A suite's output, a Rails log, cron's mail,
+unicorn, puma, apache — all of them say far more than anyone reads, and what is
+worth acting on is buried in what happens every time. siftr's value is getting
+from a stream nobody reads to a few findings somebody does; only then is there
+something to act on. A tidier view of what a runner already printed is not a
+lesser version of that job — on a log nobody could read by hand, it is the job.
+
+Not a cloud service, dashboard, config language, or log search tool. The last of
+those is the load-bearing distinction: siftr answers "what changed since last
+time", never "show me the lines matching this". Nobody writes a query.
+
+**Direction, and what is not yet true (2026-09-20).** Toward ingesting a web
+tier's worth of Rails logs and finding production issues at scale. Two things
+stand between here and there, both measured rather than assumed: a stream nobody
+closes has no run boundary, which is why `siftr follow` deliberately compares
+nothing; and `docs/findings/log-contexts.md` found a whole-system log producing
+**10,362 signals and being refused outright**, where a narrow one reports fine —
+**width, not volume, is what breaks it**. Its fix, per-source contexts, was
+measured on a syslog header a Rails log does not have. Until that transfer is
+demonstrated, treat web-tier ingestion as the goal, not as a capability.
 
 ## First principles
 
