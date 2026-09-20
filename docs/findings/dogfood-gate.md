@@ -86,16 +86,17 @@ going to run.
 
 ## 4. The first real corpus
 
-Twelve runs of `cargo test --no-fail-fast` in the default data dir, recorded by
+Fourteen runs of `cargo test --no-fail-fast` in the default data dir, recorded by
 `script/gate` across the work that produced this document. Each run is 713–736
 lines and 427 behaviors — one per `test <name> ... ok` line, plus cargo's own
 progress lines and the output of siftr's integration tests, which capture
 siftr's own reports and so end up templated as behaviors of their own.
 
-**Ten of the twelve runs reported nothing at all.** The two that reported were
-exactly the two where the suite changed: one test added and one renamed (5
-signals), and one test deliberately broken (18). No run in which nothing changed
-produced a signal. A separate three-run probe taken during the cost measurement,
+**Eleven of the fourteen runs reported nothing at all.** Two of the three that did
+were the two where the suite changed: one test added and one renamed (5
+signals), and one test deliberately broken (18). The third is §5's last finding,
+and is the only signal in the corpus raised by a run in which the suite did
+nothing different. A separate three-run probe taken during the cost measurement,
 while another agent's build had the machine at load average 41 and the same suite
 took 85s to 230s, likewise reported `0 changes` on all three: the resource
 evidence records the CPU and the context switches moving, and no rule reads them.
@@ -105,14 +106,15 @@ evidence records the CPU and the context switches moving, and no rule reads them
   NEW              18      18     2  0.11        16    16  1.0      1         1
   DISAPPEARED       1       1     1  1.0          0     0           1         0
   FREQUENCY         4       4     1  0.3          2     2  1.0      2         0
-  all              23      23     4  0.17        18    18  1.0      4         1
-3 dismissed
+  LATENCY           1       1     1  1.0          0     0           1         0
+  all              24      24     5  0.21        18    18  1.0      5         1
+4 dismissed
 ```
 
 Small as it is, this is the first corpus on this machine in which a person read
 each signal and said what they thought of it. `dismiss` had never been written
-once before it; four dismissals were issued here, and §5 explains why the
-scorecard counts three.
+once before it; five dismissals were issued here, and §5 explains why the
+scorecard counts four.
 
 ## 5. What siftr got wrong about its own suite
 
@@ -155,6 +157,18 @@ someone added on purpose is reminded on every run until it ages out of the
 10-run window: s3 and s4 nagged through six consecutive green runs, each time
 repeating `in none of 3 baseline runs`, which was true at r5 and had not been
 true for six runs.
+
+**A build tool's own compile time is judged as latency, and every edit trips
+it.** The one signal raised by a run whose suite did nothing different was
+LATENCY on `Finished \`test\` profile [unoptimized + debuginfo] target(s) in
+<duration>`, 245ms → 1050ms: cargo's *build* step, which is slow exactly when
+something was edited and fast when nothing was — the one quantity in a dev loop
+guaranteed to move. It cleared the rule (3x the 245ms median, and over the 100ms
+floor) while sitting 5% above a 1000ms value the baseline already held, because
+the rule reads the median and the maximum but not the spread, and this baseline's
+spread is 130ms to 1000ms, a factor of 7.7. Confidence came out 0.48, correctly
+low, and it still headlined the run. The next run confirmed the diagnosis by
+saying nothing: its build was a no-op, so the line was fast again.
 
 None of these were tuned away. The first two are the normalizer and the
 interpreter seeing a build tool for the first time; the last two are in
