@@ -145,9 +145,12 @@ pub fn latency(
     }
     let typical = median(baseline)?;
     let max = baseline.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let min = baseline.iter().copied().fold(f64::INFINITY, f64::min);
     let need = LATENCY_FLOOR_MS.max((LATENCY_RATIO - 1.0) * typical);
     let delta = current - typical;
-    if delta <= need || current <= max {
+    // Clearing a wide baseline's max by a hair is not news, exactly as it isn't for a varying
+    // count: this is [`frequency`]'s varying arm, in the unit a duration carries.
+    if delta <= need || current <= max || delta <= VARYING_WIDTHS * (max - min) {
         return None;
     }
     if let Some(cohort) = cohort {
@@ -192,16 +195,23 @@ mod tests {
     /// `(vector, baseline, current, expected (exact, confidence))`.
     type FrequencyCase<'a> = (u8, &'a [f64], f64, Option<(bool, f64)>);
 
-    /// signals.md §6, vectors 1–13, 31 and 32–34.
+    /// signals.md §6, vectors 1–13, 31 and 32–36.
     #[test]
     fn latency_vectors() {
         let tens = [1.0; 10];
         let quiet = [100.0, 105.0, 110.0];
         // A run's example slowdowns, descending, the candidate's own 303ms first.
+        // Ten baseline runs, median 245ms either way; the first spans 130–1000ms, the second 240–250.
+        let wide = [
+            130.0, 200.0, 240.0, 245.0, 245.0, 245.0, 250.0, 300.0, 400.0, 1000.0,
+        ];
+        let tight = [
+            240.0, 242.0, 244.0, 245.0, 245.0, 245.0, 246.0, 247.0, 248.0, 250.0,
+        ];
         let alone = [303.0, 4.0, 3.0, 2.0, 1.0];
         let three_peers = [303.0, 160.0, 155.0, 152.0, 1.0];
         let two_peers = [303.0, 160.0, 155.0, 4.0, 1.0];
-        let cases: [LatencyCase<'_>; 17] = [
+        let cases: [LatencyCase<'_>; 19] = [
             (1, &[1.0, 1.1, 0.9], 304.0, None, None, Some(0.60)),
             (2, &[1.0, 1.1], 304.0, None, None, Some(0.56)),
             (3, &[1.0], 304.0, None, None, None),
@@ -297,6 +307,13 @@ mod tests {
                 None,
                 Some(0.60),
             ),
+            // 35–36: `cargo test`'s "Finished `test` profile … in <duration>" line, as one was
+            // reported at 245ms → 1050ms, confidence 0.48, over a baseline spanning 130–1000ms.
+            // The pair differs only in that width: same n, same median, same current, so the same
+            // 0.48 either way. Clearing a wide max by 5% is not news; the same move is, over a
+            // baseline that holds still.
+            (35, &wide, 1050.0, None, None, None),
+            (36, &tight, 1050.0, None, None, Some(0.48)),
         ];
         for (vector, baseline, current, cohort, window, expected) in cases {
             let got = latency(baseline, current, cohort, window).map(|l| l.confidence);
