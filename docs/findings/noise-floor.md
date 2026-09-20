@@ -255,6 +255,36 @@ confidence 0.44–0.64, against 0.88 for the identity churn in §5 and 0.75–0.
 for the true positives in `signals.md` §3. Confidence is doing its job; ranking
 is not, because a tier-2 signal at confidence 0.47 still takes a headline slot.
 
+**Result (2026-09-20).** `latency-cohort.md` took the diagnosis above and
+measured it. Two corrections to this section, both in its favour and one against
+it.
+
+The stall guard is not merely weak — for **half of these false positives no
+threshold on the suite's clock could have helped**, because the run did not take
+longer at all. Of the 75 false example LATENCY signals a loaded
+`network_resiliency` collection recorded, 41 (55%) sit on runs whose suite
+duration came in at or below what the candidate's own slowdown already accounts
+for, some at 0.53–0.77x the baseline median. The other 45% are the case this
+section suspected, and there the guard's bar is set by the suite's own
+dispersion: median 23.0s on `network_resiliency` and 27.3s on `iriq`, against
+4.62s and 0.47s of example slowdown actually present.
+
+Against this section: **"it is not simply load" does not survive a second
+collection.** Collecting each suite twice, once at 1-minute load 14–129 and once
+at load 4, the quiet collection is **0 of 50 on every suite, in every signal
+kind** — including the `network_resiliency` that produced 26 of 50 here. Pooled
+over both collections, 1 false positive in 164 comparisons below load 20 and 33
+in 100 above it. The load *average* still separates nothing within a
+collection, as §1 and this section found, which is why the fix reads the run's
+own examples rather than the OS: an example LATENCY is now vetoed when three
+other examples of the same run each moved by at least half its slowdown. That
+takes a loaded `network_resiliency` from 13 of 18 comparisons to 3 on replays of
+identical bytes, and changes nothing at all on a quiet one.
+
+The floor stands at 100ms. §7's list of what this corpus cannot say is
+unaffected, and gains one entry: **it was one machine on one day in one load
+regime**, which turns out to be the variable that mattered most.
+
 ## 7. What these numbers cannot say
 
 A kind's zero is worth only the exposure behind it. Behaviors per run, from

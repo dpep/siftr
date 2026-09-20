@@ -173,6 +173,26 @@ at any load, at most 2 comparisons carry an example LATENCY signal. If that is
 exceeded, raise the floor to 150ms (zero FP in the sweep, same slow TP) before
 anything else.
 
+**Result (2026-09-20): the prediction fails, and the clause that fails is *at
+any load*.** `noise-floor.md` §6 first exceeded it (`iriq` 6 of 50,
+`network_resiliency` 26 of 50) and showed the 150ms remedy does not close it.
+`latency-cohort.md` collected each suite twice in two machine states and found
+the rate is a property of the machine rather than of the rule or the suite: the
+same `network_resiliency` gives **19 of 50 at 1-minute load 14–127 and 0 of 50
+at load 4.6**, and `rails_demo` — which met this budget — gives 7 of 50 loaded
+and 0 of 50 quiet. Pooled over 264 comparisons of three suites, 1 false positive
+below load 20 and 33 of 100 above it.
+
+The floor was not raised. What shipped instead is a second stall guard on the
+evidence a busy run actually leaves: an example LATENCY is vetoed when
+`COHORT_PEERS = 3` other examples of the same run each moved by at least
+`NEIGHBOUR_SHARE` of its slowdown. It is inert on a quiet machine — identical
+signals and identical recall on both quiet corpora — and takes a loaded
+`network_resiliency` from 13 of 18 comparisons to 3 on replays of identical
+bytes. §2's thresholds and confidence formulas are untouched; §3's sweep and
+recall tables stand. The prediction is re-registered per load regime in
+`latency-cohort.md` §7.
+
 ## 4. Don't ship yet
 
 - **Suite-duration LATENCY.** Clean runs spanned 10x (demo) and 2x (iriq). It
