@@ -120,6 +120,21 @@ then §3's number describes a quieter world than the one `siftr run` ships into,
 any load, at most 2 comparisons carry an example LATENCY signal" — is at its limit after
 60.
 
+**Replication (lead, same day).** The same sweep — `--cells Z --reps 30`, 60 clean
+comparisons at n=4 — run again on a quieter machine (89s against 144s; run wall
+882–2845ms, median 1123ms against 1611ms) produced **1** LATENCY signal, not 2. That is
+the load hypothesis above behaving as predicted, and it settles what the pre-registered
+prediction is owed: **3 events across 120 comparisons is 1.25 per 50, so the prediction is
+satisfied and its remedy — raise the floor to 150ms — is not triggered.** What does not
+reproduce is §3's observed *zero*; the bound it wrote down as the trigger holds. The
+difference between 1 and 2 over 60 trials is also a reminder of the magnitudes here: at
+these counts the next sweep can land either side of the budget without anything having
+changed, so a single sweep should never be read as the rate.
+
+Note this is *not* the check in `latency.md` §5, which is pre-registered over a **traffic**
+context and **non-example** behaviors. Nothing in this section speaks to it; that check is
+still undischarged.
+
 **The §3 recall table's bins are too coarse to predict a specific example.** It gives
 median ≥100ms, +300ms → 0.02 and +1000ms → 0.70. B1 (+300ms on a 200ms example) misses
 5/5, agreeing; but B3 (+700ms on the same example) hits 5/5, where the table's next row
