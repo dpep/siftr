@@ -3,6 +3,9 @@
 //! status class; every other line is a `log` behavior.
 //!
 //! Requests key on controller#action, which Rails already resolved from the route, so no path shaping is needed.
+//!
+//! A block's lines are scoped to the enclosing test example when there is one, and otherwise to the block
+//! itself: outside a test run, the request is the unit its queries and log lines belong to.
 
 use std::str::FromStr;
 use std::time::Duration;
@@ -24,11 +27,20 @@ pub(super) struct Log {
 
 struct Request {
     method: Vec<u8>,
-    action: Option<Vec<u8>>,
+    /// The `controller#action` of `Processing by`, with the endpoint id this block's lines scope to.
+    /// `None` until that line: a block that never names an action scopes nothing and emits no request.
+    action: Option<(Vec<u8>, BehaviorId)>,
     /// The scope of the `Started` line.
     scope: Option<BehaviorId>,
     /// Counted queries, for a `Completed` line that doesn't report its own count.
     queries: u64,
+}
+
+impl Request {
+    /// What this block's lines are scoped to when no example encloses them.
+    fn endpoint(&self) -> Option<BehaviorId> {
+        self.action.as_ref().map(|&(_, id)| id)
+    }
 }
 
 impl Log {
@@ -41,6 +53,9 @@ impl Log {
     ) {
         strip_ansi(obs.line, &mut self.clean);
         let text = trim(&self.clean);
+        // The enclosing example when a test run named one, else the request block this line falls in.
+        // An example is the finer unit, so a request scope never displaces one.
+        let scope = scope.or_else(|| self.request.as_ref().and_then(Request::endpoint));
         if let Some(query) = Query::parse(text) {
             if let Some(request) = &mut self.request
                 && query.counts()
@@ -70,10 +85,18 @@ impl Log {
                 queries: 0,
             });
         } else if let (Some(action), Some(request)) = (processing(text), &mut self.request) {
-            request.action = Some(action.to_vec());
+            // The block's scope is fixed here, not at `Completed`: every line it scopes comes first, while
+            // the status class that completes the request's own behavior comes last. So the scope is the
+            // endpoint rather than that behavior, and names no behavior of its own.
+            self.template.clear();
+            self.template.extend_from_slice(&request.method);
+            self.template.push(b' ');
+            self.template.extend_from_slice(action);
+            let endpoint = BehaviorId::of(Kind::HttpRequest, &self.template);
+            request.action = Some((action.to_vec(), endpoint));
         } else if let Some(completed) = Completed::parse(text)
             && let Some(request) = self.request.take()
-            && let Some(action) = &request.action
+            && let Some((action, _)) = &request.action
         {
             self.template.clear();
             self.template.extend_from_slice(&request.method);
@@ -97,7 +120,7 @@ impl Log {
                 } else {
                     Outcome::Success
                 }),
-                scope: request.scope,
+                scope: request.scope.or_else(|| request.endpoint()),
                 measures: &[("queries", queries as f64)],
             });
         } else {
@@ -346,6 +369,42 @@ mod tests {
         );
         assert_eq!(request.outcome, Some(Outcome::Failure));
         assert_eq!(request.measures, [("queries", 2.0)]);
+    }
+
+    #[test]
+    fn a_blocks_lines_scope_to_its_endpoint_when_no_example_encloses_them() {
+        let log = "Started GET \"/posts\" for 127.0.0.1 at 2026-09-19 19:00:14 -0700\n\
+            Processing by PostsController#index as HTML\n  \
+            Post Load (0.0ms)  SELECT \"posts\".* FROM \"posts\"\n  \
+            \u{21b3} app/views/posts/index.html.erb:<int>\n\
+            Completed 200 OK in 10ms (Views: 7.3ms | ActiveRecord: 0.7ms (1 queries, 0 cached))\n\
+            [ActiveJob] enqueued CleanupJob\n";
+        let seen = interpret(&[(LOG_STREAM, log.as_bytes())]);
+        let endpoint = BehaviorId::of(Kind::HttpRequest, b"GET PostsController#index");
+        let scoped: Vec<_> = seen
+            .iter()
+            .map(|s| (s.kind, s.scope == Some(endpoint)))
+            .collect();
+        assert_eq!(
+            scoped,
+            [
+                (Kind::DbQuery, true),
+                (Kind::Log, true),
+                (Kind::HttpRequest, true),
+                (Kind::Log, false),
+            ],
+            "the block's lines and the request itself take the endpoint; the line after it does not"
+        );
+        let request = seen
+            .iter()
+            .find(|s| s.kind == Kind::HttpRequest)
+            .expect("the completed request");
+        assert_eq!(request.template, "GET PostsController#index 2xx");
+        assert_ne!(
+            request.id(),
+            endpoint,
+            "the endpoint is not the request's own behavior: its status class arrives last"
+        );
     }
 
     #[test]

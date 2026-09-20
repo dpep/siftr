@@ -403,12 +403,14 @@ fn stored_signal(row: &Row<'_>) -> rusqlite::Result<StoredSignal> {
         Some(_) => Some(self::behavior(row, 24)?),
         None => None,
     };
+    let scope_id = match row.get::<_, Option<String>>(13)? {
+        Some(_) => Some(parsed(row, 13)?),
+        None => None,
+    };
     let attribution = match row.get::<_, bool>(12)? {
         true => Some(Attribution {
-            scope: Phase::from_scope_id(match row.get::<_, Option<String>>(13)? {
-                Some(_) => Some(parsed(row, 13)?),
-                None => None,
-            }),
+            // The scope behavior joined above is what tells an example from a request: an endpoint names none.
+            scope: Phase::of_scope(scope_id, scope.as_ref().map(|b| b.kind)),
             current: row.get::<_, Option<f64>>(14)?.unwrap_or(0.0),
             baseline: row.get::<_, Option<f64>>(15)?.unwrap_or(0.0),
         }),

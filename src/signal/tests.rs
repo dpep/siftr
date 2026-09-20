@@ -238,6 +238,75 @@ fn an_n_plus_one_is_one_group_headed_by_the_request() {
     );
 }
 
+/// traffic-vs-dev-loop.md §2: eight identical requests, then the same with an N+1. Outside a test run there
+/// is no example to attribute to, and the request block is what the queries and the view's log lines belong
+/// to — so the four true signals are one finding headed by the request rather than four headlines.
+#[test]
+fn a_request_blocks_signals_are_one_group_headed_by_the_request() {
+    use SignalKind::*;
+    let endpoint = Phase::Request(BehaviorId::of(
+        Kind::HttpRequest,
+        b"GET PostsController#index",
+    ));
+    let requests = |queries: f64| {
+        b(Kind::HttpRequest, "GET PostsController#index 2xx")
+            .count(8)
+            .in_phase(endpoint, 8, Some(queries))
+            .queries(queries)
+    };
+    let rendered = |count: u64| {
+        b(Kind::Log, "↳ app/views/posts/index.html.erb:<int>")
+            .count(count)
+            .in_phase(endpoint, count, None)
+    };
+    let sql = |template: &str, count: u64| {
+        b(Kind::DbQuery, template)
+            .count(count)
+            .in_phase(endpoint, count, None)
+    };
+    let posts = "Post Load SELECT \"posts\".* FROM \"posts\"";
+    let healthy = run(&[
+        requests(16.0),
+        rendered(16),
+        sql(posts, 8),
+        sql(
+            "Comment Load SELECT \"comments\".* WHERE \"post_id\" IN (?)",
+            8,
+        ),
+    ]);
+    let n_plus_one = run(&[
+        requests(48.0),
+        rendered(48),
+        sql(posts, 8),
+        sql(
+            "Comment Load SELECT \"comments\".* WHERE \"post_id\" = ?",
+            40,
+        ),
+    ]);
+    let baseline_runs = vec![healthy; 3];
+    assert_eq!(
+        rows(&n_plus_one, &baseline_runs),
+        [
+            row(1, true, Frequency, "queries", 48.0, 0.8),
+            row(1, false, Frequency, "count", 48.0, 0.8),
+            row(1, false, New, "count", 40.0, 0.8),
+            row(1, false, Disappeared, "count", 0.0, 0.8),
+        ],
+        "one group: the request heads it, the view line and both queries support it"
+    );
+    let signals = detect(&n_plus_one, &self::baseline(&n_plus_one, &baseline_runs));
+    assert!(
+        signals
+            .iter()
+            .all(|s| s.attribution.map(|a| a.scope) == Some(endpoint)),
+        "every member is attributed to the request block"
+    );
+    assert!(
+        !signals[0].outside_examples(),
+        "a request is the code under test, not the environment around it"
+    );
+}
+
 /// A deleted spec file is one change ranked below a real regression, headed by its examples even though the SQL
 /// attributed to them moved at a lower tier; a single lost example stays its own change.
 #[test]

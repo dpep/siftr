@@ -405,6 +405,16 @@ impl<'a> Comparison<'a> {
             .map_or("", |b| b.behavior.template.as_str())
     }
 
+    /// The phase a scope id names in these runs. Only the behavior it names tells an example from a
+    /// request, and a request's endpoint names none — see [`Phase::of_scope`].
+    fn phase(&self, scope: BehaviorId) -> Phase {
+        let kind = std::iter::once(self.current)
+            .chain(self.runs.iter().copied())
+            .find_map(|run| run.get(scope))
+            .map(|b| b.behavior.kind);
+        Phase::of_scope(Some(scope), kind)
+    }
+
     /// DISAPPEARED examples of one spec file, and what is attributed to them, become one group: deleting or renaming
     /// a file is one change, not one per example.
     fn collapse(&self, found: &mut [Found]) {
@@ -503,7 +513,7 @@ impl<'a> Comparison<'a> {
         let in_examples = self.current.get(id).map_or(0, |b| {
             b.scopes
                 .iter()
-                .filter(|s| s.count > 0 && !Phase::from_scope_id(Some(s.scope)).outside_examples())
+                .filter(|s| s.count > 0 && !self.phase(s.scope).outside_examples())
                 .count()
         });
         if in_examples < 2 {
@@ -919,9 +929,9 @@ impl<'a> Comparison<'a> {
                 _ => {
                     b.unattributed == 0
                         && b.unscoped_count() == 0
-                        && b.scopes.iter().all(|s| {
-                            matches!(Phase::from_scope_id(Some(s.scope)), Phase::Example(e) if ran(e))
-                        })
+                        && b.scopes
+                            .iter()
+                            .all(|s| matches!(self.phase(s.scope), Phase::Example(e) if ran(e)))
                 }
             })
     }
@@ -1078,7 +1088,7 @@ impl<'a> Comparison<'a> {
         }
         let mut scopes: BTreeSet<Phase> = all()
             .filter_map(|run| run.get(id))
-            .flat_map(|b| b.scopes.iter().map(|s| Phase::from_scope_id(Some(s.scope))))
+            .flat_map(|b| b.scopes.iter().map(|s| self.phase(s.scope)))
             .collect();
         // Only a test run has a setup phase, and only side-channel SQL and requests are attributed to examples.
         if self.reporter && matches!(class, Class::Sql | Class::Request) {

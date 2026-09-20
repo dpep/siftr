@@ -129,7 +129,7 @@ pub struct ScopeStats {
     pub sums: Vec<(String, f64)>,
 }
 
-/// Where a test run's log line fell relative to its examples.
+/// What a log line fell inside: the unit of work that produced it, or a test run's phases around them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Phase {
     /// Before the first example started: boot, schema checks, `before(:suite)`.
@@ -140,6 +140,9 @@ pub enum Phase {
     Between,
     /// After the last example finished: `after(:suite)`.
     Teardown,
+    /// Inside this HTTP request, where no example encloses the line: what a test run has in an example,
+    /// a server's log has in a request. Named by its endpoint — see [`Phase::of_scope`].
+    Request(BehaviorId),
 }
 
 static BETWEEN: LazyLock<BehaviorId> =
@@ -154,13 +157,27 @@ impl Phase {
     pub fn scope_id(self) -> Option<BehaviorId> {
         match self {
             Phase::Setup => None,
-            Phase::Example(id) => Some(id),
+            Phase::Example(id) | Phase::Request(id) => Some(id),
             Phase::Between => Some(*BETWEEN),
             Phase::Teardown => Some(*TEARDOWN),
         }
     }
 
-    pub fn from_scope_id(id: Option<BehaviorId>) -> Self {
+    /// The phase a scope id names, given the kind of the behavior it names — `None` when it names none.
+    ///
+    /// An example's scope id *is* its own `test.example` behavior, so it always names one. A request's is
+    /// its endpoint (`GET PostsController#index`), which is no behavior of its own: the status class that
+    /// completes the request's behavior arrives on the `Completed` line, after every line being scoped
+    /// (`crate::interpret::rails`). So a scope naming no behavior is a request, and the id alone can never
+    /// say which: this is the only way to read a stored scope back.
+    pub fn of_scope(id: Option<BehaviorId>, scope: Option<Kind>) -> Self {
+        match Phase::from_scope_id(id) {
+            Phase::Example(id) if scope != Some(Kind::TestExample) => Phase::Request(id),
+            phase => phase,
+        }
+    }
+
+    fn from_scope_id(id: Option<BehaviorId>) -> Self {
         match id {
             None => Phase::Setup,
             Some(id) if id == *BETWEEN => Phase::Between,
@@ -169,9 +186,11 @@ impl Phase {
         }
     }
 
-    /// Not inside any one example: the environment or suite-level hooks, not an example's own code.
+    /// Not inside any one unit of work — an example or a request — but in the environment around them:
+    /// boot, suite hooks, teardown. A request is a line's own code as much as an example is, so this is
+    /// false for one despite its name, which predates requests being a scope.
     pub fn outside_examples(self) -> bool {
-        !matches!(self, Phase::Example(_))
+        !matches!(self, Phase::Example(_) | Phase::Request(_))
     }
 }
 
@@ -705,8 +724,23 @@ mod tests {
     #[test]
     fn phases_round_trip_through_scope_ids() {
         let example = Phase::Example(BehaviorId::of(Kind::TestExample, b"passes"));
-        for phase in [Phase::Setup, example, Phase::Between, Phase::Teardown] {
-            assert_eq!(Phase::from_scope_id(phase.scope_id()), phase);
+        let request = Phase::Request(BehaviorId::of(
+            Kind::HttpRequest,
+            b"GET UsersController#show",
+        ));
+        // What each scope id names: an example's own behavior, and nothing for an endpoint.
+        let named = |phase| match phase {
+            Phase::Example(_) => Some(Kind::TestExample),
+            _ => None,
+        };
+        for phase in [
+            Phase::Setup,
+            example,
+            request,
+            Phase::Between,
+            Phase::Teardown,
+        ] {
+            assert_eq!(Phase::of_scope(phase.scope_id(), named(phase)), phase);
         }
     }
 

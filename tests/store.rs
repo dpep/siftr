@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use siftr::aggregate::Aggregator;
+use siftr::aggregate::{Aggregator, Phase};
 use siftr::analyze::{Analysis, Analyzer};
 use siftr::baseline::Baseline;
 use siftr::behavior::{BehaviorId, Kind};
@@ -125,7 +125,7 @@ fn a_finished_run_reads_back_as_it_was_analyzed() {
 }
 
 /// One run's aggregates from `(kind, line, scope)` events, each with an optional `queries` measure.
-fn scoped_analysis(events: &[(Kind, &str, Option<&str>, Option<f64>)]) -> Analysis {
+fn scoped_analysis(events: &[(Kind, &str, Option<BehaviorId>, Option<f64>)]) -> Analysis {
     let mut aggregator = Aggregator::new();
     let mut normalizer = Normalizer::new();
     let stream = Stream::File("log/test.log".into());
@@ -143,7 +143,7 @@ fn scoped_analysis(events: &[(Kind, &str, Option<&str>, Option<f64>)]) -> Analys
             },
             duration: None,
             outcome: None,
-            scope: scope.map(|s| BehaviorId::of(Kind::TestExample, s.as_bytes())),
+            scope,
             measures: measures.as_ref().map_or(&[], |m| m.as_slice()),
         });
     }
@@ -159,6 +159,7 @@ fn scopes_measures_and_grouped_signals_read_back_as_detected() {
     let home = tempfile::tempdir().unwrap();
     let mut store = Store::open(home.path()).unwrap();
     let context = Context::named("/project", "rspec");
+    let example = BehaviorId::of(Kind::TestExample, b"shows a user");
     let run_of = |queries: usize| {
         let mut events = vec![
             (Kind::TestExample, "shows a user", None, None),
@@ -166,12 +167,12 @@ fn scopes_measures_and_grouped_signals_read_back_as_detected() {
             (
                 Kind::HttpRequest,
                 "GET UsersController#show 2xx",
-                Some("shows a user"),
+                Some(example),
                 Some(queries as f64),
             ),
         ];
         events.extend(std::iter::repeat_n(
-            (Kind::DbQuery, "Comment Load", Some("shows a user"), None),
+            (Kind::DbQuery, "Comment Load", Some(example), None),
             queries,
         ));
         scoped_analysis(&events)
@@ -233,6 +234,83 @@ fn scopes_measures_and_grouped_signals_read_back_as_detected() {
         Some("shows a user")
     );
     assert_eq!(sql.exemplars, 8);
+}
+
+/// A run with no test examples scopes its lines to the request that made them. That scope must read back
+/// as a request: its endpoint names no behavior, so the stored id alone cannot say which kind it is.
+#[test]
+fn a_request_scope_reads_back_as_a_request_not_an_example() {
+    let home = tempfile::tempdir().unwrap();
+    let mut store = Store::open(home.path()).unwrap();
+    let context = Context::named("/project", "traffic");
+    let endpoint = BehaviorId::of(Kind::HttpRequest, b"GET PostsController#index");
+    let run_of = |queries: usize| {
+        let mut events = vec![(
+            Kind::HttpRequest,
+            "GET PostsController#index 2xx",
+            Some(endpoint),
+            Some(queries as f64),
+        )];
+        events.extend(std::iter::repeat_n(
+            (Kind::DbQuery, "Comment Load", Some(endpoint), None),
+            queries,
+        ));
+        scoped_analysis(&events)
+    };
+    let mut detected = Vec::new();
+    let mut last = None;
+    for queries in [2, 2, 9] {
+        let run = store
+            .begin_run(&NewRun {
+                context: &context,
+                command: "curl",
+                cwd: "/project",
+                started_at: SystemTime::now(),
+            })
+            .unwrap();
+        let analysis = run_of(queries);
+        let baseline = store.baseline_runs(&context, run, 10).unwrap();
+        let baseline_runs: Vec<RunId> = baseline.iter().map(|(id, _)| *id).collect();
+        let stats = analysis.stats();
+        detected = detect(
+            &stats,
+            &Baseline::from_runs(&stats, baseline.iter().map(|(id, s)| (*id, s))),
+        );
+        let end = RunEnd {
+            wall: Duration::from_millis(5),
+            exit_code: Some(0),
+            lines: analysis.observations,
+        };
+        store
+            .finish_run(
+                run,
+                &Finished {
+                    end,
+                    analysis: &analysis,
+                    baseline_runs: &baseline_runs,
+                    signals: &detected,
+                },
+            )
+            .unwrap();
+        last = Some(run);
+    }
+    let stored = store.signals(last.unwrap()).unwrap();
+    assert!(!detected.is_empty(), "the query count moved");
+    assert_eq!(
+        stored.iter().map(|s| s.signal.clone()).collect::<Vec<_>>(),
+        detected,
+        "every signal reads back as detected, its request scope included"
+    );
+    let head = &stored[0];
+    assert_eq!(
+        head.signal.attribution.map(|a| a.scope),
+        Some(Phase::Request(endpoint)),
+        "not Phase::Example, which is what a bare id would read as"
+    );
+    assert!(
+        head.scope.is_none(),
+        "an endpoint is no behavior, so the store has none to name beside it"
+    );
 }
 
 #[test]

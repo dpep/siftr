@@ -21,9 +21,11 @@
 //!   [0, 1)), `measure` (count|queries|duration_ms|failed|examples|errors_outside_of_examples|events_past_cap,
 //!   the last only on INCOMPLETE: events of behaviors the cap cut, so this run's absences went unjudged), `current`,
 //!   `baseline` {`runs`, `present_in`, `median`, `min`, `max`, `failures`}, `exception`, `attribution`
-//!   {`scope` (the example's behavior, or null outside examples), `phase` (setup|example|between|teardown:
-//!   before the first example, in one, between two, after the last), `setup` (phase is setup), `current`,
-//!   `baseline`} or null, `tier` (1 error … 5 outside examples), `group` (rank), `headline`, `evidence_lines`,
+//!   {`scope` (the example's behavior; null outside examples, and for a request, whose scope is its endpoint
+//!   rather than a behavior of its own), `phase` (setup|example|between|teardown|request: before the first
+//!   example, in one, between two, after the last, or inside one HTTP request — what a log source has where
+//!   a test run has an example), `setup` (phase is setup), `current`, `baseline`} or null,
+//!   `tier` (1 error … 5 outside examples), `group` (rank), `headline`, `evidence_lines`,
 //!   `behavior`.
 //! - changes (`changes`, `run -j`, `ingest -j`): `run`, `behaviors`, `streams` (what arrived: every stream the
 //!   run captured, spelled as an exemplar's `stream` is — `stdout`, `stderr`, `file:rspec-events`,
@@ -211,6 +213,7 @@ pub const fn phase_str(phase: Phase) -> &'static str {
         Phase::Example(_) => "example",
         Phase::Between => "between",
         Phase::Teardown => "teardown",
+        Phase::Request(_) => "request",
     }
 }
 
@@ -221,6 +224,7 @@ const fn outside_words(phase: Phase) -> &'static str {
         Phase::Example(_) => "in an example",
         Phase::Between => "between examples",
         Phase::Teardown => "after the last example",
+        Phase::Request(_) => "in a request",
     }
 }
 
@@ -706,10 +710,11 @@ pub fn change(stored: &StoredSignal) -> String {
         if a.scope.outside_examples() {
             text.push_str(&format!(" ({})", outside_words(a.scope)));
         } else if (a.current, Some(a.baseline)) != (s.current, b.median) {
-            text.push_str(&format!(
-                " ({} → {} in this example)",
-                a.baseline, a.current
-            ));
+            let unit = match a.scope {
+                Phase::Request(_) => "request",
+                _ => "example",
+            };
+            text.push_str(&format!(" ({} → {} in this {unit})", a.baseline, a.current));
         }
     }
     if s.tracks_suite_size() {

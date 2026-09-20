@@ -499,7 +499,8 @@ mod tests {
         ])
         .into_iter()
         .filter(|s| s.kind == Kind::Log)
-        .map(|s| Phase::from_scope_id(s.scope))
+        // These logs hold no request blocks, so every scope here is an example.
+        .map(|s| Phase::of_scope(s.scope, Some(Kind::TestExample)))
         .collect()
     }
 

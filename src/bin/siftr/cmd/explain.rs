@@ -202,6 +202,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                     printable(&example.template, 140)
                 )?,
                 (Phase::Example(id), None) => writeln!(w, "scope     {}", id.short())?,
+                // An endpoint names no behavior, so there is no template to print beside it; the group
+                // members below name the request whose block this is.
+                (Phase::Request(_), _) => writeln!(w, "scope     the enclosing request")?,
                 (Phase::Setup, _) => writeln!(w, "scope     before the first example (setup)")?,
                 (Phase::Between, _) => writeln!(w, "scope     between examples")?,
                 (Phase::Teardown, _) => writeln!(w, "scope     after the last example (teardown)")?,
