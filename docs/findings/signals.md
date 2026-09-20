@@ -320,6 +320,39 @@ An interrupted, unfinished or incomplete run reminds of nothing. Reminders last
 only as long as the window: once the signal's run leaves the baseline, the
 change is what siftr calls normal.
 
+**A count that only tracks the suite's size is tier 5** (this change). §2 gives
+tier 5 to changes outside every example; a second population belongs there.
+Development makes changes diffuse: adding examples moves whatever runs once in
+each of them — rspec's transactional `BEGIN`/`ROLLBACK`, a query every example
+makes — in lockstep with the example count.
+`docs/findings/dogfood-junior-loop.md` watched a developer over eight runs, and
+`TRANSACTION ROLLBACK TRANSACTION` headlined both runs that reported anything,
+having gone 1 → 7 by adding exactly one occurrence to each of seven examples. No
+example owns that, so attribution declines it and grouping cannot engage, which
+makes every such signal its own headline.
+
+A FREQUENCY on `count` is now demoted when all three hold: the suite's example
+count changed, the behavior occurs inside at least two examples now, and the same
+`rules::frequency` raises nothing on the count *per example*. Demotion, not
+suppression — the count is real, and one that outgrew the suite (two rollbacks
+per example where there was one) keeps its tier, as does one a single example
+owns, which is a change there is somewhere to look.
+
+**No threshold was added, by construction.** `rules::frequency` is invariant
+under scaling every run's value by one factor: `min == max`, membership of
+`[min, max]` and `distance / width` all survive it. So on a suite holding its
+size the per-example rate would return the absolute rule's own verdict, and the
+demotion is gated on the size having *moved* — making it inert wherever the suite
+is constant rather than merely unlikely to fire. Verified by replaying all 19
+committed fixture sequences before and after: every one is byte-identical,
+including the N+1's single group headed by `GET UsersController#show 2xx`
+queries 3 → 10. Of the sequences whose suite does change size, the two that grow
+(4 → 10, 10 → 11) raise no FREQUENCY on a count at all, and the one that shrinks
+(20 → 4, a warning 1 → 3) keeps tier 3 twice over: its rate moved 0.05 → 0.75,
+and a stderr count carries no per-example attribution to call diffuse. The rule,
+a rate that outgrew the suite and a change one example owns are pinned in
+`src/signal/tests.rs`.
+
 **What verified these.** `noise/analyze.rb` models §2 as backtested: clean
 baselines, one group per example, no INCOMPLETE, no errors outside examples, no
 collapse and no reminders. So §3's numbers say nothing about the revisions.

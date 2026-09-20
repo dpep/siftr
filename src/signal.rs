@@ -166,10 +166,21 @@ impl Signal {
     pub fn outside_examples(&self) -> bool {
         self.attribution.is_some_and(|a| a.scope.outside_examples())
     }
+
+    /// Demoted because its count moved only as fast as the suite did: per-example bookkeeping, not a
+    /// change in the code. Tier 5 is reached by exactly two paths, and the other one attributes to a
+    /// phase outside every example, so the pair tells them apart.
+    pub fn tracks_suite_size(&self) -> bool {
+        self.tier == SUITE_SIZE_TIER && !self.outside_examples()
+    }
 }
 
 /// The tier of changes outside every example.
 pub const SETUP_TIER: u8 = 5;
+
+/// The tier of a count that only tracks the suite's size. Shares [`SETUP_TIER`]'s rank: both are real
+/// changes that aren't about the code under test.
+pub const SUITE_SIZE_TIER: u8 = SETUP_TIER;
 
 /// Signals ranked by group, each group's headline first.
 pub fn detect<K>(current: &RunStats, baseline: &Baseline<'_, K>) -> Vec<Signal> {
@@ -462,6 +473,50 @@ impl<'a> Comparison<'a> {
             SignalKind::New => self.runs.iter().all(|run| run.events_past_cap() > 0),
             _ => false,
         }
+    }
+
+    /// Whether `id`'s count moved only because the suite changed size. What rspec's transactional
+    /// fixtures run once per example tracks the example count, so its count restates what the NEW and
+    /// DISAPPEARED examples already say: on a suite that grew 1 → 7, `ROLLBACK TRANSACTION` went 1 → 7
+    /// and headlined both reporting runs (`docs/findings/dogfood-junior-loop.md`).
+    ///
+    /// No threshold of its own. It asks [`rules::frequency`] — the rule that raised the signal — whether
+    /// the count *per example* moved, and that rule is invariant under scaling every run's value by the
+    /// same factor. So a suite holding its size is judged exactly as before, which is why this is gated
+    /// on the size having moved rather than left to the arithmetic.
+    fn suite_size_explains(&self, id: BehaviorId, name: &str) -> bool {
+        if name != measure::COUNT {
+            return false;
+        }
+        let examples = |run: &RunStats| {
+            run.iter()
+                .filter(|b| b.behavior.kind == Kind::TestExample && b.stats.count > 0)
+                .count() as f64
+        };
+        let now = examples(self.current);
+        let then: Vec<f64> = self.runs.iter().map(|run| examples(run)).collect();
+        // A run with no examples has no rate, and a suite that held its size explains nothing.
+        if now == 0.0 || then.contains(&0.0) || then.iter().all(|&n| n == now) {
+            return false;
+        }
+        // Concentrated in one example is a change someone can go and look at; this is about diffuse ones.
+        let in_examples = self.current.get(id).map_or(0, |b| {
+            b.scopes
+                .iter()
+                .filter(|s| s.count > 0 && !Phase::from_scope_id(Some(s.scope)).outside_examples())
+                .count()
+        });
+        if in_examples < 2 {
+            return false;
+        }
+        let rate = |run: &RunStats, examples: f64| value(run, id, name).unwrap_or(0.0) / examples;
+        let baseline: Vec<f64> = self
+            .runs
+            .iter()
+            .zip(&then)
+            .map(|(run, &n)| rate(run, n))
+            .collect();
+        rules::frequency(&baseline, rate(self.current, now)).is_none()
     }
 
     /// INCOMPLETE when the cap cut behaviors out of this run: it didn't record what its baseline runs did, so
@@ -913,6 +968,9 @@ impl<'a> Comparison<'a> {
         confidence: f64,
     ) {
         let mut tier = tier(kind, class);
+        if kind == SignalKind::Frequency && self.suite_size_explains(id, name) {
+            tier = SUITE_SIZE_TIER;
+        }
         let (key, attribution) = match class {
             Class::Example => (Key::Scope(Phase::Example(id)), None),
             _ => {

@@ -444,6 +444,79 @@ fn unattributed_occurrences_leave_a_signal_ungrouped() {
     );
 }
 
+/// An example of `./spec/thing_spec.rb`, and the rollback rspec's transactional fixtures run in each.
+fn examples(n: u64) -> Vec<B> {
+    (1..=n)
+        .map(|i| {
+            b(
+                Kind::TestExample,
+                &format!("./spec/thing_spec.rb # works {i}"),
+            )
+            .seq(i)
+        })
+        .collect()
+}
+
+/// `each` occurrences of the rollback inside every one of `within`.
+fn rollback(within: &[B], each: u64) -> B {
+    let mut sql =
+        b(Kind::DbQuery, "TRANSACTION ROLLBACK TRANSACTION").count(within.len() as u64 * each);
+    for example in within {
+        sql = sql.within(example, each, None);
+    }
+    sql
+}
+
+/// dogfood-junior-loop.md: adding six examples moved `ROLLBACK` 1 → 7 in lockstep, and it headlined both
+/// reporting runs. Per-example bookkeeping restates what the NEW examples already say, so it ranks with
+/// setup — demoted, never dropped, since the count is real.
+#[test]
+fn a_count_that_tracks_the_suite_size_is_demoted_below_the_examples_that_explain_it() {
+    use SignalKind::*;
+    let (one, seven) = (examples(1), examples(7));
+    let was = [one.clone(), vec![rollback(&one, 1)]].concat();
+    let now = [seven.clone(), vec![rollback(&seven, 1)]].concat();
+    let baseline = vec![run(&was); 3];
+    let current = run(&now);
+
+    let signals = detect(&current, &self::baseline(&current, &baseline));
+    assert_eq!(signals[0].kind, New, "a new example heads the report");
+    let sql = signals
+        .iter()
+        .find(|s| s.kind == Frequency)
+        .expect("the count still fires; only its rank moves");
+    assert_eq!((sql.current, sql.tier), (7.0, SUITE_SIZE_TIER));
+    assert!(sql.tracks_suite_size() && !sql.outside_examples());
+    assert!(sql.group > 1, "ranked below the examples that explain it");
+}
+
+/// What the demotion must not touch: a rate that really moved, and a change one example owns. The first is
+/// a regression the suite's growth doesn't account for; the second has an example to go and look at.
+#[test]
+fn the_suite_size_demotion_spares_a_moved_rate_and_a_change_one_example_owns() {
+    let (one, seven) = (examples(1), examples(7));
+    let baseline = vec![run(&[one.clone(), vec![rollback(&one, 1)]].concat()); 3];
+    let frequency = |current: &RunStats| {
+        detect(current, &self::baseline(current, &baseline))
+            .into_iter()
+            .find(|s| s.kind == SignalKind::Frequency)
+            .expect("a frequency signal")
+    };
+
+    let twice = frequency(&run(&[seven.clone(), vec![rollback(&seven, 2)]].concat()));
+    assert_eq!((twice.current, twice.tier), (14.0, 3));
+    assert!(!twice.tracks_suite_size(), "two per example is not one");
+
+    // The same 1 → 7, every occurrence inside the first example: the rate is flat, but it isn't diffuse.
+    let concentrated = frequency(&run(&[seven.clone(), vec![rollback(&one, 7)]].concat()));
+    assert_eq!((concentrated.current, concentrated.tier), (7.0, 3));
+    assert_eq!(
+        concentrated.attribution.map(|a| a.scope),
+        Some(Phase::Example(seven[0].id())),
+        "one example owns it, so it keeps its tier and its group"
+    );
+}
+
 #[test]
 fn changes_after_the_last_example_are_teardown_ranked_with_setup() {
     use SignalKind::*;

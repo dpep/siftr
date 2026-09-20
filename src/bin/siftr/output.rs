@@ -712,6 +712,9 @@ pub fn change(stored: &StoredSignal) -> String {
             ));
         }
     }
+    if s.tracks_suite_size() {
+        text.push_str(" (tracks the suite's size)");
+    }
     text
 }
 
