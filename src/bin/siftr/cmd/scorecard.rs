@@ -36,6 +36,9 @@ struct Tally {
 impl Tally {
     fn add(&mut self, outcome: &Outcome) {
         self.raised += 1;
+        // The latest verdict, as `history --signals` prints it: a change fixed and broken again is `recurred`,
+        // not `resolved`. Counting it both ways would make the columns overlap and stop summing to `judged`.
+        //
         // An unjudged signal is not a signal that went nowhere: retention may have pruned the runs its verdict
         // reads, which also takes its feedback window with it. Counting it in a rate would file "we can't tell"
         // under whichever answer flattered the total.
@@ -101,12 +104,13 @@ fn rate(numerator: usize, denominator: usize) -> Option<f64> {
     Some(round_sig(numerator as f64 / denominator as f64, digits))
 }
 
-/// `2  0.67`, or the count alone when no rate is defined. The rate keeps exactly the decimals [`rate`] left it,
-/// so `1.0` and `0.3` read as rates rather than as a second count, and neither grows a digit it hasn't earned.
+/// `  2  0.67`, or the count alone when no rate is defined. The count keeps its own column so a two-digit one
+/// doesn't push the rate out of line, and the rate keeps exactly the decimals [`rate`] left it — so `1.0` and
+/// `0.3` read as rates rather than as a second count, and neither grows a digit it hasn't earned.
 fn counted(count: usize, of: usize) -> String {
     match rate(count, of) {
-        Some(rate) => format!("{count}  {}", decimals(rate)),
-        None => count.to_string(),
+        Some(rate) => format!("{count:>3}  {}", decimals(rate)),
+        None => format!("{count:>3}"),
     }
 }
 
@@ -166,15 +170,18 @@ pub fn render(
             plural(total.raised as u64, "signal"),
             plural(runs.len() as u64, "run")
         )?;
+        if total.raised == 0 {
+            return writeln!(w, "next: siftr run -- CMD");
+        }
         writeln!(
             w,
-            "  {:<12} {:>6}  {:>6}  {:<11} {:>8}  {:<11} {:>4}  {:>8}",
+            "  {:<12} {:>6}  {:>6}   {:<9}  {:>8}   {:<9}  {:>4}  {:>8}",
             "kind", "raised", "judged", "examined", "resolved", "unexamined", "open", "recurred"
         )?;
         let row = |w: &mut dyn std::io::Write, name: &str, t: &Tally| {
             writeln!(
                 w,
-                "  {name:<12} {:>6}  {:>6}  {:<11} {:>8}  {:<11} {:>4}  {:>8}",
+                "  {name:<12} {:>6}  {:>6}   {:<9}  {:>8}   {:<9}  {:>4}  {:>8}",
                 t.raised,
                 t.judged,
                 counted(t.examined, t.judged),
