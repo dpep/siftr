@@ -15,9 +15,27 @@ DEMO=$ROOT/dogfood/rails_demo
 SPEC=$DEMO/spec/requests/users_spec.rb
 mkdir -p "$SCRATCH"
 
+# One scratch, one run. $SCRATCH/target is shared by every invocation, and a second run that
+# invalidates a build script's OUT_DIR under the first fails it with a missing file *under target/* —
+# which reads exactly like a broken change and costs a cold rebuild to rule out. Cargo's lock
+# serializes compilation; it does not stop one run replacing another's build outputs.
+LOCK=$SCRATCH/.lock
+if ! mkdir "$LOCK" 2>/dev/null; then
+  held=$(cat "$LOCK/pid" 2>/dev/null || true)
+  if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+    echo "another script/verify is running (pid $held) and shares $SCRATCH"
+    echo "give this one its own: VERIFY_SCRATCH=<dir> script/verify"
+    exit 2
+  fi
+  # The holder is gone, so the lock outlived it — a killed run, not a live one.
+  rm -rf "$LOCK" && mkdir "$LOCK" || { echo "cannot take the lock at $LOCK"; exit 2; }
+fi
+echo $$ >"$LOCK/pid"
+
 cleanup() {
   [ -f "$SCRATCH/users_spec.rb.orig" ] && cp "$SCRATCH/users_spec.rb.orig" "$SPEC" && rm "$SCRATCH/users_spec.rb.orig"
   git -C "$ROOT" worktree remove --force "$WT" 2>/dev/null || true
+  rm -rf "$LOCK"
 }
 trap cleanup EXIT
 git -C "$ROOT" worktree add --detach "$WT" "$SHA" >/dev/null
