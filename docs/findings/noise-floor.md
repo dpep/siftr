@@ -173,6 +173,33 @@ here; this lane changed no `src/`. A pre-registered check for whichever is
 tried: `network_resiliency` must go from 250 NEW in 50 comparisons to 0, and
 `iriq`'s 1002 example behaviors and `rails_demo`'s 10 must all keep their ids.
 
+**Result (2026-09-19).** Neither shape was built. Another lane closed the same
+generator from the other end: the listener now reports whether the example
+declared a description at all, so identity uses the enclosing group's words and
+marks an undeclared one `<unnamed example>`. Nothing is masked, so the merge
+hazard above never arises.
+
+Re-ran this section's own harness against it — `suite.sh` then `tally.rb`, 8
+runs of `network_resiliency`, 6 judged comparisons:
+
+```
+  comparisons with >= 1 signal: 0 of 6
+  signals: none, in any kind
+  behaviors per run: 335-335
+```
+
+The NEW half of the prediction is met, and `335-335` is the structural half of
+the answer: the behavior table is now identical run to run, where its drift was
+the generator.
+
+**What this does not show.** These 6 comparisons ran at 1-minute load 5.4–9.1;
+the 50 above ran at 19–83. So the 0 example-LATENCY signals here cannot be
+attributed between the fix — which did not touch latency at all — and the
+quieter machine. §6 stands unaffected, and its remedy is still unfound. The
+`iriq` half of the prediction was also not re-run; the fix's own suite and all
+24 fixture scenarios are byte-identical, but every example in those is named, so
+they cannot exercise the change either way.
+
 ## 6. Generator two: example LATENCY, and why the pre-registered remedy is not enough
 
 `signals.md` §3 pre-registered: *"Over the next 50 clean local runs of each
