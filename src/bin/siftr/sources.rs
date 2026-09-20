@@ -18,6 +18,7 @@ use siftr::analyze::RunSource;
 use siftr::interpret::rspec::{EVENTS_STREAM, LOG_STREAM};
 use siftr::observation::Stream;
 
+use crate::output::Unread;
 use crate::record::Recording;
 use rails_log::RailsLog;
 use rspec::Rspec;
@@ -62,6 +63,12 @@ pub trait Source {
 
     /// Before spawning: set or append env vars (e.g. `SPEC_OPTS`), note pre-run state such as a log's length.
     fn prepare(&mut self, command: &mut Command) -> Result<()>;
+
+    /// A second source this one reads for, once prepared: the rspec listener owns the log slice its offsets
+    /// index, so it is what reads `rails_log` too. `None` for a source that reads only its own.
+    fn also_reads(&self) -> Option<&'static str> {
+        None
+    }
 
     /// After the child exits and is reaped: feed what was captured into the same recording, as `Stream::File`
     /// streams, or record what the kernel said about the run.
@@ -191,6 +198,54 @@ pub fn survey(argv: &[String], dir: &Path, on: &Enabled) -> Vec<Listed> {
             why: "every run siftr wraps has a child to measure",
         },
     ]
+}
+
+/// What a run's sources amounted to: what siftr read here, and what it therefore couldn't see. A context's
+/// first run reports this, so a limitation is never something the user has to think to ask about.
+pub struct Reading {
+    /// Source names read, in listing order; the command's own output leads.
+    pub read: Vec<&'static str>,
+    /// Sources that fed this run nothing.
+    pub unread: Vec<Unread>,
+}
+
+/// What each source fed a run of `argv` in `dir`. `prepared` names the sources that survived `prepare`, so one
+/// whose setup failed reads as unread however well it applies here.
+pub fn reading(argv: &[String], dir: &Path, on: &Enabled, prepared: &[&str]) -> Reading {
+    let mut read = Vec::new();
+    let mut unread = Vec::new();
+    for listed in survey(argv, dir, on) {
+        let name = listed.name;
+        if name == STDOUT || name == STDERR || prepared.contains(&name) {
+            read.push(name);
+            continue;
+        }
+        let why = match (listed.on, listed.applies) {
+            (false, _) => "switched off in .siftr.toml".to_owned(),
+            // On and applicable, yet never prepared: its setup failed, which already warned on its own.
+            (true, true) => "its setup failed for this run".to_owned(),
+            (true, false) => listed.why.to_owned(),
+        };
+        unread.push(Unread {
+            name,
+            why,
+            hides: hides(name),
+        });
+    }
+    Reading { read, unread }
+}
+
+/// What a run has no way to see once a source reads nothing. Per source, not per reason: an absent `rails_log`
+/// costs the same whether the project has no log or the key is switched off.
+fn hides(name: &str) -> &'static str {
+    match name {
+        RSPEC => "no per-example results, so no change can name the example it came from",
+        RAILS_LOG => {
+            "no SQL or request lines, so no query-count or query-latency change can be found"
+        }
+        RUSAGE => "no CPU, memory or context-switch accounting for the run",
+        _ => "nothing this source would have fed",
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -375,6 +430,53 @@ mod tests {
             ],
             "the key is what configuration takes; the stream is what evidence points at"
         );
+    }
+
+    /// What was prepared, not what applies: the rspec source owns the log, and a source that failed to prepare
+    /// read nothing however well it fits this command here.
+    #[test]
+    fn reading_reports_the_sources_that_actually_fed_the_run() {
+        let dir = rails_project();
+        let argv = rspec_argv();
+        let on = Enabled::default();
+
+        let both = reading(&argv, dir.path(), &on, &[RSPEC, RAILS_LOG, RUSAGE]);
+        assert_eq!(both.read, [STDOUT, STDERR, RSPEC, RAILS_LOG, RUSAGE]);
+        assert!(both.unread.is_empty());
+
+        let failed = reading(&argv, dir.path(), &on, &[RUSAGE]);
+        let unread: Vec<(&str, &str)> = failed
+            .unread
+            .iter()
+            .map(|u| (u.name, u.why.as_str()))
+            .collect();
+        assert_eq!(failed.read, [STDOUT, STDERR, RUSAGE]);
+        assert_eq!(
+            unread,
+            [
+                (RSPEC, "its setup failed for this run"),
+                (RAILS_LOG, "its setup failed for this run"),
+            ]
+        );
+
+        let off = Enabled { rspec: false, ..on };
+        let switched = reading(&argv, dir.path(), &off, &[RAILS_LOG, RUSAGE]);
+        assert_eq!(
+            switched
+                .unread
+                .iter()
+                .map(|u| u.why.as_str())
+                .collect::<Vec<_>>(),
+            ["switched off in .siftr.toml"],
+        );
+    }
+
+    /// The consequence is what the user needs; every source must state one, or the note says nothing useful.
+    #[test]
+    fn every_source_says_what_going_unread_hides() {
+        for name in SOURCES {
+            assert_ne!(hides(name), hides("not a source"), "{name}");
+        }
     }
 
     #[test]

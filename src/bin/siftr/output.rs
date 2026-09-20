@@ -272,6 +272,95 @@ fn skipped_label(skipped: &[(RunId, Ineligible)], named: &[RunId]) -> String {
 /// Groups shown in full; the rest are counted.
 const SHOWN_GROUPS: usize = 3;
 
+/// A source that fed a run nothing, and what that costs the report.
+pub struct Unread {
+    /// Its name, which is also its `.siftr.toml` key.
+    pub name: &'static str,
+    /// Why it read nothing, in the words `siftr sources` uses.
+    pub why: String,
+    /// What the run therefore has no way to see.
+    pub hides: &'static str,
+}
+
+/// A context in the same project that already has history a new context won't share.
+pub struct Neighbour {
+    /// Its command line, as the user would retype it.
+    pub command: String,
+    /// Its finished runs among those looked at.
+    pub runs: u64,
+    /// Whether older runs lay outside the window looked at, so `runs` is a floor rather than the total.
+    pub more: bool,
+}
+
+impl Neighbour {
+    fn runs_label(&self) -> String {
+        match self.more {
+            true => format!("at least {}", plural(self.runs, "run")),
+            false => plural(self.runs, "run"),
+        }
+    }
+}
+
+/// What a context's first run says once and never again: what siftr read here, what that means it can't tell
+/// you, and whether starting from scratch is itself the surprise. Rendered only under the line that says there
+/// is nothing to compare with, so the next run of the same command is silent.
+pub struct FirstRun<'a> {
+    /// Source names read, in listing order.
+    pub read: &'a [&'a str],
+    /// Sources that read nothing, in listing order.
+    pub unread: &'a [Unread],
+    /// The neighbouring context with history, when a blank one here is a surprise rather than a new project.
+    pub neighbour: Option<&'a Neighbour>,
+    /// The command as typed, for the drill-down.
+    pub command: &'a str,
+}
+
+impl FirstRun<'_> {
+    pub fn render(&self, w: &mut dyn Write) -> io::Result<()> {
+        // Both commands, spelled out: the rule has to be learnable from this line alone, by a reader who has
+        // never met it — a fact read in a README hours ago isn't there at the moment a command changes.
+        if let Some(near) = self.neighbour {
+            writeln!(
+                w,
+                "  new baseline: a baseline is keyed on the project and the command as you typed it, so \
+                 `{}` starts from nothing rather than joining `{}` ({} here)",
+                self.command,
+                near.command,
+                near.runs_label(),
+            )?;
+        }
+        let all = match self.unread.is_empty() {
+            true => " — everything siftr knows how to read here",
+            false => "",
+        };
+        writeln!(w, "  read: {}{all}", self.read.join(", "))?;
+        for unread in self.unread {
+            writeln!(
+                w,
+                "  not read: {} ({}) — {}",
+                unread.name, unread.why, unread.hides
+            )?;
+        }
+        // Only when something went unread: `siftr sources` has nothing to add about a run that read everything.
+        let drill = match self.unread.is_empty() {
+            true => String::new(),
+            false => format!(" · siftr sources -- {}", self.command),
+        };
+        writeln!(
+            w,
+            "  {} of this command before anything but ERROR can fire{drill}",
+            plural(u64::from(MIN_BASELINE_RUNS), "more run"),
+        )
+    }
+}
+
+/// The same block where the report itself is a document on stdout, headed so its lines aren't orphaned.
+pub fn note_first_run(run: RunId, first: &FirstRun<'_>) {
+    let mut out = io::stderr().lock();
+    let _ = writeln!(out, "siftr: {run}: first run of this context");
+    let _ = first.render(&mut out);
+}
+
 /// Signals that share a group, headline first.
 pub struct Group<'a> {
     pub rank: u32,
@@ -409,15 +498,27 @@ impl Changes<'_> {
 
     /// The whole report.
     pub fn human(&self, w: &mut dyn Write) -> io::Result<()> {
-        self.render(w, None)
+        self.render(w, None, None)
+    }
+
+    /// The whole report, plus what a context's first run says about what siftr could see here. The caller
+    /// passes `first` only for a run with no baseline and nothing skipped, so the note follows the line that
+    /// says there is nothing to compare with.
+    pub fn human_first_run(&self, w: &mut dyn Write, first: &FirstRun<'_>) -> io::Result<()> {
+        self.render(w, None, Some(first))
     }
 
     /// At most `limit` changes, the rest still counted in the line that says how many were left out.
     pub fn human_limited(&self, w: &mut dyn Write, limit: Option<usize>) -> io::Result<()> {
-        self.render(w, limit)
+        self.render(w, limit, None)
     }
 
-    fn render(&self, w: &mut dyn Write, limit: Option<usize>) -> io::Result<()> {
+    fn render(
+        &self,
+        w: &mut dyn Write,
+        limit: Option<usize>,
+        first: Option<&FirstRun<'_>>,
+    ) -> io::Result<()> {
         let groups = groups(self.signals);
         let (setup, code): (Vec<&Group<'_>>, Vec<&Group<'_>>) =
             groups.iter().partition(|g| g.setup);
@@ -491,6 +592,9 @@ impl Changes<'_> {
                 )?;
             }
             writeln!(w)?;
+        }
+        if let Some(first) = first {
+            first.render(w)?;
         }
         // `-n` says how many changes to read; without it the report shows its usual few. Either way the line
         // below counts the rest, and `-j` without `-n` is still the whole report.

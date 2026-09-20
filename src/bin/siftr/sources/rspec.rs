@@ -39,6 +39,11 @@ impl Source for Rspec {
         super::RSPEC
     }
 
+    /// Only once `prepare` has kept the log: a snapshot that failed leaves nothing reading it.
+    fn also_reads(&self) -> Option<&'static str> {
+        self.log.as_ref().map(|_| super::RAILS_LOG)
+    }
+
     fn prepare(&mut self, command: &mut Command) -> Result<()> {
         let dir = tempfile::Builder::new()
             .prefix("siftr-rspec-")

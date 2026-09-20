@@ -15,11 +15,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use siftr::context::Context;
 use siftr::observation::Stream;
-use siftr::store::StoredSignal;
+use siftr::store::{Store, StoredSignal};
 use signal_hook::consts::{SIGINT, SIGPIPE, SIGTERM};
 
 use super::Globals;
-use crate::output::{self, Changes};
+use crate::output::{self, Changes, FirstRun, Neighbour};
 use crate::project;
 use crate::record::{Begun, Recorded, Recording};
 use crate::sources;
@@ -158,7 +158,8 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
         command.process_group(0);
     }
     let here = std::env::current_dir().unwrap_or_default();
-    let mut sources = sources::for_command(&argv, &here, &sources::enabled());
+    let on = sources::enabled();
+    let mut sources = sources::for_command(&argv, &here, &on);
     sources.retain_mut(|source| {
         let name = source.name();
         source
@@ -166,6 +167,12 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
             .inspect_err(|error| output::warn(format_args!("{name} skipped: {error:#}")))
             .is_ok()
     });
+    // After `prepare`, so a source whose setup failed is reported as read by nothing.
+    let prepared: Vec<&str> = (sources.iter())
+        .flat_map(|source| [Some(source.name()), source.also_reads()])
+        .flatten()
+        .collect();
+    let reading = sources::reading(&argv, &here, &on, &prepared);
 
     let started = Instant::now();
     let spawned = command.spawn();
@@ -275,8 +282,8 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
     };
     let code = exit_code(status);
 
-    let mut recording = match recorder.into_recording() {
-        Ok(recording) => recording,
+    let (mut recording, near) = match recorder.into_recording() {
+        Ok(started) => started,
         Err(error) => {
             not_recorded(&error, globals.json);
             return exit_as(status, code);
@@ -300,15 +307,23 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
             .finish_interrupted(Some(code), signal)
             .map(|recorded| {
                 if args.report.shows(&recorded.signals, &[]) {
-                    report(&recorded, &[], globals.json);
+                    report(&recorded, &[], globals.json, None);
                 }
             }),
         None => recording.finish(Some(code)).map(|recorded| {
             let open = super::still_open(globals, &recorded.run, &recorded.signals);
+            // Both quiet flags still mean silence: the note is siftr's own output like any other line.
             if !args.report.shows(&recorded.signals, &open) {
                 return;
             }
-            report(&recorded, &open, globals.json);
+            // The stored command is the shell-quoted line that names the context, so it pastes back verbatim.
+            let first = first_run(&recorded).then(|| FirstRun {
+                read: &reading.read,
+                unread: &reading.unread,
+                neighbour: near.as_ref(),
+                command: &recorded.run.command,
+            });
+            report(&recorded, &open, globals.json, first.as_ref());
             let shown = output::surfaced(&recorded.signals, globals.json)
                 .into_iter()
                 .chain(output::reminded(&open, globals.json))
@@ -330,15 +345,18 @@ pub fn run(args: Args, globals: &Globals) -> ExitCode {
 enum Recorder {
     /// Waiting for the store. Output is held here, bounded, and passthrough never waits on it.
     Starting {
-        began: Receiver<Result<Begun>>,
+        began: Receiver<Result<Started>>,
         pending: Vec<(Stream, Vec<u8>)>,
         held: usize,
         deadline: Instant,
     },
-    Recording(Box<Recording>),
+    Recording(Box<Recording>, Option<Neighbour>),
     /// Not recording this run, and why.
     Off(anyhow::Error),
 }
+
+/// A run begun, and what the store knew about this project before it existed.
+type Started = (Begun, Option<Neighbour>);
 
 impl Recorder {
     fn begin(globals: &Globals, argv: &[String], started: Instant) -> Self {
@@ -349,11 +367,14 @@ impl Recorder {
         let argv = argv.to_vec();
         let (answer, began) = mpsc::channel();
         thread::spawn(move || {
-            let begin = || -> Result<Begun> {
+            let begin = || -> Result<Started> {
                 let (store, location) = (globals.open_store()?, project::current()?);
                 let context = Context::for_command(location.project, &argv);
                 let command_line = context.name().to_owned();
+                // Before this run exists, so it can't be its own neighbour, and while the store is still open.
+                let near = neighbour(&store, &context);
                 Begun::new(store, context, &command_line, &location.cwd, started)
+                    .map(|begun| (begun, near))
             };
             // If siftr gave up waiting, a run begun this late stays unfinished, and so out of every baseline.
             let _ = answer.send(begin());
@@ -385,7 +406,7 @@ impl Recorder {
                 *held += bytes.len();
                 pending.push((stream, bytes));
             }
-            Recorder::Recording(recording) => recording.chunk(&stream, &bytes),
+            Recorder::Recording(recording, _) => recording.chunk(&stream, &bytes),
             Recorder::Off(_) => {}
         }
     }
@@ -408,7 +429,7 @@ impl Recorder {
     }
 
     /// The recording, once the store answers. The command has exited by now, so waiting holds up only siftr's exit.
-    fn into_recording(mut self) -> Result<Recording> {
+    fn into_recording(mut self) -> Result<(Recording, Option<Neighbour>)> {
         if let Recorder::Starting {
             began, deadline, ..
         } = &self
@@ -422,25 +443,25 @@ impl Recorder {
             self.settle(answer);
         }
         match self {
-            Recorder::Recording(recording) => Ok(*recording),
+            Recorder::Recording(recording, near) => Ok((*recording, near)),
             Recorder::Off(error) => Err(error),
             Recorder::Starting { .. } => Err(late_error()),
         }
     }
 
     /// Leaves `Starting`: the held output goes into the recording, or is dropped with one warning.
-    fn settle(&mut self, answer: Result<Begun>) {
+    fn settle(&mut self, answer: Result<Started>) {
         let Recorder::Starting { pending, .. } = self else {
             return;
         };
         let pending = std::mem::take(pending);
         *self = match answer {
-            Ok(begun) => {
+            Ok((begun, near)) => {
                 let mut recording = Recording::from(begun);
                 for (stream, bytes) in pending {
                     recording.chunk(&stream, &bytes);
                 }
-                Recorder::Recording(Box::new(recording))
+                Recorder::Recording(Box::new(recording), near)
             }
             Err(error) => {
                 output::warn(format_args!("not recording this run: {error:#}"));
@@ -548,8 +569,62 @@ fn exit_as(status: ExitStatus, code: i32) -> ExitCode {
     ExitCode::from(u8::try_from(code).unwrap_or(1))
 }
 
+/// Whether this run is the one that started the context's history: the report's own "nothing to compare with"
+/// branch, which is where the first-run note belongs.
+fn first_run(recorded: &Recorded) -> bool {
+    recorded.baseline_runs.is_empty()
+        && recorded.skipped_runs.is_empty()
+        && recorded.run.uncompared.is_none()
+}
+
+/// How many of a project's recent runs are read to find a context that already has history. A window, not a
+/// census: the answer has to name the nearest neighbour and say how much of it was counted.
+const NEIGHBOUR_WINDOW: usize = 50;
+
+/// The context in this project whose history a first run of `context` won't share, if there is one. Nearest
+/// first — a command sharing leading words is the one the user thought they were adding to — then the one with
+/// the most runs. `None` where nothing else has run here: a new project's first run is not a surprise.
+fn neighbour(store: &Store, context: &Context) -> Option<Neighbour> {
+    let recent = store.runs(context.project(), NEIGHBOUR_WINDOW).ok()?;
+    let more = recent.len() == NEIGHBOUR_WINDOW;
+    let mut counted: Vec<(&str, u64, siftr::store::RunId)> = Vec::new();
+    for run in &recent {
+        if run.context == *context || run.end.is_none() || run.interrupted.is_some() {
+            continue;
+        }
+        match counted
+            .iter_mut()
+            .find(|(name, ..)| *name == run.context.name())
+        {
+            Some((_, runs, _)) => *runs += 1,
+            // Newest first, so the first run seen for a context is also its most recent.
+            None => counted.push((run.context.name(), 1, run.id)),
+        }
+    }
+    let (command, runs, _) = counted
+        .into_iter()
+        .max_by_key(|&(name, runs, id)| (shared_words(context.name(), name), runs, id))?;
+    Some(Neighbour {
+        command: command.to_owned(),
+        runs,
+        more,
+    })
+}
+
+/// Leading words two command lines share: how near a miss one context is for another.
+fn shared_words(a: &str, b: &str) -> usize {
+    (a.split(' ').zip(b.split(' ')))
+        .take_while(|(a, b)| a == b)
+        .count()
+}
+
 /// Human summary to stderr, which the command's own output doesn't use for data; JSON to stdout.
-fn report(recorded: &Recorded, open: &[siftr::store::StoredSignal], json: bool) {
+fn report(
+    recorded: &Recorded,
+    open: &[siftr::store::StoredSignal],
+    json: bool,
+    first: Option<&FirstRun<'_>>,
+) {
     let changes = Changes {
         run: &recorded.run,
         behaviors: recorded.behaviors,
@@ -559,10 +634,20 @@ fn report(recorded: &Recorded, open: &[siftr::store::StoredSignal], json: bool) 
         signals: &recorded.signals,
         open_signals: open,
     };
-    let printed = if json {
-        output::emit(true, || changes.json(), |_| Ok(()))
-    } else {
-        changes.human(&mut io::stderr().lock()).map_err(Into::into)
+    let printed = match (json, first) {
+        // The document on stdout is a contract shared with `changes`, which can't reconstruct the note; it
+        // goes to stderr instead, where every other thing siftr says about a run already goes.
+        (true, first) => {
+            let printed = output::emit(true, || changes.json(), |_| Ok(()));
+            if let Some(first) = first {
+                output::note_first_run(recorded.run.id, first);
+            }
+            printed
+        }
+        (false, Some(first)) => changes
+            .human_first_run(&mut io::stderr().lock(), first)
+            .map_err(Into::into),
+        (false, None) => changes.human(&mut io::stderr().lock()).map_err(Into::into),
     };
     if let Err(error) = printed {
         output::warn(format_args!("could not print the summary: {error:#}"));
