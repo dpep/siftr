@@ -3,7 +3,7 @@
 # step so a real baseline accumulates from work this repo already does.
 #
 #   script/gate              cargo test, clippy, fmt; exits 1 if any failed
-#   script/gate --self-test  prove siftr cannot change a step's exit code
+#   script/gate --self-test  prove siftr cannot change a step's code or output
 #   SIFTR_GATE=off script/gate     no recording at all
 #   SIFTR_BIN=path script/gate     record with that binary instead
 #
@@ -67,10 +67,10 @@ step() { # step LABEL CMD...
   fi
 }
 
-# Every row asserts the same thing: whatever siftr is, the wrapper returns the
-# command's code. Only the kind of brokenness changes.
+# Every row asserts the same two things: whatever siftr is, the wrapper returns the
+# command's code and hands back its output. Only the kind of brokenness changes.
 self_test() {
-  local tmp fails=0 row got want fake label real=${SIFTR_BIN:-}
+  local tmp fails=0 row got said want fake label real=${SIFTR_BIN:-}
   tmp=$(mktemp -d)
   printf '#!/bin/sh\nexit 1\n' >"$tmp/broken"
   printf '#!/bin/sh\ncase $1 in --version) echo "siftr 0";; *) exit 125;; esac\n' >"$tmp/refuses"
@@ -86,15 +86,20 @@ self_test() {
     label="$fake${SIFTR:+ (wrapping)}"
     row=0
     for want in 0 7; do
-      wrapped sh -c "exit $want" >/dev/null 2>&1
+      # siftr's report goes to stderr, so stdout is the command's alone either way.
+      said=$(wrapped sh -c "echo said-$want; exit $want" 2>/dev/null)
       got=$?
       [ "$got" = "$want" ] || {
         echo "self-test: $label returned $got for a command that exited $want"
         row=1
-        fails=1
+      }
+      [ "$said" = "said-$want" ] || {
+        echo "self-test: $label gave back '$said', not 'said-$want'"
+        row=1
       }
     done
-    [ "$row" = 0 ] && echo "self-test: $label passes the command's code through"
+    [ "$row" = 0 ] && echo "self-test: $label passes the command's code and output through"
+    [ "$row" = 0 ] || fails=1
   done
 
   rm -rf "$tmp"
