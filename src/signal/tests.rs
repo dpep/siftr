@@ -586,6 +586,53 @@ fn a_slow_example_is_latency_unless_its_neighbour_slowed_too() {
     );
 }
 
+/// `docs/findings/latency-cohort.md`: a stall that never reaches the suite's own robust spread still
+/// shows as several examples moving together. Non-adjacent, so the neighbour rule cannot see it.
+#[test]
+fn a_slow_example_is_vetoed_once_enough_distant_examples_slowed_with_it() {
+    // The suite's own duration is the noisy window a real suite has, so its guard cannot fire here:
+    // the run takes its median time while single examples stall.
+    let suite = |wall: f64, ms: [f64; 9]| {
+        let mut behaviors = vec![summary(9.0, 9.0, 0.0).ms(wall)];
+        behaviors.extend(ms.iter().enumerate().map(|(i, &ms)| {
+            b(Kind::TestExample, &format!("e{i}"))
+                .seq(i as u64 + 1)
+                .ms(ms)
+        }));
+        run(&behaviors)
+    };
+    let quiet = [1.0; 9];
+    let baseline = vec![
+        suite(1000.0, quiet),
+        suite(3000.0, quiet),
+        suite(9000.0, quiet),
+    ];
+    let suite = |ms: [f64; 9]| suite(3000.0, ms);
+    let latency = |ms: [f64; 9]| {
+        rows(&suite(ms), &baseline)
+            .into_iter()
+            .filter(|r| r.2 == SignalKind::Latency && r.4 == 301.0)
+            .count()
+    };
+    // e0 at 301ms, and three examples far from it at just over half its 300ms slowdown.
+    let mut stalled = quiet;
+    stalled[0] = 301.0;
+    for i in [4, 6, 8] {
+        stalled[i] = 152.0;
+    }
+    assert_eq!(
+        latency(stalled),
+        0,
+        "three peers moved with it: the machine"
+    );
+    stalled[8] = 1.0;
+    assert_eq!(
+        latency(stalled),
+        1,
+        "two peers is not enough to blame the machine"
+    );
+}
+
 /// The traffic regression of `docs/findings/traffic-vs-dev-loop.md`: eight identical requests a run at
 /// 1ms, then at 430ms. No examples, so no neighbour and no suite — the duration the run already
 /// recorded is the whole of the evidence.

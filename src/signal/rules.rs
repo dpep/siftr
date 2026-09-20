@@ -15,6 +15,9 @@ pub const LATENCY_RATIO: f64 = 4.0;
 /// An adjacent example slowed by this share of the slowdown means the machine stalled, not the code.
 /// Examples only: see [`latency`].
 pub const NEIGHBOUR_SHARE: f64 = 0.5;
+/// This many *other* examples sharing the slowdown is a stall too. Adjacency buys "the same machine
+/// moments earlier", and a distant example does not; several of them together buy it back.
+pub const COHORT_PEERS: usize = 3;
 /// The rest of the run slowing by more than this many robust spreads is also a stall.
 pub const STALL_SPREADS: f64 = 3.0;
 /// A varying measure must leave its range by more than this many range widths.
@@ -110,20 +113,30 @@ pub struct Window<'a> {
     pub excess: f64,
 }
 
+/// The other examples of the same run — examples only, since nothing else runs one at a time.
+#[derive(Debug, Clone, Copy)]
+pub struct Cohort<'a> {
+    /// The largest slowdown (current − baseline median, ms) of the examples run just before and after.
+    pub neighbour: Option<f64>,
+    /// Every example's slowdown this run, sorted descending. The candidate's own is in here: it clears
+    /// its own bar by construction, so the count discounts exactly one.
+    pub slowdowns: &'a [f64],
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Latency {
     pub median: f64,
     pub confidence: f64,
 }
 
-/// One behavior's mean duration per occurrence (ms) against the runs that timed it. `neighbour_excess`:
-/// the largest slowdown (current − baseline median) of the examples run just before and after it —
-/// examples only, since nothing else has an adjacent anything. `window`: what it would have to have
-/// slowed alongside to be a stall rather than a change.
+/// One behavior's mean duration per occurrence (ms) against the runs that timed it. `cohort`: what the
+/// run's other examples did, for a candidate that is one — nothing else has an adjacent anything, or a
+/// population running one at a time. `window`: what it would have to have slowed alongside to be a
+/// stall rather than a change.
 pub fn latency(
     baseline: &[f64],
     current: f64,
-    neighbour_excess: Option<f64>,
+    cohort: Option<Cohort<'_>>,
     window: Option<Window<'_>>,
 ) -> Option<Latency> {
     let n = baseline.len();
@@ -137,8 +150,15 @@ pub fn latency(
     if delta <= need || current <= max {
         return None;
     }
-    if neighbour_excess.unwrap_or(0.0) >= NEIGHBOUR_SHARE * delta {
-        return None;
+    if let Some(cohort) = cohort {
+        let bar = NEIGHBOUR_SHARE * delta;
+        if cohort.neighbour.unwrap_or(0.0) >= bar {
+            return None;
+        }
+        let moved = cohort.slowdowns.partition_point(|&s| s >= bar);
+        if moved.saturating_sub(1) >= COHORT_PEERS {
+            return None;
+        }
     }
     if let Some(window) = window
         && let (Some(window_median), Some(window_mad)) =
@@ -160,24 +180,28 @@ pub fn latency(
 mod tests {
     use super::*;
 
-    /// `(vector, baseline, current, neighbour excess, window, expected confidence)`.
+    /// `(vector, baseline, current, cohort, window, expected confidence)`.
     type LatencyCase<'a> = (
         u8,
         &'a [f64],
         f64,
-        Option<f64>,
+        Option<Cohort<'a>>,
         Option<Window<'a>>,
         Option<f64>,
     );
     /// `(vector, baseline, current, expected (exact, confidence))`.
     type FrequencyCase<'a> = (u8, &'a [f64], f64, Option<(bool, f64)>);
 
-    /// signals.md §6, vectors 1–13 and 31.
+    /// signals.md §6, vectors 1–13, 31 and 32–34.
     #[test]
     fn latency_vectors() {
         let tens = [1.0; 10];
         let quiet = [100.0, 105.0, 110.0];
-        let cases: [LatencyCase<'_>; 14] = [
+        // A run's example slowdowns, descending, the candidate's own 303ms first.
+        let alone = [303.0, 4.0, 3.0, 2.0, 1.0];
+        let three_peers = [303.0, 160.0, 155.0, 152.0, 1.0];
+        let two_peers = [303.0, 160.0, 155.0, 4.0, 1.0];
+        let cases: [LatencyCase<'_>; 17] = [
             (1, &[1.0, 1.1, 0.9], 304.0, None, None, Some(0.60)),
             (2, &[1.0, 1.1], 304.0, None, None, Some(0.56)),
             (3, &[1.0], 304.0, None, None, None),
@@ -188,7 +212,17 @@ mod tests {
             (8, &[50.0, 55.0, 60.0], 260.0, None, None, Some(0.44)),
             (9, &[1000.0, 1100.0, 900.0], 2500.0, None, None, None),
             (10, &[1000.0, 1100.0, 900.0], 4200.0, None, None, Some(0.41)),
-            (11, &[1.0, 1.1, 0.9], 304.0, Some(201.0 - 1.0), None, None),
+            (
+                11,
+                &[1.0, 1.1, 0.9],
+                304.0,
+                Some(Cohort {
+                    neighbour: Some(201.0 - 1.0),
+                    slowdowns: &alone,
+                }),
+                None,
+                None,
+            ),
             (
                 12,
                 &[10.0, 11.0, 12.0],
@@ -228,9 +262,44 @@ mod tests {
                 }),
                 Some(0.42),
             ),
+            // 32–34: the run's other examples, at the same 0.5 share the neighbour rule uses. One
+            // slowdown in the cohort is the candidate's own, so three peers veto and two do not.
+            (
+                32,
+                &[1.0, 1.1, 0.9],
+                304.0,
+                Some(Cohort {
+                    neighbour: None,
+                    slowdowns: &alone,
+                }),
+                None,
+                Some(0.60),
+            ),
+            (
+                33,
+                &[1.0, 1.1, 0.9],
+                304.0,
+                Some(Cohort {
+                    neighbour: None,
+                    slowdowns: &three_peers,
+                }),
+                None,
+                None,
+            ),
+            (
+                34,
+                &[1.0, 1.1, 0.9],
+                304.0,
+                Some(Cohort {
+                    neighbour: None,
+                    slowdowns: &two_peers,
+                }),
+                None,
+                Some(0.60),
+            ),
         ];
-        for (vector, baseline, current, neighbour, window, expected) in cases {
-            let got = latency(baseline, current, neighbour, window).map(|l| l.confidence);
+        for (vector, baseline, current, cohort, window, expected) in cases {
+            let got = latency(baseline, current, cohort, window).map(|l| l.confidence);
             assert_eq!(got, expected, "vector {vector}");
         }
     }

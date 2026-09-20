@@ -800,9 +800,10 @@ impl<'a> Comparison<'a> {
     }
 
     /// LATENCY on every behavior that carries a duration: what the run timed is what can have slowed.
-    /// An example's duration is one sample a run, so a GC pause lands on it whole and the examples
-    /// either side veto it; a behavior that recurs through a run is a mean over its occurrences, which
-    /// divides such a pause by their number and leaves the window as the guard that fits it.
+    /// An example's duration is one sample a run, so a GC pause lands on it whole and the rest of the
+    /// suite vetoes it — the examples either side, or enough of the others; a behavior that recurs
+    /// through a run is a mean over its occurrences, which divides such a pause by their number and
+    /// leaves the window as the guard that fits it.
     fn latency(&self, found: &mut Vec<Found>) {
         let history = |id: BehaviorId| -> Vec<f64> {
             self.runs
@@ -857,6 +858,11 @@ impl<'a> Comparison<'a> {
                 Some((b.behavior.id, worst))
             })
             .collect();
+        // The rest of the suite, for the same reason at a distance: a distant example is the same machine
+        // too, just not moments earlier, so it takes several of them to say the machine moved. One slice,
+        // sorted once, read by binary search per candidate.
+        let mut slowdowns: Vec<f64> = excess.iter().copied().flatten().collect();
+        slowdowns.sort_by(|a, b| b.total_cmp(a));
 
         let mut candidates: Vec<(&BehaviorStats, Class)> = self
             .current
@@ -899,8 +905,11 @@ impl<'a> Comparison<'a> {
                         excess: total - median(&totals)?,
                     })
                 });
-            let Some(l) = rules::latency(&baseline, current, neighbours.get(&id).copied(), window)
-            else {
+            let cohort = (b.behavior.kind == Kind::TestExample).then(|| rules::Cohort {
+                neighbour: neighbours.get(&id).copied(),
+                slowdowns: &slowdowns,
+            });
+            let Some(l) = rules::latency(&baseline, current, cohort, window) else {
                 continue;
             };
             let ms = |v: f64| round_sig(v, 3);
