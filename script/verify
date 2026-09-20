@@ -46,6 +46,15 @@ if [ -z "${SKIP_GATE:-}" ]; then
   else
     echo "secrets: skipped (gitleaks not installed)"
   fi
+  # This machine's own paths must never reach a tracked file: the README shipped a scratch path
+  # carrying a username and session id before this check existed. Both needles are derived at
+  # runtime, so a placeholder like /Users/alice never matches and fixture data needs no exemption.
+  if git -C "$WT" grep -n -F -e "$HOME" -e "/private/tmp/claude-$(id -u)" >"$SCRATCH/paths.log" 2>&1; then
+    echo "paths: FOUND (log: $SCRATCH/paths.log)"
+    failed=1
+  else
+    echo "paths: ok"
+  fi
   [ "$failed" = 0 ] || exit 1
 fi
 

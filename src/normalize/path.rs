@@ -93,7 +93,7 @@ pub(crate) fn canonical<'p>(path: &'p [u8], roots: &Roots) -> Option<(Prefix<'p>
         return Some((Prefix::Root, n));
     }
     if let Some(home) = home_len(path, roots) {
-        // The project spelled from any home: `~/code/app` is `/Users/dpepper/code/app`.
+        // The project spelled from any home: `~/code/app` is `/Users/dana/code/app`.
         let in_home = project
             .and_then(|p| home_len(p, roots).map(|h| &p[h..]))
             .filter(|t| !t.is_empty());
