@@ -46,6 +46,11 @@ module SiftrRspec
       h = { event: "example", id: ex.id, description: ex.description,
             full_description: ex.full_description, file_path: ex.metadata[:file_path],
             line_number: ex.metadata[:line_number], status: r.status.to_s, run_time: r.run_time }
+      # `it { … }` declares no description, so RSpec appends the matcher that ran once the example
+      # finishes: those words move with the outcome. Only the group's own are the developer's.
+      if ex.metadata[:description_args].empty?
+        h[:declared_full_description] = ex.metadata[:example_group][:full_description]
+      end
       h[:pending_message] = r.pending_message if r.pending_message
       if (e = r.exception) && r.status == :failed
         h[:exception] = { class: e.class.name, message: e.message.to_s[0, 2000] }

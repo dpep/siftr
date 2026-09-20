@@ -34,11 +34,20 @@ pub mod summary {
     pub const ERRORS_OUTSIDE_OF_EXAMPLES: &str = "errors_outside_of_examples";
 }
 
+/// Stands in for the description of an `it { … }`, which the developer never wrote.
+const UNNAMED: &[u8] = b"<unnamed example>";
+
 /// Identity of a `test.example`: `<spec file> # <full description>`.
 ///
 /// Not the RSpec id (`[1:2]` renumbers when an example is inserted above) nor the line number
 /// (shifts on any edit above). Examples sharing a file and description are one behavior whose
 /// count is their number: ordinals would swap between them under random order.
+///
+/// An `it { … }` declared no description at all: RSpec writes one from the matcher that ran, so
+/// those words move with the outcome (a failure renames the behavior instead of failing it) and can
+/// carry an object address (a fresh behavior every run). The listener sends the group's own words as
+/// `declared_full_description`, and the unnamed examples of one group share [`UNNAMED`] — which is
+/// what the existing rule for equal descriptions already does, and their number is the count.
 #[derive(Default)]
 pub struct Rspec {
     scopes: Scopes,
@@ -145,7 +154,16 @@ impl Rspec {
         // Event lines arrive redacted, their placeholders numbered per run.
         unnumber(example.spec_file().as_bytes(), &mut self.template);
         self.template.extend_from_slice(b" # ");
-        unnumber(example.full_description.as_bytes(), &mut self.template);
+        match example.declared_full_description.as_deref() {
+            Some(declared) => {
+                unnumber(declared.trim_end().as_bytes(), &mut self.template);
+                if self.template.last() != Some(&b' ') {
+                    self.template.push(b' ');
+                }
+                self.template.extend_from_slice(UNNAMED);
+            }
+            None => unnumber(example.full_description.as_bytes(), &mut self.template),
+        }
         let id = BehaviorId::of(Kind::TestExample, &self.template);
         if let (Some((started, start)), Some(end)) = (self.started.take(), example.log_offset)
             && started == example.id
@@ -203,6 +221,9 @@ enum Record {
 struct Example {
     id: String,
     full_description: String,
+    /// The enclosing group's full description, sent only for an `it { … }`; `None` for an example
+    /// that named itself, and from a listener that predates the field.
+    declared_full_description: Option<String>,
     file_path: String,
     status: Status,
     run_time: f64,
@@ -371,6 +392,8 @@ impl Scopes {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::super::fixtures::interpret;
     use super::*;
     use crate::observation::MAX_LINE;
@@ -378,6 +401,14 @@ mod tests {
     fn example(id: &str, description: &str, line: u32, status: &str) -> String {
         format!(
             r#"{{"event":"example","id":"./spec/models/user_spec.rb[{id}]","description":"-","full_description":"User {description}","file_path":"./spec/models/user_spec.rb","line_number":{line},"status":"{status}","run_time":0.001}}"#
+        )
+    }
+
+    /// An `it { … }` of group `User`: RSpec wrote `generated` after it ran, so the listener sends the
+    /// group's own words too.
+    fn unnamed(id: &str, generated: &str, status: &str) -> String {
+        format!(
+            r#"{{"event":"example","id":"./spec/models/user_spec.rb[{id}]","description":"{generated}","full_description":"User {generated}","declared_full_description":"User","file_path":"./spec/models/user_spec.rb","line_number":4,"status":"{status}","run_time":0.001}}"#
         )
     }
 
@@ -402,6 +433,72 @@ mod tests {
         ]);
         assert_eq!(before, after[1..]);
         assert!(!before.contains(&after[0]));
+    }
+
+    #[test]
+    fn an_unnamed_examples_identity_survives_what_rspec_writes_for_it() {
+        // Passing, then failing the same expectation, then raising before any expectation ran (no
+        // generated words at all), then a matcher argument rendered with an object address.
+        let generated = [
+            "is expected to eq 1",
+            "is expected to eq 2",
+            "",
+            "is expected to eq #<Object:0x000000010a1b2c30>",
+            "is expected to eq #<Object:0x000000012f4e5d60>",
+        ];
+        let statuses = ["passed", "failed", "failed", "passed", "passed"];
+        let seen = interpret(&[(
+            EVENTS_STREAM,
+            std::iter::zip(generated, statuses)
+                .map(|(words, status)| unnamed("1:1", words, status))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .as_bytes(),
+        )]);
+        let ids: BTreeSet<_> = seen.iter().map(|s| s.id()).collect();
+        assert_eq!(ids.len(), 1, "{:?}", seen.iter().map(|s| &s.template));
+        assert_eq!(
+            seen[0].template,
+            "./spec/models/user_spec.rb # User <unnamed example>"
+        );
+        // The outcome still moves, which is the whole point: it is what the error rule compares.
+        assert_eq!(seen[1].outcome, Some(Outcome::Failure));
+    }
+
+    #[test]
+    fn a_named_example_keeps_the_description_its_author_wrote() {
+        let seen = interpret(&[(
+            EVENTS_STREAM,
+            [
+                example("1:1", "requires a name", 4, "passed"),
+                unnamed("1:2", "is expected to be valid", "passed"),
+            ]
+            .join("\n")
+            .as_bytes(),
+        )]);
+        let templates: Vec<_> = seen.iter().map(|s| s.template.as_str()).collect();
+        assert_eq!(
+            templates,
+            [
+                "./spec/models/user_spec.rb # User requires a name",
+                "./spec/models/user_spec.rb # User <unnamed example>",
+            ]
+        );
+    }
+
+    /// A capture recorded by a listener that predates the field: replaying it must not move its ids.
+    #[test]
+    fn an_event_without_the_declared_description_keeps_its_full_description() {
+        let [seen] = interpret(&[(
+            EVENTS_STREAM,
+            example("1:1", "requires a name", 4, "passed").as_bytes(),
+        )])
+        .try_into()
+        .expect("one event");
+        assert_eq!(
+            seen.template,
+            "./spec/models/user_spec.rb # User requires a name"
+        );
     }
 
     #[test]
