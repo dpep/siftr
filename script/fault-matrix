@@ -120,10 +120,14 @@ MATCH = {
   example_new: ->(s) { s["kind"] == "new" && s.dig("behavior", "kind") == "test.example" && s.dig("behavior", "template").to_s.include?("zz_injected") },
   example_gone: ->(s) { s["kind"] == "disappeared" && s.dig("behavior", "kind") == "test.example" && s.dig("behavior", "template").to_s.include?("zz_injected") },
   error_named: ->(s) { s["kind"] == "error" && s.dig("behavior", "template").to_s.include?("outcome stability named example") },
-  # Any ERROR naming the one-liner, however RSpec described it this run.
+  # Any ERROR naming the one-liner, however RSpec or siftr described it this run. I1's example is
+  # excluded by its whole description, not by "named example": siftr writes an undeclared description
+  # as `<unnamed example>`, and "unnamed example" *contains* "named example", so the short form threw
+  # away the very signal this was written to catch and reported a fixed defect as still broken.
   error_generated: lambda do |s|
     template = s.dig("behavior", "template").to_s
-    s["kind"] == "error" && template.include?("zz_outcome") && !template.include?("named example")
+    s["kind"] == "error" && template.include?("zz_outcome") &&
+      !template.include?("outcome stability named example")
   end,
 }.freeze
 
@@ -198,8 +202,8 @@ CELLS = [
   Cell.new(id: "I1", seed: "outcome", fault: "error, named", magnitude: "1 example", match: :error_named, expect: :hit,
            why: "a hand-written description keeps the behavior id across the failure",
            env: { "SIFTR_FAULT_BREAK" => "1" }, files: { OUTCOME_PATH => OUTCOME_SPEC }),
-  Cell.new(id: "I2", seed: "outcome", fault: "error, one-liner", magnitude: "1 example", match: :error_generated, expect: :miss,
-           why: "RSpec regenerates a one-liner's description from the matcher, so the failure lands on a different behavior id than the baseline's: reported as NEW + DISAPPEARED, never ERROR",
+  Cell.new(id: "I2", seed: "outcome", fault: "error, one-liner", magnitude: "1 example", match: :error_generated, expect: :hit,
+           why: "an undeclared description is keyed on the group's own words, so a one-liner keeps its id across the failure and reads as ERROR; it was NEW + DISAPPEARED, the shape of a rename, until the listener started reporting which descriptions the developer actually wrote",
            env: { "SIFTR_FAULT_BREAK" => "1" }, files: { OUTCOME_PATH => OUTCOME_SPEC }),
 ].freeze
 
