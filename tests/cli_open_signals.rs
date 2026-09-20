@@ -70,7 +70,7 @@ fn open_ids(changes: &Value) -> Vec<(String, String)> {
 }
 
 #[test]
-fn an_unfixed_regression_is_reminded_until_it_is_fixed_or_dismissed() {
+fn an_unfixed_regression_is_reminded_until_it_is_fixed_or_acked() {
     let sandbox = Sandbox::new();
     for scenario in CLEAN {
         sandbox.ingest(scenario);
@@ -132,11 +132,11 @@ fn an_unfixed_regression_is_reminded_until_it_is_fixed_or_dismissed() {
         "r5 is judged by the runs up to r5"
     );
 
-    sandbox.siftr(&["dismiss", "s1"]);
+    sandbox.siftr(&["ack", "s1"]);
     assert_eq!(
         sandbox.json(&["changes", "r5", "-j"])["open_signals"],
         json!([]),
-        "a dismissed change isn't reminded"
+        "an answered change isn't reminded"
     );
 }
 

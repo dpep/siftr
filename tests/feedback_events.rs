@@ -124,11 +124,12 @@ fn reading_and_acting_on_signals_is_recorded_where_it_happened() {
     let ack = sandbox.siftr(&["ack", "s1", "-m", "fixing the N+1"]);
     assert!(ack.status.success(), "{}", stderr(&ack));
     assert!(
-        stdout(&ack).ends_with("next: siftr changes r4\n"),
+        stdout(&ack)
+            .ends_with("no longer reminded of this change\nnext: siftr history --signals\n"),
         "{}",
         stdout(&ack)
     );
-    let dismiss = json(&sandbox.siftr(&["dismiss", "s2", "-j"]));
+    let dismiss = json(&sandbox.siftr(&["ack", "s2", "--wrong", "-j"]));
     assert_eq!(
         (
             &dismiss["kind"],
@@ -154,7 +155,7 @@ fn reading_and_acting_on_signals_is_recorded_where_it_happened() {
         "investigated explain json r4 s1 -".to_owned(),
         "evidence_requested evidence human r3 - -".to_owned(),
         "acked ack human r4 s1 fixing the N+1".to_owned(),
-        "dismissed dismiss json r4 s2 -".to_owned(),
+        "dismissed ack json r4 s2 -".to_owned(),
     ]);
     assert_eq!(sandbox.feedback()[before..], expected);
 
@@ -231,8 +232,8 @@ fn feedback_that_cannot_be_recorded_warns_and_never_fails_a_reading_command() {
     assert_eq!(changes.status.code(), Some(0), "{}", stderr(&changes));
     assert_eq!(json(&changes)["run"]["id"], "r4");
 
-    // Recording is dismiss's whole job, so there it is an error.
-    let dismiss = sandbox.siftr(&["dismiss", "s1"]);
+    // Recording is ack's whole job, so there it is an error.
+    let dismiss = sandbox.siftr(&["ack", "s1"]);
     assert_eq!(dismiss.status.code(), Some(2));
     assert!(stderr(&dismiss).contains("refused"), "{}", stderr(&dismiss));
 }

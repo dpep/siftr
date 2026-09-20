@@ -117,7 +117,7 @@ fn a_regression_that_keeps_returning_is_reported_on_every_return() {
 
 /// The other half of the rule, and the reason it is not "never expire": a change nobody fixed is reported until
 /// every run siftr compares against has it, and then it is what this context does. Without this, an accepted
-/// change would nag for as long as the project lives and `dismiss` would stop being optional.
+/// change would nag for as long as the project lives and `ack` would stop being optional.
 #[test]
 fn a_change_left_in_place_stops_being_reported_once_every_run_has_it() {
     let sandbox = Sandbox::new();
@@ -143,13 +143,43 @@ fn a_change_left_in_place_stops_being_reported_once_every_run_has_it() {
     );
 }
 
+/// The judgement a developer actually makes is rarely on the first sighting: it comes after the change has been
+/// fixed, has come back, and has nagged again. The verdict's feedback window ended at the run the signal *first*
+/// resolved in, so a judgement made after that was stored and never read, and the reminder kept coming.
+#[test]
+fn a_judgement_made_after_the_change_returns_still_holds() {
+    let sandbox = Sandbox::new();
+    sandbox.ingest("n_plus_one"); // r4 raises s1
+    sandbox.ingest("baseline"); // r5 resolves it
+    let back = sandbox.ingest("n_plus_one"); // r6 has it again
+    assert_eq!(
+        open_ids(&back)
+            .first()
+            .map(|(id, run)| (id.as_str(), run.as_str())),
+        Some(("s1", "r4")),
+        "the reminder is there to be silenced: {back:#}"
+    );
+
+    sandbox.siftr(&["ack", "s1", "-m", "on it"]);
+
+    for _ in 0..3 {
+        sandbox.ingest("baseline");
+        let broken = sandbox.ingest("n_plus_one");
+        assert_eq!(
+            open_ids(&broken),
+            [],
+            "judged after it returned, so no later return is reported: {broken:#}"
+        );
+    }
+}
+
 /// Dismissal must bound the nagging whatever the expiry rule is: a change the developer called intended is never
 /// reported again, however many times it comes and goes.
 #[test]
 fn a_dismissed_regression_stays_dismissed_however_often_it_returns() {
     let sandbox = Sandbox::new();
     sandbox.ingest("n_plus_one");
-    sandbox.siftr(&["dismiss", "s1", "-m", "intended"]);
+    sandbox.siftr(&["ack", "s1", "--wrong", "-m", "intended"]);
 
     for _ in 0..6 {
         sandbox.ingest("baseline");

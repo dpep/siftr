@@ -185,12 +185,12 @@ fn the_outcome_history_carries_every_cycle() {
     );
 }
 
-/// A dismissed change stays dismissed across cycles: siftr must not re-report a regression the developer
-/// said was intended, however many times it comes and goes.
+/// A change called wrong stays called wrong across cycles: siftr must not re-report a regression the
+/// developer said was intended, however many times it comes and goes.
 #[test]
 fn a_dismissed_regression_is_not_reported_when_it_returns() {
     let sandbox = Sandbox::with_regression();
-    sandbox.siftr(&["dismiss", "s1", "-m", "intended"]);
+    sandbox.siftr(&["ack", "s1", "--wrong", "-m", "intended"]);
     sandbox.ingest("baseline");
 
     let broken_again = sandbox.ingest("n_plus_one");

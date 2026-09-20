@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 use std::process::ExitCode;
+use std::time::SystemTime;
 
 use anyhow::Result;
 use serde_json::{Value, json};
@@ -214,7 +215,7 @@ fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitC
                     "recurrences": outcome.recurrences,
                     "later_runs": outcome.later_runs,
                     "investigated": outcome.investigated(),
-                    "dismissed": outcome.dismissed(),
+                    "judged": outcome.judgement().map(Judgement::as_str),
                     "feedback": outcome.feedback.iter().map(feedback_json).collect::<Vec<_>>(),
                 })
             })
@@ -247,10 +248,11 @@ fn signals(store: &Store, runs: &[RunRecord], globals: &Globals) -> Result<ExitC
 /// A reminder expires when the change has become what this context does, which is [`Outcome::settled`]: present in
 /// every run since its own, and its own run gone from the baseline window. A change that keeps coming back never
 /// settles, so it is reminded for as long as it returns — bounding it by the window instead reported a present
-/// regression as normal on the sixth return. Only `dismiss` and a fix end that.
+/// regression as normal on the sixth return. Only `siftr ack` and a fix end that.
 ///
-/// Oldest first, one per behavior and measure; a change with any dismissed signal is left out, and so is one headed
-/// by DISAPPEARED: a disappearance that stays is the new normal, not a regression left in place.
+/// Oldest first, one per behavior and measure; a change with any judged signal is left out — whichever verdict
+/// `ack` recorded, the developer has answered — and so is one headed by DISAPPEARED: a disappearance that stays is
+/// the new normal, not a regression left in place.
 pub fn still_open(
     store: &Store,
     run: &RunRecord,
@@ -295,10 +297,12 @@ pub fn still_open(
             continue;
         };
         let outcomes = outcomes(store, &earlier, &signals, Some(run.id))?;
-        let dismissed: HashSet<u32> = signals
+        // One signal judged silences its whole change: the group is one thing to the developer, and acking
+        // the headline while its three companions keep nagging is the same complaint in smaller print.
+        let judged: HashSet<u32> = signals
             .iter()
             .zip(&outcomes)
-            .filter(|(_, outcome)| outcome.dismissed())
+            .filter(|(_, outcome)| outcome.judgement().is_some())
             .map(|(stored, _)| stored.signal.group)
             .collect();
         for (stored, outcome) in signals.into_iter().zip(outcomes) {
@@ -306,7 +310,7 @@ pub fn still_open(
             if outcome.present_at(run.id)
                 && !outcome.settled(window.contains(&stored.run))
                 && stored.signal.kind != SignalKind::Incomplete
-                && !dismissed.contains(&stored.signal.group)
+                && !judged.contains(&stored.signal.group)
                 && seen.insert(key(&stored.signal))
             {
                 open.push(stored);
@@ -334,8 +338,11 @@ pub(super) struct Outcome {
     firing: bool,
     /// The newest later run that gave a verdict; `None` when none did.
     latest: Option<RunId>,
-    /// Feedback on the signal's behavior from its run until the run it resolved in.
+    /// Feedback on the signal's behavior from its run until the run it resolved in, plus this signal's own
+    /// judgements whenever they were made.
     feedback: Vec<Feedback>,
+    /// When the signal resolved, past which a row says nothing about what brought the fix about.
+    examined_until: Option<SystemTime>,
 }
 
 impl Outcome {
@@ -350,6 +357,7 @@ impl Outcome {
             firing: false,
             latest: None,
             feedback: Vec::new(),
+            examined_until: None,
         }
     }
 
@@ -390,19 +398,33 @@ impl Outcome {
         self.recurrences == 0 && !in_window
     }
 
+    /// Whether siftr was asked for more about the signal before it resolved. Only before: a row after the fix
+    /// says nothing about what brought it about.
     pub(super) fn investigated(&self) -> bool {
-        self.feedback.iter().any(|f| {
-            matches!(
-                f.kind,
-                FeedbackKind::Investigated | FeedbackKind::EvidenceRequested | FeedbackKind::Acked
-            )
-        })
-    }
-
-    pub(super) fn dismissed(&self) -> bool {
         self.feedback
             .iter()
-            .any(|f| f.kind == FeedbackKind::Dismissed)
+            .filter(|f| self.examined_until.is_none_or(|until| f.at <= until))
+            .any(|f| {
+                matches!(
+                    f.kind,
+                    FeedbackKind::Investigated
+                        | FeedbackKind::EvidenceRequested
+                        | FeedbackKind::Acked
+                )
+            })
+    }
+
+    /// What `siftr ack` said about the signal, if anything. Both verdicts end the reminder; only this
+    /// distinguishes "I am dealing with it" from "siftr was wrong", which is the one fact a precision
+    /// measurement has to read.
+    pub(super) fn judgement(&self) -> Option<Judgement> {
+        // Wrong wins: a signal first acted on and later called noise is noise.
+        self.feedback.iter().filter_map(judgement).max()
+    }
+
+    /// Judged wrong: the only row that says siftr should not have raised this.
+    pub(super) fn dismissed(&self) -> bool {
+        self.judgement() == Some(Judgement::Wrong)
     }
 
     fn describe(&self) -> String {
@@ -432,10 +454,46 @@ impl Outcome {
                 format!("open after {}", plural(self.later_runs as u64, "later run"))
             }
         };
-        if self.dismissed() {
-            text.push_str("; dismissed");
+        if let Some(judged) = self.judgement() {
+            text.push_str("; ");
+            text.push_str(judged.describe());
         }
         text
+    }
+}
+
+/// The verdict one feedback row carries, if it is one of the two `ack` writes.
+fn judgement(feedback: &Feedback) -> Option<Judgement> {
+    match feedback.kind {
+        FeedbackKind::Dismissed => Some(Judgement::Wrong),
+        FeedbackKind::Acked => Some(Judgement::Acting),
+        _ => None,
+    }
+}
+
+/// What the developer said about a signal. Ordered so [`Outcome::judgement`] can take the stronger one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Judgement {
+    /// `siftr ack`: a real change, being acted on.
+    Acting,
+    /// `siftr ack --wrong`: siftr should not have raised it.
+    Wrong,
+}
+
+impl Judgement {
+    /// Printed in JSON: stable.
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Judgement::Acting => "acting",
+            Judgement::Wrong => "wrong",
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            Judgement::Acting => "acked, being acted on",
+            Judgement::Wrong => "dismissed as wrong",
+        }
     }
 }
 
@@ -517,14 +575,21 @@ fn judge(
             let recurrences = still.windows(2).filter(|step| !step[0] && step[1]).count();
             // Millisecond timestamps: feedback in the resolving run's first millisecond counts as before it.
             let until = resolved.map(|at| later[at].started_at);
+            // An investigation is an event whose place in the story matters, so it is read only up to the fix;
+            // a judgement is a standing statement about this signal and has no expiry. Reading both up to the
+            // fix is what let an `ack` made after the change came back be stored and never read.
             let feedback = store
                 .feedback_on(stored.behavior.id, run.started_at)?
                 .into_iter()
-                .filter(|f| until.is_none_or(|until| f.at <= until))
+                .filter(|f| {
+                    until.is_none_or(|until| f.at <= until)
+                        || (f.signal == Some(stored.id) && judgement(f).is_some())
+                })
                 .collect();
             Ok(Outcome {
                 reproducible: own.contains(&key),
                 pruned: None,
+                examined_until: until,
                 later_runs: later.len(),
                 resolved_in: resolved.map(|at| later[at].id),
                 recurred_in: recurred.map(|at| later[at].id),

@@ -62,16 +62,21 @@ impl Sandbox {
         output
     }
 
-    /// `(outcome, resolved_in, recurred_in, investigated)` of `signal`, as `history --signals -j` derives it.
-    fn outcome(&self, signal: &str) -> (Value, Value, Value, Value) {
+    /// `signal`'s whole `history --signals -j` row.
+    fn row(&self, signal: &str) -> Value {
         let history = self.siftr(&["history", "--signals", "-j"]);
         let rows: Value = serde_json::from_slice(&history.stdout).unwrap();
-        let row = rows
-            .as_array()
+        rows.as_array()
             .unwrap()
             .iter()
             .find(|row| row["signal"]["id"] == signal)
-            .unwrap_or_else(|| panic!("no {signal} in {rows}"));
+            .unwrap_or_else(|| panic!("no {signal} in {rows}"))
+            .clone()
+    }
+
+    /// `(outcome, resolved_in, recurred_in, investigated)` of `signal`, as `history --signals -j` derives it.
+    fn outcome(&self, signal: &str) -> (Value, Value, Value, Value) {
+        let row = self.row(signal);
         (
             row["outcome"].clone(),
             row["resolved_in"].clone(),
@@ -155,4 +160,55 @@ fn a_regression_left_alone_stays_open_though_the_live_baseline_absorbs_it() {
         )
         .unwrap();
     assert_eq!(sandbox.outcome("s1").0, "unknown");
+}
+
+/// One verb, two facts. `ack` and `ack --wrong` do the same thing to the reminder, which is why the CLI shows
+/// one command; the ledger must still say which was meant, because "siftr was wrong" is the only input a
+/// precision measurement has and no other row carries it.
+#[test]
+fn one_verb_records_two_distinguishable_verdicts() {
+    let cases = [
+        (&["ack", "s1", "-m", "on it", "-j"][..], "acked", "acting"),
+        (&["ack", "s1", "--wrong", "-j"][..], "dismissed", "wrong"),
+    ];
+    for (args, kind, judged) in cases {
+        let sandbox = Sandbox::n_plus_one();
+        let recorded: Value = serde_json::from_slice(&sandbox.siftr(args).stdout).unwrap();
+        assert_eq!(
+            (&recorded["kind"], &recorded["signal"]),
+            (&Value::from(kind), &Value::from("s1")),
+            "the row `ack` wrote"
+        );
+        assert_eq!(sandbox.row("s1")["judged"], judged, "{args:?}");
+    }
+}
+
+/// A judgement has no expiry — it holds however often the change returns — but it is not evidence that anyone
+/// looked before the fix. Acking a signal that has already resolved must not turn its story into "resolved
+/// after investigation", which is a claim about what brought the fix about.
+#[test]
+fn a_judgement_after_the_fix_claims_no_investigation() {
+    let sandbox = Sandbox::n_plus_one();
+    sandbox.ingest("baseline");
+    sandbox.siftr(&["ack", "s1", "--wrong", "-m", "intended"]);
+
+    let row = sandbox.row("s1");
+    assert_eq!(
+        (&row["outcome"], &row["judged"], &row["investigated"]),
+        (
+            &Value::from("resolved"),
+            &Value::from("wrong"),
+            &Value::from(false)
+        ),
+        "{row:#}"
+    );
+    let human = String::from_utf8(sandbox.siftr(&["history", "--signals"]).stdout).unwrap();
+    let s1 = human
+        .lines()
+        .find(|line| line.trim_start().starts_with("s1 "))
+        .unwrap_or_else(|| panic!("{human}"));
+    assert!(
+        s1.ends_with("resolved in r5 without investigation; dismissed as wrong"),
+        "{human}"
+    );
 }

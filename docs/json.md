@@ -221,7 +221,7 @@ An object. All three emit the same document.
   again by it — a regression the rolling baseline has absorbed. Each is re-judged
   against its own original baseline, so a change that was fixed and came back is
   listed on every run it is present in, however old the signal is. One listed here
-  stops being listed when it is fixed, when it is dismissed, or when it has been
+  stops being listed when it is fixed, when `siftr ack` answers it, or when it has been
   present on every run since it was raised and its own run has left the baseline
   window — at which point it is what this context does, and `history --signals`
   is where it still reads as `open`.
@@ -287,7 +287,7 @@ A **bare array**, and the element is *not* a signal — the signal is nested und
     "recurrences": 0,
     "later_runs": 1,
     "investigated": false,
-    "dismissed": false,
+    "judged": null,
     "feedback": [ { "…": "feedback objects" } ]
   }
 ]
@@ -296,6 +296,20 @@ A **bare array**, and the element is *not* a signal — the signal is nested und
 `outcome` is `open`, `resolved`, `recurred` or `unknown`; when `unknown`,
 `unknown_reason` says why (today's rules no longer reproduce it, or retention
 pruned the runs the judgement needs, naming the setting).
+
+`judged` is what `siftr ack` said about the signal: `"acting"` (a real change
+being acted on), `"wrong"` (siftr should not have raised it), or null. **It is
+the only field that says a signal was noise** — `outcome` describes the change,
+not the verdict on siftr, so a signal called wrong still reads `open` while it
+is there. `judged` replaces the old boolean `dismissed`: `dismissed: true` is
+now `judged == "wrong"`, and `judged == "acting"` is new, since `ack` used to
+record nothing a reader could see.
+
+A judgement is read however long after the signal it was made, so it holds when
+the change comes back. `investigated` is not: it counts an `explain`, `evidence`
+or `ack` **before the signal resolved**, because it is a claim about what
+brought the fix about. So `judged: "wrong"` with `investigated: false` is
+ordinary — somebody answered the signal after it had already gone away.
 
 **`outcome` is the latest verdict, and the two `*_in` fields are the first.**
 A change can be fixed and come back more than once, and the three fields answer
@@ -464,7 +478,7 @@ yet), `captures {bytes, runs}`, `runs {total, oldest, newest}` (null when empty)
 what configuration *says*. What a given run actually read is
 `history --sources`.
 
-### `ack` and `dismiss`
+### `ack`
 
 The feedback object that was recorded:
 
@@ -482,8 +496,9 @@ The feedback object that was recorded:
 ```
 
 `kind` is `surfaced`, `investigated`, `evidence_requested`, `dismissed` or
-`acked`. `signal` is null when a behavior was named rather than a signal, as by
-`evidence`.
+`acked`. `ack` writes `acked`, `ack --wrong` writes `dismissed`, and `command`
+is `"ack"` for both: one verb in the CLI, two facts in the ledger. `signal` is
+null when a behavior was named rather than a signal, as by `evidence`.
 
 ### `gc` and `cron`
 

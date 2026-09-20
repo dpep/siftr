@@ -22,9 +22,10 @@ pub enum FeedbackKind {
     Investigated,
     /// `evidence` printed a behavior's raw lines.
     EvidenceRequested,
-    /// Judged not worth acting on.
+    /// `ack --wrong`: siftr should not have raised it. The only row that judges a signal wrong, so it is the
+    /// only input a precision measurement has; never merge it with `Acked` however few verbs the CLI shows.
     Dismissed,
-    /// Being acted on.
+    /// `ack`: a real change, being acted on.
     Acked,
 }
 

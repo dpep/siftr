@@ -95,7 +95,7 @@ fn a_clean_run_adds_nothing_to_the_commands_own_output() {
 }
 
 #[test]
-fn a_change_is_reported_and_reminded_until_dismissed() {
+fn a_change_is_reported_and_reminded_until_it_is_answered() {
     let sandbox = Sandbox::new();
     let job = quiet(&JOB);
     sandbox.queries(5);
@@ -122,11 +122,13 @@ fn a_change_is_reported_and_reminded_until_dismissed() {
         assert!(report.ends_with("next: siftr explain s1\n"), "{report}");
     }
 
-    assert_eq!(sandbox.siftr(&["dismiss", "s1"]).status.code(), Some(0));
+    // Plain `ack` — "I am dealing with this" — stops the reminder just as `--wrong` does: the developer
+    // has answered either way, and only the ledger cares which answer it was.
+    assert_eq!(sandbox.siftr(&["ack", "s1"]).status.code(), Some(0));
     assert_eq!(
         text(&sandbox.siftr(&args(&job)).stderr),
         "err\n",
-        "dismiss is the way to stop a reminder"
+        "ack is the way to stop a reminder"
     );
 }
 
