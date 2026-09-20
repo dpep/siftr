@@ -125,6 +125,22 @@ and the workflow, not a defect: every individual judgement siftr made here was c
    correct; forcing a group would file unrelated behaviors under one headline, which
    `grouping.md` measured at a 15–20% false-merge rate.
 
+## Update: what recommendation 1 fixed, and what it didn't
+
+The suite-size demotion shipped, and replaying this corpus through it confirms it works on
+the live data it was written for: `TRANSACTION ROLLBACK` and `BEGIN` moved from **tier 3,
+ranks 1 and 2** to **tier 5, ranks 12 and 13**.
+
+The run is still 13 signals in 13 groups, and still useless. The new rank 1 is
+`TRANSACTION SAVEPOINT active_record_<int>` — the same fixture bookkeeping reaching the top
+through a different door, because it is **NEW** rather than FREQUENCY and the rule covers
+only counts that move. Precision remains 0 of 13.
+
+So the demotion is correct and worth keeping, but the dominant problem here was always
+recommendation 2: the NEW flood. Until behaviors appearing together from newly-added spec
+files collapse under one identity, demoting individual signals only changes which piece of
+bookkeeping is printed first.
+
 ## Reproducing
 
 The scaffold, worklog, store and alignment script live in a scratch directory, not the
