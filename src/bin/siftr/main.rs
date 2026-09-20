@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use siftr::store::FeedbackKind;
 
 const AFTER_HELP: &str = "\
 Without a subcommand:
@@ -33,7 +32,6 @@ Exit codes:
   queries  0 results, 1 nothing found, 2 error
   status   0 healthy, 1 something needs attention, 2 error
   ack      0 recorded, 2 error
-  dismiss  0 recorded, 2 error
   gc       0 done, 2 error
 
 Machine-readable output:
@@ -97,10 +95,8 @@ enum Command {
     Evidence(cmd::evidence::Args),
     /// A signal's current and baseline numbers, and its evidence
     Explain(cmd::explain::Args),
-    /// Mark a signal as being acted on
+    /// Answer a signal — acting on it, or `--wrong` for noise — and stop being reminded of it
     Ack(cmd::feedback::Args),
-    /// Mark a signal as not worth acting on
-    Dismiss(cmd::feedback::Args),
     /// Runs recorded in this project
     History(cmd::history::Args),
     /// What siftr can read here, whether each source is on, and whether it applies. Read-only
@@ -149,10 +145,7 @@ fn main() -> ExitCode {
         Command::Summary(args) => cmd::summary::run(args, &globals),
         Command::Evidence(args) => cmd::evidence::run(args, &globals),
         Command::Explain(args) => cmd::explain::run(args, &globals),
-        Command::Ack(args) => cmd::feedback::run(FeedbackKind::Acked, "ack", args, &globals),
-        Command::Dismiss(args) => {
-            cmd::feedback::run(FeedbackKind::Dismissed, "dismiss", args, &globals)
-        }
+        Command::Ack(args) => cmd::feedback::run(args, &globals),
         Command::History(args) => cmd::history::run(args, &globals),
         Command::Sources(args) => cmd::sources::run(args, &globals),
         Command::Status(args) => cmd::status::run(args, &globals),

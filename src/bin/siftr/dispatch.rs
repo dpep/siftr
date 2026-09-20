@@ -14,8 +14,8 @@ use std::path::Path;
 use crate::output;
 
 pub const SUBCOMMANDS: &[&str] = &[
-    "run", "ingest", "follow", "changes", "summary", "evidence", "explain", "ack", "dismiss",
-    "history", "sources", "status", "gc",
+    "run", "ingest", "follow", "changes", "summary", "evidence", "explain", "ack", "history",
+    "sources", "status", "gc",
 ];
 pub const PRESETS: &[&str] = &["cron"];
 
