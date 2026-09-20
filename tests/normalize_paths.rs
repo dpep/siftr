@@ -4,8 +4,8 @@ use siftr::normalize::{Normalizer, PathRole, Roots, SlotKind};
 
 fn laptop() -> Roots {
     Roots::default()
-        .project("/Users/dpepper/code/app")
-        .home("/Users/dpepper")
+        .project("/Users/dana/code/app")
+        .home("/Users/dana")
         .tmp("/var/folders/yr/gngx90zx/T/")
 }
 
@@ -27,7 +27,7 @@ fn table() {
         // One warning on three machines: each run knows its own project root. GitHub checks out to `work/<repo>/<repo>`.
         (laptop(), warning("~/code/app/app/views/users/show.html.erb:12"), view, &["source", "view"]),
         (ci(), warning("/home/runner/work/app/app/app/views/users/show.html.erb:12"), view, &["source", "view"]),
-        (laptop(), warning("/Users/dpepper/code/app/app/views/users/show.html.erb:12"), view, &["source", "view"]),
+        (laptop(), warning("/Users/dana/code/app/app/views/users/show.html.erb:12"), view, &["source", "view"]),
         // Another user's checkout at the same place under their home is the same project.
         (laptop(), "at /Users/someone/code/app/app/models/user.rb:9".into(), "at <root>/app/models/user.rb:<int>", &["source"]),
         // With no roots, every home is `~`.
@@ -37,8 +37,8 @@ fn table() {
         (Roots::default().home("/var/lib/jenkins"), "tail /var/lib/jenkins/workspace/app/log/test.log".into(), "tail ~/workspace/app/log/test.log", &["log"]),
         // A project in a temp dir is the project, as a test suite's is.
         (Roots::default().project("/var/folders/yr/gngx90zx/T/.tmpAbC123"), "loading /var/folders/yr/gngx90zx/T/.tmpAbC123/spec/a_spec.rb:3".into(), "loading <root>/spec/a_spec.rb:<int>", &["test"]),
-        (laptop(), "Writing /Users/dpepper/code/app/log/test.log".into(), "Writing <root>/log/test.log", &["log"]),
-        (laptop(), "Changed /Users/dpepper/code/app/Gemfile".into(), "Changed <root>/Gemfile", &["manifest"]),
+        (laptop(), "Writing /Users/dana/code/app/log/test.log".into(), "Writing <root>/log/test.log", &["log"]),
+        (laptop(), "Changed /Users/dana/code/app/Gemfile".into(), "Changed <root>/Gemfile", &["manifest"]),
         // Temp dirs, and the names generated inside them.
         (none(), "Wrote /tmp/1a2b3c4d5e6f-4821-xyz/cache.bin".into(), "Wrote <tmp>/<tmpname>/cache.bin", &["temp"]),
         (none(), "Wrote /var/folders/yr/gngx90zx/T/9f8e7d6c5b4a-4822-abc/cache.bin".into(), "Wrote <tmp>/<tmpname>/cache.bin", &["temp"]),
@@ -47,12 +47,12 @@ fn table() {
         (none(), "saved /tmp/upload-123.png".into(), "saved <tmp>/<tmpname>.png", &["temp"]),
         (none(), "db=/tmp/d2026-1/x.db".into(), "db=<tmp>/<tmpname>/x.db", &["database", "temp"]),
         // Installed packages, wherever they are installed.
-        (none(), "/Users/dpepper/.rvm/gems/ruby-3.4.9/gems/activerecord-7.1.3/lib/active_record/base.rb:42:in 'find'".into(), "<gem:activerecord>/lib/active_record/base.rb:<int>:in 'find'", &["dependency"]),
+        (none(), "/Users/dana/.rvm/gems/ruby-3.4.9/gems/activerecord-7.1.3/lib/active_record/base.rb:42:in 'find'".into(), "<gem:activerecord>/lib/active_record/base.rb:<int>:in 'find'", &["dependency"]),
         (none(), "/home/runner/.rbenv/versions/3.3.0/lib/ruby/gems/3.3.0/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:45:in 'run'".into(), "<gem:rspec-core>/lib/rspec/core/runner.rb:<int>:in 'run'", &["dependency"]),
-        (laptop(), "/Users/dpepper/code/app/vendor/bundle/ruby/3.4.0/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:45:in 'run'".into(), "<gem:rspec-core>/lib/rspec/core/runner.rb:<int>:in 'run'", &["dependency"]),
+        (laptop(), "/Users/dana/code/app/vendor/bundle/ruby/3.4.0/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:45:in 'run'".into(), "<gem:rspec-core>/lib/rspec/core/runner.rb:<int>:in 'run'", &["dependency"]),
         (none(), "from /opt/hostedtoolcache/Ruby/3.4.9/x64/lib/ruby/gems/3.4.0/bundler/gems/rails-1a2b3c4d5e6f/activerecord/lib/active_record.rb:3".into(), "from <gem:rails>/activerecord/lib/active_record.rb:<int>", &["dependency"]),
         // rvm's per-Ruby gem home isn't a gem: its binstubs stay under the home.
-        (none(), "/Users/dpepper/.rvm/gems/ruby-3.4.9/bin/rspec:25:in 'Kernel#load'".into(), "~/.rvm/gems/ruby-<version>/bin/rspec:<int>:in 'Kernel#load'", &[]),
+        (none(), "/Users/dana/.rvm/gems/ruby-3.4.9/bin/rspec:25:in 'Kernel#load'".into(), "~/.rvm/gems/ruby-<version>/bin/rspec:<int>:in 'Kernel#load'", &[]),
         (none(), "~/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.200/src/de.rs:12:5".into(), "<crate:serde>/src/de.rs:<int>:<int>", &["dependency"]),
         (none(), "at Object.<anonymous> (node_modules/@babel/core/lib/index.js:10:5)".into(), "at Object.<anonymous> (<npm:@babel/core>/lib/index.js:<int>:<int>)", &["dependency"]),
         // Project-relative paths were already machine-independent: only their roles are new.
