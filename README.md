@@ -87,6 +87,35 @@ next: siftr explain s5
 exit=1
 ```
 
+#### The first run of a command
+
+A first run has nothing to compare against, so it reports what it was able to see instead — once per context, not on every run:
+
+```
+$ siftr run -- ./bin-test
+r1: 2 lines, 3 behaviors; no earlier runs of this context to compare with
+  read: stdout, stderr, rusage
+  not read: rspec (the command isn't an rspec run) — no per-example results, so no change can name the example it came from
+  not read: rails_log (the command isn't a Ruby test run) — no SQL or request lines, so no query-count or query-latency change can be found
+  2 more runs of this command before anything but ERROR can fire · siftr sources -- ./bin-test
+next: siftr summary r1
+```
+
+Each unread source names what its absence hides, so you learn on the first run whether the change you care about is one siftr can find here at all.
+
+If the project already has runs under a *different* command, that first run leads with why this one starts from nothing:
+
+```
+$ siftr run -q -- bundle exec rspec spec/models
+r3: 69 lines, 33 behaviors; no earlier runs of this context to compare with
+  new baseline: a baseline is keyed on the project and the command as you typed it, so `bundle exec rspec spec/models` starts from nothing rather than joining `bundle exec rspec` (2 runs here)
+  read: stdout, stderr, rspec, rails_log, rusage — everything siftr knows how to read here
+  2 more runs of this command before anything but ERROR can fire
+next: siftr summary r3
+```
+
+A project where nothing else has run stays quiet — a first run there is just a first run.
+
 #### Still open
 
 Repeat a regression and the rolling baseline absorbs it: here one N+1 run was enough for the next to find nothing new. siftr keeps reminding you anyway, until it's fixed or answered:
