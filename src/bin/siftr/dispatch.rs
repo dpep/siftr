@@ -102,7 +102,15 @@ fn is_flag(arg: &OsString) -> bool {
         .is_some_and(|arg| arg.len() > 1 && arg.starts_with('-') && arg != "--")
 }
 
+/// Commands that were removed, and the exact thing to type instead. A word a user's fingers still
+/// type deserves the answer rather than the whole list — and the edit distance below cannot find it:
+/// `dismiss` is nowhere near `ack`.
+const RETIRED: &[(&str, &str)] = &[("dismiss", "siftr ack SIGNAL --wrong")];
+
 fn unknown(word: &str) -> String {
+    if let Some((_, replacement)) = RETIRED.iter().find(|(name, _)| *name == word) {
+        return format!("'{word}' was removed; use `{replacement}`");
+    }
     let nearest = SUBCOMMANDS
         .iter()
         .chain(PRESETS)
@@ -251,5 +259,20 @@ mod tests {
         );
         let far = with(&[], &[], false, &["xyzzy"]).unwrap_err();
         assert!(!far.contains("did you mean"), "{far}");
+    }
+
+    /// A command we removed is a word fingers keep typing, and it is too far from its replacement for
+    /// the edit distance to find: answer it instead of handing back the whole list.
+    #[test]
+    fn a_retired_command_names_what_replaced_it() {
+        let gone = with(&[], &[], false, &["dismiss"]).unwrap_err();
+        assert_eq!(
+            gone,
+            "'dismiss' was removed; use `siftr ack SIGNAL --wrong`"
+        );
+        assert!(
+            distance("dismiss", "ack") > 2,
+            "the fallback could have found it"
+        );
     }
 }
