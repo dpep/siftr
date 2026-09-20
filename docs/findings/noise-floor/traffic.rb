@@ -9,8 +9,16 @@
 # real SQLite file, so the run-to-run spread in these slices is real. What is
 # absent is the socket and the web server: no dogfood server gem is in the
 # Gemfile, and the Rails log is what siftr reads either way.
+#
+# `gap` is not a politeness knob. 52 batches fired back to back finish in under
+# four seconds and sample one machine state; the run-to-run spread in them is
+# whatever varies within a single breath. Spacing them lets the corpus cross the
+# slow episodes — another process's burst, a GC pause, a thermal step — that a
+# real context accumulates its runs across, and those are where a false positive
+# would come from.
 out, batches, per = ARGV[0], Integer(ARGV[1]), Integer(ARGV[2] || 8)
-abort "usage: traffic.rb <out_dir> <batches> [per_batch]" unless out
+gap = Float(ARGV[3] || 0)
+abort "usage: traffic.rb <out_dir> <batches> [per_batch] [gap_s]" unless out
 
 if User.count.zero?
   3.times do |u|
@@ -31,6 +39,7 @@ fire = -> { per.times { paths.each { |p| session.get(p) } } }
 5.times { fire.call }
 
 1.upto(batches) do |b|
+  sleep gap if gap.positive? && b > 1
   dir = File.join(out, format("%03d", b))
   FileUtils.mkdir_p(dir)
   File.write(File.join(dir, "load.txt"), `sysctl -n vm.loadavg`.split[1])

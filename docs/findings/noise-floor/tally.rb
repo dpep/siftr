@@ -12,7 +12,7 @@
 require "json"
 
 def tally(dir)
-  files = Dir[File.join(dir, "*.json")].sort
+  files = Dir[File.join(dir, "*.json")].sort - [File.join(dir, "summary.json")]
   abort "no json in #{dir}" if files.empty?
 
   judged = 0
@@ -24,6 +24,8 @@ def tally(dir)
   still_open = 0
   behaviors = []
   detail = []
+  load_clean = []
+  load_dirty = []
 
   files.each do |f|
     d = JSON.parse(File.read(f))
@@ -37,6 +39,10 @@ def tally(dir)
     still_open += (d["open_signals"] || []).size
     signals = d["signals"] || []
     by_n[n][0] += 1
+    load_file = f.sub(/\.json\z/, ".load")
+    load = File.exist?(load_file) ? Float(File.read(load_file)) : nil
+    (signals.empty? ? load_clean : load_dirty) << load if load
+
     next if signals.empty?
 
     by_n[n][1] += 1
@@ -63,6 +69,11 @@ def tally(dir)
   puts "  LATENCY on a non-example behavior: #{non_example_latency}"
   puts "  still-open signals re-shown, summed over comparisons: #{still_open}"
   puts "  by baseline size: " + by_n.sort.map { |n, (j, bad)| "n=#{n}: #{bad}/#{j}" }.join("  ")
+  unless load_clean.empty? && load_dirty.empty?
+    med = ->(xs) { xs.empty? ? "-" : format("%.1f", xs.sort[xs.size / 2]) }
+    puts "  1-min load, median: clean #{med[load_clean]} (#{load_clean.size})  " \
+         "with a signal #{med[load_dirty]} (#{load_dirty.size})"
+  end
   detail.each { |run, kinds| puts "    #{run}: #{kinds.inspect}" }
 end
 
