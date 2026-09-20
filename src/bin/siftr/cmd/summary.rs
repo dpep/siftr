@@ -101,7 +101,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         match rows.first() {
             Some((behavior, _)) => writeln!(
                 w,
-                "next: siftr evidence {} --run {}",
+                "next: siftr explain {} --run {}",
                 behavior.id.short(),
                 run.id
             ),
