@@ -53,7 +53,7 @@ A subcommand or a preset always wins over a file of the same name: `siftr status
 
 ```
 $ siftr statu; echo "exit=$?"
-siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, changes, summary, evidence, explain, ack, dismiss, history, sources, status, gc; presets: cron
+siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, follow, changes, summary, evidence, explain, ack, dismiss, history, sources, status, gc; presets: cron
 exit=2
 ```
 
@@ -332,6 +332,28 @@ r15 vs 2 baseline runs (r13 r14): 1 change
 next: siftr explain s9
 ```
 
+### `siftr follow`
+
+Reports each shape on stdin the first time it is seen, while the input is still open — for pointing siftr at a live log. `ingest` reads to EOF before it records or compares anything, and a `tail -f` never reaches EOF, so it would stay silent forever.
+
+```
+$ tail -f log/production.log | siftr follow
+siftr: following stdin; reporting each shape the first time it is seen
+      1  log            Started GET "/users/<int>" for <ip> at <timestamp>
+      2  log            User Load (<duration>) SELECT "users".* FROM "users" WHERE "users"."id" = <int> LIMIT <int>
+      3  log            Completed <int> OK in <duration> (Views: <duration> | ActiveRecord: <duration>)
+      7  log            E, [<timestamp>] ERROR -- : boom id=<int>
+```
+
+Only the **first** sighting of a shape prints, which is what makes a follow readable rather than a second copy of the log: 100 templates carry 70% of a real log's lines and 1,000 carry 88% ([docs/findings/log-contexts.md](docs/findings/log-contexts.md)), so after a short warmup a follow is quiet until something genuinely novel arrives. It doesn't go *silent* — the one-off tail keeps trickling, about 4.8% of lines on a whole-system log and 0.3% on a narrow one.
+
+It records nothing: no run, no baseline, no comparison, nothing written to the data directory. Comparing a stream nobody ever closes needs a windowing policy first, and that is still an open question. The shapes are exactly the behaviors `siftr ingest` records for the same bytes — one normalizer, one interpreter chain.
+
+- `-J` prints one compact JSON object per line: `seq`, `stream`, `behavior`, `kind`, `template`.
+- `-j` is a usage error. A pretty JSON document has one beginning and one end; a follow has neither.
+- Only the template is ever printed, never a raw line, so no `SIFTR_REDACT` setting changes what a follow can disclose.
+- Past 20,000 distinct shapes siftr says so once on stderr and reports no more.
+
 ### `siftr cron`
 
 What runs on a schedule here, where cron's output goes, and the line that records each crontab job through `siftr --quiet-unless-changed --`. It reads your crontab, `/etc/crontab`, `/etc/cron.d`, launchd user agents on a calendar or interval, the mail spool, `/var/log/cron`, syslog and the macOS unified log. It edits nothing, runs no job and records nothing. With a synthetic crontab and agent:
@@ -401,6 +423,7 @@ With no command it judges the directory alone, and says that's what it did. This
 |---|---|
 | `run` | the command's own code; 125 if siftr fails before starting it, 126 if it can't be executed, 127 if not found |
 | `ingest` | 0 recorded, 2 error |
+| `follow` | 0 the input ended, 2 error |
 | `cron` | 0 found a job or cron output, 1 found neither, 2 error |
 | `sources` | 0 listed, 2 error |
 | `changes`, `explain`, `evidence`, `summary`, `history` | 0 results, 1 nothing found, 2 error |

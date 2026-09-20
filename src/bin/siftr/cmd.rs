@@ -5,6 +5,7 @@ pub mod cron;
 pub mod evidence;
 pub mod explain;
 pub mod feedback;
+pub mod follow;
 pub mod gc;
 pub mod history;
 pub mod ingest;

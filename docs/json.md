@@ -1,7 +1,13 @@
 # siftr's JSON output
 
-`-j` prints exactly one JSON document on stdout, on every command. This file says
-what shape each one is. **JSON field names are a contract; human text is not.**
+`-j` prints exactly one JSON document on stdout, on every command but `follow`.
+This file says what shape each one is. **JSON field names are a contract; human
+text is not.**
+
+`follow` streams, so a pretty document — which has one beginning and one end —
+could never end: it takes `-J` instead, one compact object per line, with the
+fields `seq`, `stream`, `behavior`, `kind` and `template`. `follow -j` is a
+usage error.
 
 Every example here was produced by running the binary, not written by hand.
 

@@ -1,6 +1,7 @@
 //! The streaming pipeline for one run: observations in, aggregates out.
 
-use crate::aggregate::{Aggregate, Aggregator, RunStats};
+use crate::aggregate::{Aggregate, Aggregator, Exemplar, RunStats};
+use crate::behavior::Behavior;
 use crate::interpret::resources::Resources;
 use crate::interpret::{Claim, Interpreter, default_interpreters};
 use crate::normalize::{Normalizer, Roots};
@@ -83,6 +84,12 @@ impl Analyzer {
                 break;
             }
         }
+    }
+
+    /// Calls `report` for each behavior first recorded since the last call, with the occurrence it was
+    /// first seen at, so a caller can speak as the input arrives instead of only at [`Analyzer::finish`].
+    pub fn drain_new_behaviors(&mut self, report: impl FnMut(&Behavior, &Exemplar)) {
+        self.aggregator.drain_new(report);
     }
 
     pub fn finish(mut self) -> Analysis {

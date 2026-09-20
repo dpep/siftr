@@ -214,6 +214,9 @@ pub struct Aggregator {
     cells: usize,
     overflow: BehaviorId,
     rng: XorShift,
+    /// Behaviors first recorded since the last [`Aggregator::drain_new`], oldest first. A caller that never
+    /// drains it holds one id per behavior, which [`MAX_BEHAVIORS`] already bounds.
+    fresh: Vec<BehaviorId>,
 }
 
 impl Default for Aggregator {
@@ -229,18 +232,21 @@ impl Aggregator {
             cells: 0,
             overflow: overflow_behavior().id,
             rng: XorShift(0x9e37_79b9_7f4a_7c15),
+            fresh: Vec::new(),
         }
     }
 
     pub fn record(&mut self, event: &Event<'_>) {
         let id = BehaviorId::of(event.kind, event.template.template);
+        let known = self.behaviors.contains_key(&id);
         // Decided at a behavior's first occurrence and never revisited, so an admitted behavior's counts are
         // exact and only its absence is in doubt.
-        let admitted = self.behaviors.contains_key(&id)
-            || self.behaviors.len() < MAX_BEHAVIORS
-            || !capped(event.kind);
+        let admitted = known || self.behaviors.len() < MAX_BEHAVIORS || !capped(event.kind);
         let overflow = self.overflow;
         let acc = if admitted {
+            if !known {
+                self.fresh.push(id);
+            }
             self.behaviors.entry(id).or_insert_with(|| {
                 Accumulator::new(Behavior {
                     id,
@@ -250,6 +256,9 @@ impl Aggregator {
                 })
             })
         } else {
+            if !self.behaviors.contains_key(&overflow) {
+                self.fresh.push(overflow);
+            }
             self.behaviors
                 .entry(overflow)
                 .or_insert_with(|| Accumulator::new(overflow_behavior()))
@@ -288,6 +297,23 @@ impl Aggregator {
             }
         }
         // Per-slot value stats (`normalize::SlotStats`) are observed here: `event.template.slots` index `event.input`.
+    }
+
+    /// Calls `report` for each behavior first recorded since the last call, oldest first, with the
+    /// occurrence it was first seen at. The streaming counterpart of [`Aggregator::finish`], which can
+    /// only speak once the input has ended.
+    pub fn drain_new(&mut self, mut report: impl FnMut(&Behavior, &Exemplar)) {
+        let mut fresh = std::mem::take(&mut self.fresh);
+        for &id in &fresh {
+            if let Some(acc) = self.behaviors.get(&id)
+                && let Some(first) = acc.first.first()
+            {
+                report(&acc.behavior, first);
+            }
+        }
+        // Put the buffer back rather than its capacity: a follow drains on every chunk it reads.
+        fresh.clear();
+        self.fresh = fresh;
     }
 
     /// Most frequent first.
