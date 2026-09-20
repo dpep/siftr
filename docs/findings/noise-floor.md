@@ -86,10 +86,12 @@ As rates, to the precision 50 counts carry:
 - **example LATENCY** — `rails_demo` 4.0%, `iriq` 12%, `network_resiliency`
   52%. §6.
 - **non-example LATENCY** — 0 of 158 traffic comparisons. §4.
-- **DISAPPEARED, FREQUENCY, ERROR, INCOMPLETE** — 0 of 258 comparisons, all
-  corpora. Rule of three: below **1.2%** per comparison, 95%. FREQUENCY's zero
-  holds even where a behavior's identity churns (§5), because the counts
-  themselves stay exact, as `signals.md` §1 found.
+- **DISAPPEARED, FREQUENCY, INCOMPLETE** — 0 of 258 comparisons, all corpora.
+  Rule of three: below **1.2%** per comparison, 95%. FREQUENCY's zero holds even
+  where a behavior's identity churns (§5), because the counts themselves stay
+  exact, as `signals.md` §1 found.
+- **ERROR** — 0, on the 150 comparisons that had an example to fail at all.
+  Below 2.0% per comparison.
 
 What a developer actually reads is groups, not signals, and only the top 3 are
 shown. Per comparison, `network_resiliency` produced a median of **2 false
