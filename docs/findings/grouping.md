@@ -194,6 +194,15 @@ it was there.
    all. For a log source the identity is the source field, which the generic
    interpreter does not expose yet — that parse is the prerequisite, not the grouping.
 
+   **`hunt_grown` is reproducible from the repository**, which §7 previously left only to
+   the deleted scratch directory: replay `fixtures/rspec_hunt/a4_clean` three times, then
+   `fixtures/rspec_hunt/a10_fail_warn`, into one context with `ingest --dir`. That is the
+   suite growing 4 → 10 examples in the run that also regressed. Re-measured 2026-09-19 on
+   `main` after the suite-size demotion shipped: still **8 changes in 8 groups**, headed by
+   `ERROR ./spec/a_spec.rb # a a1`, so the target above stands unchanged. The control that
+   confirms the identification is `a10_fail` in place of `a10_fail_warn` — identical but
+   without the deprecation warning — which gives 7.
+
 4. **If numeric agreement is ever revisited, it must be a tie-breaker inside a shared
    identity, never the key.** **Needs evidence.** The measured collision rate only
    falls to 29% at counts ≥ 100, which no threshold on its own can rescue. What would
