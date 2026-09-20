@@ -64,7 +64,7 @@ Cardinality, bounded on a public app rather than guessed — **discourse** (`con
 | | |
 |---|---|
 | route-declaring lines (`get`/`post`/…/`resources`) | 895, and `resources` expands to up to 7 actions each |
-| top-level controller files | 90 |
+| `*_controller.rb` files, all directories | 142 |
 
 So a per-`controller#action` partition of one real app's log creates contexts on the order
 of a thousand — **finer than the whole-machine partition that §6 measured**, where the
@@ -189,6 +189,7 @@ stated; fail 5 and it transfers only for logs carrying request ids.
 `docs/findings/rails-partition/probe.sh [SCRATCH]` regenerates §3's table from the committed
 fixture and a release build, into a scratch `SIFTR_HOME`; `variants.py` is the rewrite into
 each production format, and documents the level filter's approximation. The route and
-controller counts in §2 are `grep -cE` and `ls | wc -l` over a public discourse checkout.
+controller counts in §2 are `grep -cE` and `find -name '*_controller.rb'` over a public
+discourse checkout.
 §1's search covered `*.log` files on this machine outside the off-limits repositories; no
 log content, path or host from any of them appears above.
