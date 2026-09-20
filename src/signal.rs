@@ -296,7 +296,7 @@ fn tier(kind: SignalKind, class: Class) -> u8 {
     use SignalKind::*;
     match (kind, class) {
         (Error | Incomplete, _) | (New, OutsideExamples) => 1,
-        (Frequency, Request) | (New, Stderr) | (Latency, Example) => 2,
+        (Frequency, Request) | (New, Stderr) | (Latency, Example | Request) => 2,
         (Frequency, _) => 3,
         _ => 4,
     }
