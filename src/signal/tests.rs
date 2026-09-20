@@ -422,6 +422,67 @@ fn examples_added_in_two_files_stay_two_groups() {
     assert_eq!(groups.len(), 2, "one group per file: {signals:?}");
 }
 
+/// Renaming examples inside one spec file moves some each way in the same run — the one case where a file's
+/// identity alone would merge two opposite changes. The key carries the presence kind for exactly this, so
+/// they stay two: merged, the deleted examples would be filed under an added one's headline, and
+/// [`collapsed_examples`] would refuse to describe the group at all, leaving it rendered as a bare example
+/// heading a `supporting:` list of the others. Drop `SignalKind` from `Key::File` and this goes red.
+#[test]
+fn examples_renamed_within_one_file_stay_two_groups() {
+    use SignalKind::*;
+    let kept = b(Kind::TestExample, "./spec/a_spec.rb # a keeps").seq(1);
+    let old_one = b(Kind::TestExample, "./spec/b_spec.rb # b old one").seq(2);
+    let old_two = b(Kind::TestExample, "./spec/b_spec.rb # b old two").seq(3);
+    let new_one = b(Kind::TestExample, "./spec/b_spec.rb # b new one").seq(4);
+    let new_two = b(Kind::TestExample, "./spec/b_spec.rb # b new two").seq(5);
+    let baseline_run = run(&[kept.clone(), old_one, old_two]);
+    let current = run(&[kept, new_one, new_two]);
+    let runs = vec![baseline_run.clone(); 3];
+    let signals = detect(&current, &baseline(&current, &runs));
+
+    // What arrived is in this run; what went is only in the baseline runs that still had it.
+    let behavior = |s: &Signal| {
+        &current
+            .get(s.behavior)
+            .or_else(|| baseline_run.get(s.behavior))
+            .expect("in this run or the baseline")
+            .behavior
+    };
+    let groups: Vec<_> = signals
+        .chunk_by(|a, b| a.group == b.group)
+        .map(|members| {
+            let kinds: BTreeSet<SignalKind> = members.iter().map(|s| s.kind).collect();
+            let collapsed = collapsed_examples(members.iter().map(|s| (s, behavior(s))));
+            (kinds, collapsed.map(|c| (c.kind, c.file, c.examples)))
+        })
+        .collect();
+
+    assert_eq!(groups.len(), 2, "two changes, never one merged: {groups:?}");
+    for (kinds, collapsed) in &groups {
+        assert_eq!(
+            kinds.len(),
+            1,
+            "a group must never hold both directions: {groups:?}"
+        );
+        assert!(
+            collapsed.is_some(),
+            "each stays describable as examples of its file: {groups:?}"
+        );
+    }
+    // Both sit at the example tier with the same baseline behind them, so which ranks first is the existing
+    // precedence rule's business (NEW before DISAPPEARED), not something this collapse decides.
+    assert_eq!(
+        groups[0].1,
+        Some((New, "./spec/b_spec.rb", 2)),
+        "{groups:?}"
+    );
+    assert_eq!(
+        groups[1].1,
+        Some((Disappeared, "./spec/b_spec.rb", 2)),
+        "{groups:?}"
+    );
+}
+
 #[test]
 fn a_clean_run_has_no_signals() {
     let show = b(Kind::TestExample, "shows").seq(1).ms(15.0);
