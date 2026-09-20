@@ -1,0 +1,15 @@
+
+running 3 tests
+test normalize::tests::masks_an_integer ... ok
+test normalize::tests::keeps_a_path_segment ... ok
+test baseline::tests::evidence_grows_with_quiet_runs ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 2 tests
+test a_missing_or_broken_siftr_cannot_change_a_gate_step_s_code_or_output ... ok
+test siftr_gate_off_beats_a_siftr_that_works ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+

@@ -6,6 +6,7 @@
 //! [`resources`] is the exception: its event comes from the kernel rather than from a line, so it has
 //! no interpreter and isn't in the chain. It lives here because what the measures mean is domain, not I/O.
 
+pub mod cargo;
 #[cfg(test)]
 mod fixtures;
 pub mod generic;
@@ -69,6 +70,7 @@ pub trait Interpreter {
 pub fn default_interpreters() -> Vec<Box<dyn Interpreter>> {
     vec![
         Box::new(rspec::Rspec::default()),
+        Box::new(cargo::Cargo::default()),
         Box::new(generic::Generic),
     ]
 }

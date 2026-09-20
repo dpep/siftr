@@ -1,0 +1,7 @@
+   Compiling demo v0.1.0 (/tmp/demo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running unittests src/lib.rs (/tmp/demo/target/debug/deps/demo-63d96eb88e26d3e1)
+     Running tests/cli_gate.rs (/tmp/demo/target/debug/deps/cli_gate-0efa054d8b085c17)
+error: test failed, to rerun pass `--test cli_gate`
+error: 1 target failed:
+    `--test cli_gate`
