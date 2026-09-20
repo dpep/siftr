@@ -154,3 +154,33 @@ endpoint scope when `owners` yields nothing. Pre-registered check: the two-regre
 go from 2 groups to 1, headed by the request with the latency as a member; a run carrying only the
 N+1 must stay 1 group; a run carrying only the slowdown must stay 1 signal; and `rails_demo`'s N+1
 must stay 1 group with its example attribution intact.
+
+**Result (2026-09-19).** The two-regression run went 2 groups → **1**, at 5 signals either way: the
+rule regroups, it never drops. The headline is the one predicted — `GET PostsController#index 2xx
+queries 16 → 48` — with the latency now a supporting member of it, beside the view line, the new query
+and the preload that vanished. The runs carrying one regression each are unmoved: `b1…b3 → b4` stays 1
+group of 4 signals, and `t1…t3 → t4` stays a single LATENCY, byte for byte, since a signal alone in
+its group renders the same whether it is keyed by scope or by behavior. `rails_demo`'s N+1 is unmoved
+through `script/verify`: 1 change, headed by `GET UsersController#show 2xx  queries 3 → 10`, still
+owned by `./spec/requests/users_spec.rb # Users shows a user with posts and comments`. All 24
+scenarios of `fixtures/rails_demo` and `fixtures/rspec_hunt`, replayed in sequence, are byte-identical.
+
+**The recommended shape was not built, and why is the sharper half of the finding.** Keying an
+`http.request` on its own endpoint is a special case on one behavior kind, and the defect is not about
+requests. `Comparison::push` asks which unit of work a change is *about* only when it can also ask how
+much of the measure *moved inside* it, and `scoped_value` answers `0.0` for a measure no scope records
+— so "not recorded" and "did not move" arrive as the same number. Those are now two questions: a
+behavior whose every occurrence falls inside one scope belongs to that scope whatever moved
+(`Comparison::sole_scope`), which is structural and so answers for a duration. No attribution is
+claimed there — the scope holds no number for such a measure, and `0 → 0` would read as one rather
+than as silence.
+
+It cannot disturb a measure scopes *do* record: a sole scope's value **is** the behavior's own, and
+`rules::frequency` fires only when the current value lies outside the baseline range, so `owners`
+already returns that scope and the existing path takes it. Being kind-agnostic, it also settles the
+case §4 is careful about — a slow `db.query` inside a request joins that request's group exactly as
+its *count* already does, asserting no nesting the scope didn't already assert. §4's stall window is
+untouched and stays per kind.
+
+The headline stays the query count rather than the slowdown: both signals are tier 2 on the same
+behavior, so confidence breaks the tie, 0.80 against the latency's 0.64.
