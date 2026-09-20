@@ -118,11 +118,14 @@ impl Cargo {
             self.listing_targets = count > 0.0;
             return Claim::Claimed;
         }
-        let item = trim(line);
-        if self.listing_targets && item.starts_with(b"`--") && item.ends_with(b"`") {
-            return Claim::Claimed;
+        // Only while a list is open: every other stderr line of every run passes through here.
+        if self.listing_targets {
+            let item = trim(line);
+            if item.starts_with(b"`--") && item.ends_with(b"`") {
+                return Claim::Claimed;
+            }
+            self.listing_targets = false;
         }
-        self.listing_targets = false;
         Claim::Declined
     }
 }
