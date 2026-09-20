@@ -47,7 +47,7 @@ fn the_first_run_of_a_context_says_what_siftr_could_and_could_not_read() {
     // The limitation the trial never discovered: no telemetry means no query-shaped change can ever fire.
     assert!(
         first.contains("not read: rspec (the command isn't an rspec run)")
-            && first.contains("no per-example results"),
+            && first.contains("no per-example timing"),
         "{first}"
     );
     assert!(

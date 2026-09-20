@@ -95,7 +95,7 @@ A first run has nothing to compare against, so it reports what it was able to se
 $ siftr run -- ./bin-test
 r1: 2 lines, 3 behaviors; no earlier runs of this context to compare with
   read: stdout, stderr, rusage
-  not read: rspec (the command isn't an rspec run) — no per-example results, so no change can name the example it came from
+  not read: rspec (the command isn't an rspec run) — no per-example timing, and no scope to attribute a log line to an example
   not read: rails_log (the command isn't a Ruby test run) — no SQL or request lines, so no query-count or query-latency change can be found
   2 more runs of this command before anything but ERROR can fire · siftr sources -- ./bin-test
 next: siftr summary r1

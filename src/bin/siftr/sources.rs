@@ -239,7 +239,10 @@ pub fn reading(argv: &[String], dir: &Path, on: &Enabled, prepared: &[&str]) -> 
 /// costs the same whether the project has no log or the key is switched off.
 fn hides(name: &str) -> &'static str {
     match name {
-        RSPEC => "no per-example results, so no change can name the example it came from",
+        // Not "no change can name the example": a runner siftr reads may name its own, as cargo's
+        // stdout does. What only the listener gives is timing per example and a range to scope log
+        // lines into.
+        RSPEC => "no per-example timing, and no scope to attribute a log line to an example",
         RAILS_LOG => {
             "no SQL or request lines, so no query-count or query-latency change can be found"
         }
