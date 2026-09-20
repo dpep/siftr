@@ -64,6 +64,10 @@ export SIFTR_HOME=$SCRATCH/home-$SHA
 rm -rf "$SIFTR_HOME"
 cp "$SPEC" "$SCRATCH/users_spec.rb.orig"
 
+# script/gate records the everyday gate with this binary, so prove against this binary that a siftr
+# which is missing, unrunnable or refusing still can't change what the gate says about a command.
+echo "== gate resilience"; SIFTR_BIN=$SIFTR "$WT/script/gate" --self-test
+
 # Failing suites are the point of several steps, so the child's exit status must not stop the script.
 run() { (cd "$DEMO" && env "$@" "$SIFTR" run -q -- bundle exec rspec 2>&1 | sed -e '/^next:/d' | cut -c1-170) || true; }
 restore() { cp "$SCRATCH/users_spec.rb.orig" "$SPEC"; }

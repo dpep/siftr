@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# The pre-commit gate, run in the working tree, with siftr recording the test
+# step so a real baseline accumulates from work this repo already does.
+#
+#   script/gate              cargo test, clippy, fmt; exits 1 if any failed
+#   script/gate --self-test  prove siftr cannot change a step's exit code
+#   SIFTR_GATE=off script/gate     no recording at all
+#   SIFTR_BIN=path script/gate     record with that binary instead
+#
+# Not script/verify: that one verifies a SHA in a throwaway per-SHA worktree, so
+# every run would be a project root siftr has never seen and no baseline could
+# form. This one runs where the developer already is.
+set -uo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+
+# A siftr that cannot answer --version cannot be trusted to wrap anything, so the
+# gate settles that here rather than finding out mid-step. SIFTR_BIN, when set, is
+# the only candidate: the self-test's fakes must not fall through to a real siftr.
+siftr_binary() {
+  [ "${SIFTR_GATE:-on}" = off ] && return
+  local candidates candidate
+  if [ -n "${SIFTR_BIN:-}" ]; then
+    candidates=("$SIFTR_BIN")
+  else
+    candidates=("$ROOT/target/release/siftr" "$(command -v siftr || true)")
+  fi
+  for candidate in "${candidates[@]}"; do
+    [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+    "$candidate" --version >/dev/null 2>&1 || continue
+    printf '%s' "$candidate"
+    return
+  done
+}
+
+# Runs CMD under siftr and returns CMD's own exit code, never siftr's.
+#
+# siftr reserves exactly three codes for its own failure -- 125 before the spawn,
+# 126 cannot execute, 127 not found -- and each of them means the command never
+# ran, so the fallback runs it unwrapped rather than reporting a code no command
+# produced. Every other code is the child's by siftr's contract, which
+# tests/capture_run.rs holds to even when the store cannot open. The one failure
+# this cannot catch is a siftr that exits 0 for a failing child; that is what that
+# test is for.
+wrapped() {
+  local code=0
+  [ -n "$SIFTR" ] || { "$@"; return $?; }
+  "$SIFTR" run --quiet-unless-changed -- "$@" || code=$?
+  case $code in
+    125 | 126 | 127)
+      printf 'gate: siftr did not run the command (%s); running it unwrapped\n' "$code" >&2
+      code=0
+      "$@" || code=$?
+      ;;
+  esac
+  return $code
+}
+
+step() { # step LABEL CMD...
+  local label=$1
+  shift
+  if "$@"; then
+    echo "$label: ok"
+  else
+    echo "$label: FAILED"
+    failed=1
+  fi
+}
+
+# Every row asserts the same thing: whatever siftr is, the wrapper returns the
+# command's code. Only the kind of brokenness changes.
+self_test() {
+  local tmp fails=0 row got want fake label real=${SIFTR_BIN:-}
+  tmp=$(mktemp -d)
+  printf '#!/bin/sh\nexit 1\n' >"$tmp/broken"
+  printf '#!/bin/sh\ncase $1 in --version) echo "siftr 0";; *) exit 125;; esac\n' >"$tmp/refuses"
+  chmod +x "$tmp/broken" "$tmp/refuses"
+  export SIFTR_HOME=$tmp/home
+
+  for fake in absent broken refuses real off; do
+    case $fake in
+      real) SIFTR=$(SIFTR_BIN=$real siftr_binary) ;;
+      off) SIFTR=$(SIFTR_GATE=off siftr_binary) ;;
+      *) SIFTR=$(SIFTR_BIN=$tmp/$fake siftr_binary) ;;
+    esac
+    label="$fake${SIFTR:+ (wrapping)}"
+    row=0
+    for want in 0 7; do
+      wrapped sh -c "exit $want" >/dev/null 2>&1
+      got=$?
+      [ "$got" = "$want" ] || {
+        echo "self-test: $label returned $got for a command that exited $want"
+        row=1
+        fails=1
+      }
+    done
+    [ "$row" = 0 ] && echo "self-test: $label passes the command's code through"
+  done
+
+  rm -rf "$tmp"
+  return $fails
+}
+
+SIFTR=$(siftr_binary)
+failed=0
+
+if [ "${1:-}" = --self-test ]; then
+  self_test
+  exit $?
+fi
+
+cd "$ROOT" || exit 2
+[ -n "$SIFTR" ] || echo "gate: not recording (no usable siftr)" >&2
+
+step tests wrapped cargo test --no-fail-fast
+step clippy cargo clippy --all-targets -- -D warnings
+step fmt cargo fmt --check
+
+[ "$failed" = 0 ] || exit 1
