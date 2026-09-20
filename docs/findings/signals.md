@@ -80,8 +80,13 @@ not confidence, except for LATENCY, whose noise is continuous.
 | (intermittent) | present in 0 < k < n baseline runs: **never** NEW/DISAPPEARED; show k/n as context | — |
 | FREQUENCY exact | measure identical in all n ≥ 2 runs, any change | E(n) |
 | FREQUENCY varying | c outside [min, max] **and** \|c − median\| > 2·(max − min) | E(n)·(1 − (max − min)/\|c − median\|) |
-| LATENCY (example) | n ≥ 2; Δ = c − median > need = max(**100ms**, **3·median**), i.e. ≥ +100ms **and** ≥ 4x; c > max(baseline); not an **adjacent** example (execution order) slowed by ≥ 0.5·Δ; not a **stall** (suite excess − Δ > Δ and > 3·1.4826·MAD(suite)) | E(n)·e/(1+e), e = Δ/need |
+| LATENCY (any timed behavior) | n ≥ 2; c is the behavior's mean duration per occurrence this run; Δ = c − median > need = max(**100ms**, **3·median**), i.e. ≥ +100ms **and** ≥ 4x; c > max(baseline); not an **adjacent** example (execution order; examples only) slowed by ≥ 0.5·Δ; not a **stall** (window excess − own excess > own excess and > 3·1.4826·MAD(window), all in total ms) | E(n)·e/(1+e), e = Δ/need |
 | LATENCY (suite duration) | never standalone; supporting evidence only | — |
+
+The **window** is the run's total time in the behavior's own kind of work — the suite for an
+example, the run's request time for a request — never across kinds, since a query's time is
+inside its request. Thresholds above were fitted to example timing; what they do to a second
+population, and which guard carries over to it, is measured in `latency.md` (2026-09-19).
 
 FREQUENCY measures: count per template per run, query count per request action
 (Rails 8.1 `Completed … (N queries, M cached)`), and query total per example.
@@ -235,6 +240,7 @@ Latency values are in ms. "n/a" means no signal.
 | 27 | ERROR | failed E ×1, passed ×4 | failed E | n/a (known flaky) |
 | 28 | ERROR | failed F ×1, passed ×4 | failed E | ERROR 0.71 |
 | 29 | ERROR | none | failed E | n/a (no baseline) |
+| 31 | LATENCY | [10, 11, 12]; window [100, 105, 110] → 977, own share 872 | 120 | LATENCY 0.42 (the window moved by this behavior's own 8 occurrences; charging it one occurrence's 109 would veto it) |
 | 30 | grouping | show request queries [3 ×5], example queries [28 ×5], sql `post_id = ?` [1 ×5] | 10, 35, 9 | 1 group, headline FREQUENCY request 3→10 exact 0.86, 2 supporting (example queries, sql template) |
 
 ## 7. Revisions since the backtest (2026-09-13)
