@@ -52,11 +52,17 @@ Three layers, in order:
 The one failure this cannot catch is a siftr that exits 0 for a failing child,
 and no wrapper can: that is what `tests/capture_run.rs` is for. What the wrapper
 *can* be held to is checked from the outside, by the very suite the gate runs —
-`script/gate --self-test` builds a missing binary, a binary that fails
-`--version`, and a binary that passes `--version` and then refuses to spawn
-anything, and asserts that each still passes a command's exit code (0 and 7)
-through unchanged. `tests/cli_gate.rs` runs it under `cargo test`, and
+`script/gate --self-test` stands up a missing binary, one that fails
+`--version`, and one that passes `--version` and then refuses to spawn anything,
+and asserts that each still hands back both the command's exit code (0 and 7)
+and what it printed. `tests/cli_gate.rs` runs it under `cargo test`, and
 `script/verify` runs it again against the release binary it just built.
+
+The real gate was put through the same three, end to end: with the binary
+missing it printed `gate: not recording (no usable siftr)` and exited 0 on a
+green tree and **1 on a tree with a broken test**; with a siftr that refuses to
+spawn it printed `gate: siftr did not run the command (125); running it
+unwrapped` and still reported `tests: ok`.
 
 ## 3. Cost: 12 ms against a 33-second suite
 
@@ -80,13 +86,13 @@ going to run.
 
 ## 4. The first real corpus
 
-Eleven runs of `cargo test --no-fail-fast` in the default data dir, recorded by
+Twelve runs of `cargo test --no-fail-fast` in the default data dir, recorded by
 `script/gate` across the work that produced this document. Each run is 713–736
 lines and 427 behaviors — one per `test <name> ... ok` line, plus cargo's own
 progress lines and the output of siftr's integration tests, which capture
 siftr's own reports and so end up templated as behaviors of their own.
 
-**Nine of the eleven runs reported nothing at all.** The two that reported were
+**Ten of the twelve runs reported nothing at all.** The two that reported were
 exactly the two where the suite changed: one test added and one renamed (5
 signals), and one test deliberately broken (18). No run in which nothing changed
 produced a signal. A separate three-run probe taken during the cost measurement,
