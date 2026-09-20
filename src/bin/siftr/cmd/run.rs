@@ -26,7 +26,8 @@ use crate::sources;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Don't pass the command's output through (implied by -j)
+    /// Quiet the COMMAND, not siftr: don't pass its output through (implied by -j). For less of siftr's own
+    /// output use --quiet-unless-changed or --no-report
     #[arg(short, long)]
     quiet: bool,
 
