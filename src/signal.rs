@@ -309,8 +309,10 @@ enum Key {
     Incomplete,
     /// An example, or one phase outside them.
     Scope(Phase),
-    /// Examples of one spec file that disappeared together, with what was attributed to them.
-    File(String),
+    /// Examples of one spec file that appeared, or disappeared, together, with what was attributed to them.
+    /// The kind is part of the key: renaming examples within a file moves some each way, and those are two
+    /// changes, not one.
+    File(SignalKind, String),
     /// Stderr has no per-example attribution: the same message from different call sites groups by prefix.
     Prefix(String),
     Behavior(BehaviorId),
@@ -319,7 +321,7 @@ enum Key {
 /// How many characters of a stderr template decide its group.
 const PREFIX_CHARS: usize = 60;
 
-/// DISAPPEARED examples of one spec file group together from this many; a single one stays its own change.
+/// NEW or DISAPPEARED examples of one spec file group together from this many; a single one stays its own change.
 const COLLAPSE_EXAMPLES: usize = 2;
 
 /// The spec file of a `test.example` template, `<spec file> # <full description>`.
@@ -327,33 +329,45 @@ fn spec_file(template: &str) -> Option<&str> {
     template.split_once(" # ").map(|(file, _)| file)
 }
 
-/// A group made of examples of one spec file that disappeared together.
+/// The presence changes: the behavior arrived, or stopped occurring. Only these collapse by spec file, because
+/// only these are what adding or deleting the file did — a count that moved is about the code, not the file.
+fn presence(kind: SignalKind) -> bool {
+    matches!(kind, SignalKind::New | SignalKind::Disappeared)
+}
+
+/// A group made of examples of one spec file that appeared, or disappeared, together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DisappearedExamples<'a> {
+pub struct CollapsedExamples<'a> {
+    /// NEW or DISAPPEARED: which way the file's examples moved.
+    pub kind: SignalKind,
     pub file: &'a str,
     /// Members that are those examples; any others were attributed to them.
     pub examples: usize,
 }
 
 /// Whether a group's members, headline first and each with its behavior, are examples of one spec file that
-/// disappeared together, as [`detect`] groups them.
-pub fn disappeared_examples<'a>(
+/// appeared or disappeared together, as [`detect`] groups them.
+pub fn collapsed_examples<'a>(
     members: impl IntoIterator<Item = (&'a Signal, &'a Behavior)>,
-) -> Option<DisappearedExamples<'a>> {
-    let gone = |(s, b): &(&Signal, &Behavior)| {
-        s.kind == SignalKind::Disappeared && b.kind == Kind::TestExample
-    };
+) -> Option<CollapsedExamples<'a>> {
+    let collapsible =
+        |(s, b): &(&Signal, &Behavior)| presence(s.kind) && b.kind == Kind::TestExample;
     let mut members = members.into_iter();
-    let (_, head) = members.next().filter(gone)?;
-    let file = spec_file(&head.template)?;
+    let (head, behavior) = members.next().filter(collapsible)?;
+    let kind = head.kind;
+    let file = spec_file(&behavior.template)?;
     let mut examples = 1;
-    for (_, behavior) in members.filter(gone) {
-        if spec_file(&behavior.template) != Some(file) {
+    for (signal, behavior) in members.filter(collapsible) {
+        if signal.kind != kind || spec_file(&behavior.template) != Some(file) {
             return None;
         }
         examples += 1;
     }
-    (examples >= COLLAPSE_EXAMPLES).then_some(DisappearedExamples { file, examples })
+    (examples >= COLLAPSE_EXAMPLES).then_some(CollapsedExamples {
+        kind,
+        file,
+        examples,
+    })
 }
 
 struct Comparison<'a> {
@@ -368,8 +382,8 @@ struct Comparison<'a> {
 struct Found {
     signal: Signal,
     key: Key,
-    /// A DISAPPEARED example: what else is attributed to it moved because it went, so it heads its group.
-    gone: bool,
+    /// An example that appeared or disappeared: whatever is attributed to it moved with it, so it heads its group.
+    moved: bool,
 }
 
 impl<'a> Comparison<'a> {
@@ -415,25 +429,30 @@ impl<'a> Comparison<'a> {
         Phase::of_scope(Some(scope), kind)
     }
 
-    /// DISAPPEARED examples of one spec file, and what is attributed to them, become one group: deleting or renaming
-    /// a file is one change, not one per example.
+    /// Examples of one spec file that appeared or disappeared together, and what is attributed to them, become
+    /// one group: adding, deleting or renaming a file is one change, not one per example. Grouped on that shared
+    /// identity alone and never on how the counts moved — `docs/findings/grouping.md` measured the count-vector
+    /// rule at a 15% false-merge rate, and 15 of its 21 false merges are pairs this rule makes correctly.
     fn collapse(&self, found: &mut [Found]) {
-        let mut files: BTreeMap<&str, Vec<BehaviorId>> = BTreeMap::new();
-        for f in found.iter().filter(|f| f.gone) {
+        let mut files: BTreeMap<(SignalKind, &str), Vec<BehaviorId>> = BTreeMap::new();
+        for f in found.iter().filter(|f| f.moved) {
             if let Some(file) = spec_file(self.template(f.signal.behavior)) {
-                files.entry(file).or_default().push(f.signal.behavior);
+                files
+                    .entry((f.signal.kind, file))
+                    .or_default()
+                    .push(f.signal.behavior);
             }
         }
-        let file_of: HashMap<BehaviorId, &str> = files
+        let file_of: HashMap<BehaviorId, (SignalKind, &str)> = files
             .into_iter()
             .filter(|(_, examples)| examples.len() >= COLLAPSE_EXAMPLES)
-            .flat_map(|(file, examples)| examples.into_iter().map(move |e| (e, file)))
+            .flat_map(|(key, examples)| examples.into_iter().map(move |e| (e, key)))
             .collect();
         for f in found {
             if let Key::Scope(Phase::Example(example)) = f.key
-                && let Some(file) = file_of.get(&example)
+                && let Some(&(kind, file)) = file_of.get(&example)
             {
-                f.key = Key::File((*file).to_owned());
+                f.key = Key::File(kind, file.to_owned());
             }
         }
     }
@@ -567,7 +586,7 @@ impl<'a> Comparison<'a> {
                 headline: false,
             },
             key: Key::Incomplete,
-            gone: false,
+            moved: false,
         });
     }
 
@@ -1010,7 +1029,7 @@ impl<'a> Comparison<'a> {
                     headline: false,
                 },
                 key: Key::Incomplete,
-                gone: false,
+                moved: false,
             });
         }
     }
@@ -1061,7 +1080,7 @@ impl<'a> Comparison<'a> {
             }
         };
         found.push(Found {
-            gone: class == Class::Example && kind == SignalKind::Disappeared,
+            moved: class == Class::Example && presence(kind),
             signal: Signal {
                 kind,
                 behavior: id,
@@ -1137,13 +1156,14 @@ fn precedence(a: &Signal, b: &Signal) -> Ordering {
 
 fn rank(found: Vec<Found>) -> Vec<Signal> {
     let mut groups: BTreeMap<Key, Vec<(bool, Signal)>> = BTreeMap::new();
-    for Found { signal, key, gone } in found {
-        groups.entry(key).or_default().push((gone, signal));
+    for Found { signal, key, moved } in found {
+        groups.entry(key).or_default().push((moved, signal));
     }
     let mut groups: Vec<Vec<(bool, Signal)>> = groups.into_values().collect();
     for members in &mut groups {
-        members
-            .sort_by(|(a_gone, a), (b_gone, b)| b_gone.cmp(a_gone).then_with(|| precedence(a, b)));
+        members.sort_by(|(a_moved, a), (b_moved, b)| {
+            b_moved.cmp(a_moved).then_with(|| precedence(a, b))
+        });
     }
     groups.sort_by(|a, b| precedence(&a[0].1, &b[0].1));
     groups

@@ -51,17 +51,19 @@ impl Sandbox {
     }
 }
 
-/// A run with more changes than the report shows: a suite that gains 10 examples and a deprecation warning,
-/// each its own change. This is the legitimate many-changes case — a flood is refused before it is recorded.
-fn eleven_changes() -> Sandbox {
+/// A run with more changes than the report shows: a failure, a deprecation warning, the six examples one added
+/// spec file brought (one change between them), and a lone example of another file. This is the legitimate
+/// many-changes case — a flood is refused before it is recorded. Its 4 changes carry 9 signals on purpose: a
+/// fixture whose two totals matched could not tell them apart.
+fn four_changes() -> Sandbox {
     let sandbox = Sandbox {
         home: tempfile::tempdir().unwrap(),
         project: tempfile::tempdir().unwrap(),
     };
     for _ in 0..3 {
-        sandbox.ingest("a10_clean");
+        sandbox.ingest("a4_clean");
     }
-    sandbox.ingest("a20_warn1");
+    sandbox.ingest("c_fixed_fail_warn");
     sandbox
 }
 
@@ -82,16 +84,17 @@ fn len(document: &Value, field: &str) -> usize {
 
 #[test]
 fn the_document_counts_every_change_whatever_it_lists() {
-    let sandbox = eleven_changes();
+    let sandbox = four_changes();
     let whole = sandbox.json(&["changes", "r4", "-j"]);
     assert_eq!(
         (
             whole["groups_total"].as_u64(),
             whole["signals_total"].as_u64()
         ),
-        (Some(11), Some(11))
+        (Some(4), Some(9)),
+        "a change and a signal are different things to count: {whole}"
     );
-    assert_eq!((len(&whole, "groups"), len(&whole, "signals")), (11, 11));
+    assert_eq!((len(&whole, "groups"), len(&whole, "signals")), (4, 9));
 
     // A limit bounds what is listed. The totals and the headline count are the run's, so they do not move:
     // that difference is how a consumer tells a slice from the whole.
@@ -99,7 +102,7 @@ fn the_document_counts_every_change_whatever_it_lists() {
     assert_eq!((len(&two, "groups"), len(&two, "signals")), (2, 2));
     assert_eq!(
         (two["groups_total"].as_u64(), two["signals_total"].as_u64()),
-        (Some(11), Some(11)),
+        (Some(4), Some(9)),
         "the totals count the run's changes, not the page's: {two}"
     );
     assert_eq!(
@@ -125,28 +128,28 @@ fn the_document_counts_every_change_whatever_it_lists() {
 
     // Asking for more than there are is not a truncation.
     let all = sandbox.json(&["changes", "r4", "-j", "-n", "50"]);
-    assert_eq!((len(&all, "groups"), len(&all, "signals")), (11, 11));
+    assert_eq!((len(&all, "groups"), len(&all, "signals")), (4, 9));
 }
 
 #[test]
 fn the_same_limit_applies_to_the_human_report() {
-    let sandbox = eleven_changes();
+    let sandbox = four_changes();
     // Unbounded, the report shows its usual few and points at -j for the rest.
     let default = sandbox.text(&["changes", "r4"]);
     assert_eq!(shown(&default), 3, "{default}");
-    assert!(default.contains("… 8 more changes"), "{default}");
+    assert!(default.contains("… 1 more change"), "{default}");
 
     let two = sandbox.text(&["changes", "r4", "-n", "2"]);
     assert_eq!(shown(&two), 2, "{two}");
     assert!(
-        two.contains("… 9 more changes"),
+        two.contains("… 2 more changes"),
         "what a limit left out is still counted: {two}"
     );
 
     // Past the end nothing is left over, so nothing claims to be.
     let all = sandbox.text(&["changes", "r4", "-n", "20"]);
-    assert_eq!(shown(&all), 11, "{all}");
-    assert!(!all.contains("more changes"), "{all}");
+    assert_eq!(shown(&all), 4, "{all}");
+    assert!(!all.contains("more change"), "{all}");
 
     // The exit code answers "were there changes", not "were any shown": a limit must not make a run look clean.
     for args in [&["changes", "r4"][..], &["changes", "r4", "-n", "0"][..]] {

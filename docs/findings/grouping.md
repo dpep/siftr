@@ -184,8 +184,8 @@ it was there.
    produced 11, 68% produced 8,564. Recommendation 3 is closed, not pending.
 
 3. **Group NEW/DISAPPEARED behaviors that share an identity, as the spec-file collapse
-   already does for DISAPPEARED.** **Needs evidence**, but it is where the evidence
-   points: 15 of the 21 false merges above are pairs a same-file rule would have made
+   already does for DISAPPEARED.** **Shipped**, for the RSpec half. The evidence pointed
+   here: 15 of the 21 false merges above are pairs a same-file rule would have made
    correctly, and on log input a (kind, source) rule yields groups of the same
    cardinality as the vector rule while every group stays explainable. Pre-registered
    check before it ships: `hunt_grown` must go from 8 changes to 3 (the ERROR, the
@@ -193,6 +193,23 @@ it was there.
    with its current headline, and the other 15 fixture scenarios must not change at
    all. For a log source the identity is the source field, which the generic
    interpreter does not expose yet — that parse is the prerequisite, not the grouping.
+
+   **Result (2026-09-19).** `hunt_grown` went 8 changes → **3**, exactly the three named,
+   at 8 signals either way: the rule regroups, it never drops. The N+1 is unmoved — 1
+   group, same headline, same supporting members, same attribution — and so is the
+   traffic corpus (`b1…b3 → b4` 1 group, `t1…t3 → t4` 1 signal). The collapse keys on
+   `(kind, spec file)`, so examples renamed within a file stay two changes rather than
+   one, and no comparison of counts enters the decision.
+
+   **The "15 scenarios unchanged" half of the prediction was too strong, and the way it
+   broke is the rule working.** Replaying all 24 scenarios against three baselines (50
+   replays) leaves every `fixtures/rails_demo` scenario byte-identical, and changes 10
+   `rspec_hunt` replays beyond `hunt_grown` — every one of them a replay whose baseline
+   ran a *smaller* suite (4 → 10, 4 → 20, 10 → 20), where the added file's examples
+   collapse exactly as designed (17 changes → 2 at 4 → 20). Not one replay whose
+   baseline ran the same examples changed. The pre-registration had assumed each
+   scenario replayed against a size-matched baseline; under that pairing it holds
+   literally.
 
    **`hunt_grown` is reproducible from the repository**, which §7 previously left only to
    the deleted scratch directory: replay `fixtures/rspec_hunt/a4_clean` three times, then

@@ -88,7 +88,7 @@ use siftr::baseline::Ineligible;
 use siftr::behavior::{Behavior, Kind};
 use siftr::normalize::{PathRole, PathRoles};
 use siftr::num::round_sig;
-use siftr::signal::{MIN_BASELINE_RUNS, Signal, SignalKind, disappeared_examples};
+use siftr::signal::{MIN_BASELINE_RUNS, Signal, SignalKind, collapsed_examples};
 use siftr::store::{Feedback, RunId, RunRecord, StoredSignal};
 
 /// Never panics as `eprintln!` does on a closed stderr (`2>&1 | head`): siftr may still be recording.
@@ -373,8 +373,11 @@ impl Changes<'_> {
                 "setup": g.setup,
                 "headline": g.headline().id.to_string(),
                 "signals": g.members.iter().map(|s| s.id.to_string()).collect::<Vec<_>>(),
-                "disappeared_examples": disappeared_examples(g.members.iter().map(|s| (&s.signal, &s.behavior)))
-                    .map(|d| json!({"file": d.file, "examples": d.examples})),
+                // Stays the DISAPPEARED half deliberately: a NEW collapse reads off `signals` as it is, so the
+                // field earns no widening, and widening it would change this document for every consumer.
+                "disappeared_examples": collapsed_examples(g.members.iter().map(|s| (&s.signal, &s.behavior)))
+                    .filter(|c| c.kind == SignalKind::Disappeared)
+                    .map(|c| json!({"file": c.file, "examples": c.examples})),
             })).collect::<Vec<_>>(),
             "signals": signals.into_iter().map(signal_json).collect::<Vec<_>>(),
             "open_signals": self.open_signals.iter().map(signal_json).collect::<Vec<_>>(),
@@ -545,18 +548,23 @@ impl Changes<'_> {
 fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
     let head = group.headline();
     let s = &head.signal;
-    let collapsed = disappeared_examples(group.members.iter().map(|m| (&m.signal, &m.behavior)));
+    let collapsed = collapsed_examples(group.members.iter().map(|m| (&m.signal, &m.behavior)));
     match &collapsed {
-        Some(d) => writeln!(
+        Some(c) => writeln!(
             w,
-            "  {:<4} {:<11} {:<16} {} examples of {}  gone, in all {} baseline runs",
+            "  {:<4} {:<11} {:<16} {} examples of {}  {}",
             // Store ids implement Display without honoring width, so pad the rendered string.
             head.id.to_string(),
             label(s.kind),
             backing(s),
-            d.examples,
-            d.file,
-            s.baseline.runs,
+            c.examples,
+            c.file,
+            // The same two phrases `change` uses for a lone NEW or DISAPPEARED behavior.
+            match c.kind {
+                SignalKind::Disappeared =>
+                    format!("gone, in all {} baseline runs", s.baseline.runs),
+                _ => format!("new, in none of {} baseline runs", s.baseline.runs),
+            },
         )?,
         None => writeln!(
             w,
@@ -568,14 +576,13 @@ fn group_lines(w: &mut dyn Write, group: &Group<'_>) -> io::Result<()> {
             change(head),
         )?,
     }
-    // In a collapsed group, the other examples are what disappeared, not evidence for it: list only what was
-    // attributed to them (e.g. a query scoped to one), never another gone example.
+    // In a collapsed group, the other examples are what the headline counted, not evidence for it: list only
+    // what was attributed to them (e.g. a query scoped to one), never another of the examples themselves.
     let supporting: Vec<String> = group.members[1..]
         .iter()
-        .filter(|m| {
-            collapsed.is_none()
-                || !(m.signal.kind == SignalKind::Disappeared
-                    && m.behavior.kind == Kind::TestExample)
+        .filter(|m| match &collapsed {
+            Some(c) => !(m.signal.kind == c.kind && m.behavior.kind == Kind::TestExample),
+            None => true,
         })
         .map(|m| {
             format!(

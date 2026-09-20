@@ -1,5 +1,6 @@
-//! hunt2 #5 (s3): a deleted spec file's DISAPPEARED examples collapse into one group. The human line reads as
-//! "N examples of <file> gone", not one example heading a `supporting:` list of the other fifteen.
+//! hunt2 #5 (s3): a spec file's examples collapse into one group when they appear or disappear together. The
+//! human line reads as "N examples of <file> gone" (or "new"), not one example heading a `supporting:` list of
+//! the others.
 
 use std::path::Path;
 use std::process::Command;
@@ -113,4 +114,43 @@ fn a_deleted_spec_files_examples_render_as_one_collapsed_group() {
         .find(|g| !g["disappeared_examples"].is_object())
         .unwrap_or_else(|| panic!("expected a second, non-collapsed group: {changes:#}"));
     assert!(other["disappeared_examples"].is_null(), "{other:#}");
+}
+
+/// `grouping.md` §6.3's pre-registered check: the suite grows 4 → 10 examples in the run that also regresses.
+/// The six examples one spec file brought are one change, so the run reads as three — the failure, the
+/// deprecation warning, and the added file — rather than eight.
+#[test]
+fn examples_added_in_one_file_render_as_one_collapsed_group() {
+    let home = Home::new();
+    home.runs(&["a4_clean", "a4_clean", "a4_clean", "a10_fail_warn"]);
+
+    let changes = home.json(&["changes", "-j"]);
+    assert_eq!(changes["groups_total"].as_u64(), Some(3), "{changes:#}");
+
+    let human = home.text(&["changes", "-n", "10"]);
+    let headline = human
+        .lines()
+        .find(|line| line.contains("NEW") && line.contains("examples of"))
+        .unwrap_or_else(|| panic!("no collapsed NEW line in:\n{human}"));
+    assert!(
+        headline.contains("6 examples of ./spec/b_spec.rb"),
+        "{headline}"
+    );
+    assert!(
+        headline.contains("new, in none of 3 baseline runs"),
+        "{headline}"
+    );
+    // Not one example heading a `supporting:` list of the other five.
+    for line in human.lines() {
+        if line.trim_start().starts_with("supporting:") {
+            assert!(
+                !line.contains("b_spec.rb # "),
+                "an added example leaked onto a supporting line: {line}"
+            );
+        }
+    }
+    // Nothing disappeared here, so the DISAPPEARED-only field stays null throughout.
+    for group in changes["groups"].as_array().unwrap() {
+        assert!(group["disappeared_examples"].is_null(), "{group:#}");
+    }
 }

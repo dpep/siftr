@@ -342,11 +342,11 @@ fn examples_that_disappeared_from_one_file_are_one_group_below_a_regression() {
     let summary: Vec<_> = signals
         .chunk_by(|a, b| a.group == b.group)
         .map(|members| {
-            let gone = disappeared_examples(members.iter().map(|s| (s, behavior(s))));
+            let collapsed = collapsed_examples(members.iter().map(|s| (s, behavior(s))));
             (
                 members[0].kind,
                 members.len(),
-                gone.map(|g| (g.file, g.examples)),
+                collapsed.map(|c| (c.file, c.examples)),
             )
         })
         .collect();
@@ -357,6 +357,69 @@ fn examples_that_disappeared_from_one_file_are_one_group_below_a_regression() {
         "{summary:?}"
     );
     assert!(summary.contains(&(Disappeared, 1, None)), "{summary:?}");
+}
+
+/// The other half of the same rule: adding a spec file is one change, not one per example it brought, with what
+/// is attributed to those examples riding along. A single new example of its own file stays its own change.
+#[test]
+fn examples_added_in_one_file_are_one_group() {
+    use SignalKind::*;
+    let kept = b(Kind::TestExample, "./spec/a_spec.rb # a keeps").seq(1);
+    let one = b(Kind::TestExample, "./spec/b_spec.rb # b one").seq(2);
+    let two = b(Kind::TestExample, "./spec/b_spec.rb # b two").seq(3);
+    let three = b(Kind::TestExample, "./spec/b_spec.rb # b three").seq(4);
+    let lone = b(Kind::TestExample, "./spec/c_spec.rb # c lone").seq(5);
+    let baseline_run = run(std::slice::from_ref(&kept));
+    let current = run(&[
+        kept,
+        one.clone(),
+        two,
+        three,
+        lone,
+        b(Kind::DbQuery, "Post Load").within(&one, 1, None),
+    ]);
+    let runs = vec![baseline_run; 3];
+    let signals = detect(&current, &baseline(&current, &runs));
+
+    let behavior = |s: &Signal| &current.get(s.behavior).expect("in this run").behavior;
+    let summary: Vec<_> = signals
+        .chunk_by(|a, b| a.group == b.group)
+        .map(|members| {
+            let collapsed = collapsed_examples(members.iter().map(|s| (s, behavior(s))));
+            (
+                members[0].kind,
+                members.len(),
+                collapsed.map(|c| (c.file, c.examples)),
+            )
+        })
+        .collect();
+    assert_eq!(summary.len(), 2, "{summary:?}");
+    assert!(
+        summary.contains(&(New, 4, Some(("./spec/b_spec.rb", 3)))),
+        "the file's three examples and the query attributed to one: {summary:?}"
+    );
+    assert!(
+        summary.contains(&(New, 1, None)),
+        "a lone new example is its own change: {summary:?}"
+    );
+}
+
+/// Identity, never numbers: two files whose examples arrive in the same run stay two changes, however alike
+/// their counts. `docs/findings/grouping.md` §2 measured grouping on count vectors at a 15% false-merge rate.
+#[test]
+fn examples_added_in_two_files_stay_two_groups() {
+    let kept = b(Kind::TestExample, "./spec/a_spec.rb # a keeps").seq(1);
+    let current = run(&[
+        kept.clone(),
+        b(Kind::TestExample, "./spec/b_spec.rb # b one").seq(2),
+        b(Kind::TestExample, "./spec/b_spec.rb # b two").seq(3),
+        b(Kind::TestExample, "./spec/c_spec.rb # c one").seq(4),
+        b(Kind::TestExample, "./spec/c_spec.rb # c two").seq(5),
+    ]);
+    let runs = vec![run(&[kept]); 3];
+    let signals = detect(&current, &baseline(&current, &runs));
+    let groups: BTreeSet<u32> = signals.iter().map(|s| s.group).collect();
+    assert_eq!(groups.len(), 2, "one group per file: {signals:?}");
 }
 
 #[test]
