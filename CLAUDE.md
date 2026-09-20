@@ -144,7 +144,21 @@ Push straight to `main` — no pull requests for this repo. Branch protection
 requires the `Rust` check but doesn't enforce admins, so a direct push is
 allowed; still watch that push's CI before tagging or publishing.
 
-Before every commit:
+Before every commit, from the working tree:
+
+```
+script/gate
+```
+
+It runs the three checks below and records the `cargo test` step with siftr, so
+this repo accumulates a real baseline out of work it already does
+(`docs/findings/dogfood-gate.md`). Recording can never change the gate's
+verdict: a siftr that is missing, unbuilt or refusing to spawn is skipped after
+a `--version` probe, and `SIFTR_GATE=off` takes it out of the path entirely.
+`script/gate --self-test` holds it to that from the outside.
+
+Working in a `git worktree` — as parallel agents do — run the three directly,
+with `--manifest-path` pointed at your own tree:
 
 ```
 cargo test --no-fail-fast

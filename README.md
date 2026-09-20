@@ -724,9 +724,9 @@ The thresholds come from measured noise and a backtest: [docs/findings/signals.m
 Design principles, the domain model and the source layout are in [CLAUDE.md](CLAUDE.md). Before committing:
 
 ```
-cargo test --no-fail-fast
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+script/gate
 ```
+
+which runs `cargo test --no-fail-fast`, `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check`, and records the test step with siftr so the repo builds a real baseline from its own gate. Recording can never change the verdict — a siftr that is missing, unbuilt or refusing to spawn is skipped, and `SIFTR_GATE=off` removes it from the path.
 
 `script/verify [SHA]` runs that gate in a throwaway worktree, then drives the `dogfood/rails_demo` loop end to end.
