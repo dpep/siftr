@@ -53,7 +53,15 @@ A subcommand or a preset always wins over a file of the same name: `siftr status
 
 ```
 $ siftr statu; echo "exit=$?"
-siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, follow, changes, summary, evidence, explain, ack, dismiss, history, sources, status, gc; presets: cron
+siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, follow, changes, summary, explain, ack, history, sources, status, gc; presets: cron
+exit=2
+```
+
+A command that used to exist is answered directly with what to type instead, rather than with the whole list:
+
+```
+$ siftr dismiss s1; echo "exit=$?"
+siftr: error: 'dismiss' was removed; use `siftr ack SIGNAL --wrong`
 exit=2
 ```
 
@@ -81,7 +89,7 @@ exit=1
 
 #### Still open
 
-Repeat a regression and the rolling baseline absorbs it: here one N+1 run was enough for the next to find nothing new. siftr keeps reminding you anyway, until it's fixed or dismissed:
+Repeat a regression and the rolling baseline absorbs it: here one N+1 run was enough for the next to find nothing new. siftr keeps reminding you anyway, until it's fixed or answered:
 
 ```
 $ SIFTR_DEMO_N_PLUS_ONE=1 siftr run -q -- bundle exec rspec
@@ -117,10 +125,10 @@ The job's own output and exit code pass through as always. siftr adds:
 | a change outside every example only (the environment or suite hooks) | nothing |
 | interrupted or killed, so not compared | nothing |
 | a change, INCOMPLETE included | the report |
-| an earlier change still open | the report, every run until it's fixed or `siftr dismiss`ed |
+| an earlier change still open | the report, every run until it's fixed or `siftr ack`ed |
 | not recorded (the data directory busy or unusable), or siftr failing | its warning or error |
 
-A reminder repeats on purpose: a regression left in place should keep nagging. `siftr dismiss sN -m why` stops it. `siftr cron` prints each crontab job in this form.
+A reminder repeats on purpose: a regression left in place should keep nagging. `siftr ack sN -m why` stops it — add `--wrong` if siftr shouldn't have raised it. `siftr cron` prints each crontab job in this form.
 
 #### When a run is incomplete
 
@@ -138,7 +146,7 @@ next: siftr explain s6
 
 ```
 $ siftr explain s6
-s6  INCOMPLETE  conf 0.88  in r7, group 1 headline
+s6  INCOMPLETE  in r7, group 1 headline
 behavior  db25427afc  exception  ./spec/requests/users_spec.rb failed to load: SyntaxError: unexpected end-of-input, assuming it is closing the parent top level context
 …
 evidence  r7
@@ -175,7 +183,7 @@ Its examples collapse into one change, which never outranks a real regression:
 ```
 $ siftr ingest --context hunt --dir fixtures/rspec_hunt/a20_warn1   # three times
 $ siftr ingest --context hunt --dir fixtures/rspec_hunt/a4_warn3
-r4 vs 3 baseline runs (r1 r2 r3): 2 changes
+r4 vs 3 baseline runs (r1 r2 r3): 2 changes, most important first
   s1   FREQUENCY   3 baseline runs  DEPRECATION: old api  count 1 → 3
        evidence: 3 lines
   s2   DISAPPEARED 3 baseline runs  16 examples of ./spec/b_spec.rb  gone, in all 3 baseline runs
@@ -187,38 +195,37 @@ next: siftr explain s1
 
 The same report for any run (default: the latest in this project). `--context NAME` picks the latest run of a context instead.
 
-### `siftr explain <SIGNAL>`
+### `siftr explain <ID>`
 
-A signal's numbers run by run, the rule that fired, and its evidence. For a failure, the evidence starts with the exception class and its whole message. For a disappearance, the evidence comes from the latest baseline run that had it.
+A signal's numbers run by run, the rule that fired, and its evidence — or, given a behavior id instead, that behavior's kept lines in one run. One command, either kind of id: signal ids start with `s`, behavior ids are hex, so they never collide. `--run` picks the run and `-n` limits the evidence lines (default 8). For a failure, the evidence starts with the exception class and its whole message. For a disappearance, the evidence comes from the latest baseline run that had it; `--run` on a signal must name one of the runs it was compared over.
 
 ```
 $ siftr explain s1
-s1  FREQUENCY  conf 0.80  in r4, group 1 headline
+s1  FREQUENCY  in r4, group 1 headline
 behavior  f035378415  http.request  GET UsersController#show 2xx
 change    queries 3 → 10
-rule      identical in all 3 baseline runs, so any change counts; confidence (n+1)/(n+2) = 0.80
+rule      identical in all 3 baseline runs, so any change counts
 queries   r4 10  |  baseline r3 3  r2 3  r1 3
 resources cpu 0.878s (0.604s user, 0.274s sys), max rss 104 MB, 0 voluntary and 506 involuntary switches  |  baseline cpu 0.87s (0.601s user, 0.269s sys), max rss 104 MB, 0 voluntary and 334 involuntary switches
 scope     872cda219e  ./spec/requests/users_spec.rb # Users shows a user with posts and comments
           r4 10  |  baseline r3 3  r2 3  r1 3
 evidence  r4
           file:log/test.log:217 Completed 200 OK in 2ms (Views: 1.5ms | ActiveRecord: 0.2ms (10 queries, 0 cached) | GC: 0.0ms)
+capture   file:log/test.log  ~/.local/share/siftr/runs/r4/file-log_test.log
 group     s2 FREQUENCY Comment Load SELECT "comments".* FROM "comments" WHERE "comm…  count 1 → 9 (0 → 8 in this example)
 group     s3 FREQUENCY ./spec/requests/users_spec.rb # Users shows a user with post…  queries 28 → 35
 group     s4 DISAPPEARED Comment Load SELECT "comments".* FROM "comments" WHERE "comm…  gone: 1 → 0, in all 3 baseline runs
-next: siftr evidence f035378415 --run r4
+next: siftr summary r4
 ```
 
 If retention has pruned the run's lines, `explain` still shows the numbers and says so: `evidence  r22 pruned (SIFTR_KEEP_EVIDENCE)`.
 
 The `resources` line appears for any run that recorded what the kernel charged it, the baseline being the median of its baseline runs. No rule reads those numbers — they are there to tell a loaded machine from a code change.
 
-### `siftr evidence <BEHAVIOR>`
-
-The raw lines kept for a behavior, each tagged with its stream and line number, plus the path to each of the run's captures that is still on disk — a run recorded with `SIFTR_CAPTURE=off`, or one whose captures retention has pruned, lists none. Takes a behavior id or a unique prefix of 4+ hex digits. `--run` picks the run (default: the latest where the behavior occurred), `-n` limits the lines (default 8).
+**Given a behavior id**, the same command shows the raw lines kept for it, each tagged with its stream and line number, plus the path to each of the run's captures still on disk — a run recorded with `SIFTR_CAPTURE=off`, or one whose captures retention has pruned, lists none. Takes a behavior id or a unique prefix of 4+ hex digits.
 
 ```
-$ siftr evidence 27d0 --run r4 -n 3
+$ siftr explain 27d0 --run r4 -n 3
 27d08b314a  db.query  Comment Load SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = ?
 r4: 9 occurrences, 0 errors; 3 lines kept
   file:log/test.log:33   Comment Load (0.0ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = ?  [["post_id", 1]]
@@ -241,7 +248,7 @@ r4: 253 lines, 47 behaviors, bundle exec rspec
        32      0      0µs    100µs    1.5ms  3b6fe14cfe  db.query  Comment Create INSERT INTO "comments" ("body", "created_at", "post_id", "updated_at") VALUES (?) RET…
        17      0    100µs    100µs    1.4ms  1bc855df6d  db.query  Post Create INSERT INTO "posts" ("body", "created_at", "title", "updated_at", "user_id") VALUES (?) …
        10      0      0µs      0µs      0µs  1b4ca5c07e  db.query  TRANSACTION ROLLBACK TRANSACTION
-next: siftr evidence 3e0ff9b464 --run r4
+next: siftr explain 3e0ff9b464 --run r4
 ```
 
 By count, a test suite is mostly transaction bookkeeping: `SAVEPOINT` and `RELEASE SAVEPOINT` take the top two rows at 55 each, and in this run the default's whole 20 rows hold **no test example at all**. Each example occurs exactly once, so the count-1 rows tie and are ordered by behavior id, which leaves the examples just past the cut. So use the default to ask "what does this run do most of", and **`--by time` to find a slow test**:
@@ -255,7 +262,7 @@ r4: 253 lines, 47 behaviors, bundle exec rspec
         1      0     25ms     25ms     25ms  224151e20c  test.example  ./spec/requests/users_spec.rb # Users lists users
         1      0   10.2ms   10.2ms   10.2ms  872cda219e  test.example  ./spec/requests/users_spec.rb # Users shows a user with posts and comments
         1      0     10ms     10ms     10ms  0b6cf2d542  http.request  GET UsersController#index 2xx
-next: siftr evidence 332a3a42c0 --run r4
+next: siftr explain 332a3a42c0 --run r4
 ```
 
 ### `siftr history`
@@ -279,7 +286,7 @@ runs in ~/src/siftr/dogfood/rails_demo
 next: siftr changes r11
 ```
 
-`--signals` lists those runs' signals instead, with what became of each: open, resolved, or recurred (or unknown, when retention pruned what the judgement needs). Each is judged against its own original baseline, so a regression the rolling baseline has absorbed still reads as open. A run that skipped examples can't resolve anything. "After investigation" means someone ran `explain`, `evidence` or `ack` on it first. The signals from the runs above:
+`--signals` lists those runs' signals instead, with what became of each: open, resolved, or recurred (or unknown, when retention pruned what the judgement needs). Each is judged against its own original baseline, so a regression the rolling baseline has absorbed still reads as open. A run that skipped examples can't resolve anything. "After investigation" means someone ran `explain` or `ack` on it before it resolved; a trailing `acked, being acted on` or `dismissed as wrong` is what `siftr ack` recorded, which has no such deadline. The signals from the runs above:
 
 ```
 $ siftr history --signals
@@ -305,7 +312,7 @@ what became of 4 signals over 5 runs in /tmp/proj_run
   all               4       4     2  0.5          4     2  0.5      0         0
 ```
 
-`examined` means `explain`, `evidence` or `ack` ran on the signal's behavior before it resolved — a fact the feedback ledger records, not a guess from how fast it went away. It is a floor on attention, not a measure of what was ignored: a change you read in the run summary and fix without asking siftr for more reads as unexamined. Rates keep only the figures their counts back, so 3 of 4 is 0.8 and two rates over different denominators need not sum to 1 — the counts beside them are the answer. Signals siftr can no longer judge, because retention pruned the runs a verdict reads or today's rules wouldn't raise them, are counted apart and left out of every rate.
+`examined` means `explain` or `ack` ran on the signal's behavior before it resolved — a fact the feedback ledger records, not a guess from how fast it went away. It is a floor on attention, not a measure of what was ignored: a change you read in the run summary and fix without asking siftr for more reads as unexamined. Rates keep only the figures their counts back, so 3 of 4 is 0.8 and two rates over different denominators need not sum to 1 — the counts beside them are the answer. Signals siftr can no longer judge, because retention pruned the runs a verdict reads or today's rules wouldn't raise them, are counted apart and left out of every rate.
 
 `--sources` lists what each of those runs actually read. `siftr sources` says what siftr *can* read here, before running anything; this says what the recording observed, per run, afterwards. Two runs of the same command in the same directory, with `rails_log` switched off in `.siftr.toml` between r2 and r3:
 
@@ -321,16 +328,19 @@ next: siftr summary r4
 
 A run that recorded no sources reads `not recorded`, which means siftr can't say what it read — not that it read nothing. `ingest` replays a capture rather than choosing sources, so an ingested run always reads that way.
 
-### `siftr ack <SIGNAL>` and `siftr dismiss <SIGNAL>`
+### `siftr ack <SIGNAL>`
 
-`ack` marks a signal as being acted on; `dismiss` marks it as not worth acting on, which also stops its `still open:` reminder. `-m TEXT` says why.
+Answer a signal: plain `ack` says you're dealing with it, `--wrong` says siftr shouldn't have raised it. Either way its `still open:` reminder stops — you've answered — and the two are stored apart, because "siftr was wrong" is the only thing that can ever measure whether siftr is worth reading. `-m TEXT` says why.
 
 ```
 $ siftr ack s5 -m 'restoring the email validation'
 s5 acked: ERROR ./spec/models/user_spec.rb # User requires an email
 note: restoring the email validation
-next: siftr changes r6
+no longer reminded of this change
+next: siftr history --signals
 ```
+
+A judgement holds however often the change comes back, so you can answer a regression the third time it returns and never hear about it again.
 
 ### `siftr ingest [FILE]`
 
@@ -439,9 +449,9 @@ With no command it judges the directory alone, and says that's what it did. This
 | `follow` | 0 the input ended, 2 error |
 | `cron` | 0 found a job or cron output, 1 found neither, 2 error |
 | `sources` | 0 listed, 2 error |
-| `changes`, `explain`, `evidence`, `summary`, `history` | 0 results, 1 nothing found, 2 error |
+| `changes`, `explain`, `summary`, `history` | 0 results, 1 nothing found, 2 error |
 | `status` | 0 healthy, 1 something needs attention, 2 error |
-| `ack`, `dismiss` | 0 recorded, 2 error |
+| `ack` | 0 recorded, 2 error |
 | `gc` | 0 done, 2 error |
 
 An unknown id is an error, not an empty result:
@@ -493,7 +503,7 @@ The data directory holds `siftr.db` and each run's raw capture under `runs/<run>
 Nothing siftr stores holds a credential it recognizes: tokens (GitHub, GitLab, AWS, Google, Slack, Stripe, npm, SendGrid, OpenAI), JWTs, private keys, `Authorization` values, URL passwords, cookie values, and high-entropy values under keys like `password`, `api_key` or `access_token`, including Rails SQL binds. They are masked line by line before anything is written, as `<TOKEN_1>`, `<SECRET_2>` (the same number for the same value within a run). What the command prints to your terminal is untouched. Two settings choose what else is kept:
 
 - `SIFTR_REDACT=secrets` (default); `pii` also masks emails, public IPs and home directories in raw captures and kept lines; `off` keeps raw captures as the command wrote them. Kept lines and templates mask credentials under every setting, so behavior ids never depend on it.
-- `SIFTR_CAPTURE=off` writes no raw capture. `explain` and `evidence` then show the kept lines (first 1024 bytes) instead of a failure's whole message.
+- `SIFTR_CAPTURE=off` writes no raw capture. `explain` then shows the kept lines (first 1024 bytes) instead of a failure's whole message.
 
 siftr deletes old data as runs finish. Per command it keeps:
 
@@ -538,10 +548,10 @@ Run the suite through siftr, read the first line of the report, and drill down o
 | You see | It means | Do |
 |---|---|---|
 | `INCOMPLETE …`, e.g. `INCOMPLETE  <file> failed to load: …` | the run skipped examples: a spec file didn't load, `--fail-fast` stopped it, or a focus filter | fix that and rerun |
-| `no new changes · N still open`, `still open: sN (rM) …` | an earlier regression is still there | `siftr explain sN`; fix it, or `siftr dismiss sN -m why` if it's intended |
+| `no new changes · N still open`, `still open: sN (rM) …` | an earlier regression is still there | `siftr explain sN`; fix it, or `siftr ack sN --wrong -m why` if it's intended |
 | `ERROR  <example>  failed with …` | an example that passed in the baseline fails | fix it; `explain` has the whole message |
 | `NEW  <file> failed to load: …` or `NEW  An error occurred in an after(:suite) hook: …` | a new error outside examples: every example ran, but the suite exits 1 | fix the error |
-| `FREQUENCY`, `LATENCY`, or `NEW` / `DISAPPEARED` on a query or log line | a count, a duration, or a behavior's presence moved | `siftr explain <id>`, then the `evidence` command on its `next:` line |
+| `FREQUENCY`, `LATENCY`, or `NEW` / `DISAPPEARED` on a query or log line | a count, a duration, or a behavior's presence moved | `siftr explain <id>`, which shows the evidence with it |
 | `DISAPPEARED  N examples of <file>  gone` | a spec file was deleted or renamed | nothing, if you meant it; it's never reminded |
 | `changed before the first example` (or between, after) | the environment or suite hooks changed, not the code under test; not counted in `changes` | look only if you changed setup |
 | `rN: interrupted by signal …` | the run was killed and wasn't compared | rerun |
@@ -551,7 +561,7 @@ Run the suite through siftr, read the first line of the report, and drill down o
 
 3. For structure, use `siftr changes -j` (or `siftr run -j -- …`). The same order applies: if `run.complete` is false, fix the `incomplete` signal first. The gate condition is three fields: `changes == 0`, `open_signals == []`, and `baseline_runs` with 2 or more ids. Test those, not `signals[0]` — on a clean run there is no first signal, and a trimmed document can hand you a `null` that reads as "no id" rather than failing. Otherwise read `groups[0].headline`, then `open_signals`. A non-null `not_recorded` means the run wasn't recorded; rerun for a report.
 4. With `-j`, exit 2 means `error.code` tells you what went wrong: `usage` (fix the arguments), `not_found` (the run, signal, behavior or context doesn't exist), `busy` (retry) or `failed`. Exit 1 means nothing was found, and you still get the command's normal document, empty (`run: null`; `[]` for `history`).
-5. Once you act, record it: `siftr ack <signal> -m '…'` when you're fixing it, `siftr dismiss <signal> -m '…'` when it's intended. `siftr history --signals` shows what became of each.
+5. Once you act, record it: `siftr ack <signal> -m '…'` when you're fixing it, `siftr ack <signal> --wrong -m '…'` when siftr shouldn't have raised it. `siftr history --signals` shows what became of each.
 
 **`open_signals` versus `history --signals`.** They answer different questions, and a gate wants the first:
 
@@ -562,7 +572,7 @@ Run the suite through siftr, read the first line of the report, and drill down o
 
 Three things that still read as clean, in falling order of how likely you are to meet them:
 
-- **A change nobody ever fixed stops being reported** about 10 runs after it was raised, once every run siftr compares against has it: it is then what this context does, and no comparison can see it. You will have been told on each of those runs. Fix it or `siftr dismiss` it before then; `siftr history --signals` still lists it as `open` afterwards.
+- **A change nobody ever fixed stops being reported** about 10 runs after it was raised, once every run siftr compares against has it: it is then what this context does, and no comparison can see it. You will have been told on each of those runs. Fix it or `siftr ack` it before then; `siftr history --signals` still lists it as `open` afterwards.
 - **A change that was already there before siftr's first run of this context was never a change**, so nothing will ever report it. Baselines are built from what siftr has seen, and it has always seen this.
 - **Past `SIFTR_KEEP_RUNS` runs** (default 100) the runs a reminder is judged against are pruned, and it lapses to `unknown` rather than being reported.
 
@@ -578,7 +588,7 @@ The `-j` fields that matter (full schema: top of [`src/bin/siftr/output.rs`](src
   - `current`, compared with `baseline` {`runs`, `present_in`, `median`, `min`, `max`, `failures`}.
   - `confidence` in [0, 1): how much baseline backs the claim, **not** how much it matters. For NEW, DISAPPEARED, INCOMPLETE and a FREQUENCY on an exact baseline it is exactly `(n+1)/(n+2)` over `baseline.runs`; ERROR is the same unless a baseline run already failed, and only LATENCY and a FREQUENCY on a varying baseline carry an effect-size term at all. So it discriminates almost nothing — rank on `tier` and read `current` against `baseline`. The human report prints the run count itself (`3 baseline runs`) for that reason; the per-kind formulas and the measurement are in [docs/findings/confidence.md](docs/findings/confidence.md).
   - `tier`: 1 error through 5 outside examples.
-  - `behavior` {`id`, `kind`, `template`}: what changed. Pass `id` to `evidence`.
+  - `behavior` {`id`, `kind`, `template`}: what changed. Pass `id` to `explain`.
   - `attribution.scope`: the test example it happened in; null outside examples, and null for a request, whose scope is its endpoint rather than a behavior of its own. `attribution.phase`: `setup`, `example`, `between`, `teardown` or `request` (before the first example, in one, between two, after the last, or inside one HTTP request). `attribution.setup` is true only for `setup`.
   - `exception`: the exception class, for `error`.
 - `open_signals[]`: signals from earlier runs that are still open and weren't raised again, in the same shape as `signals[]`.
