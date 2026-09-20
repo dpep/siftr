@@ -17,6 +17,10 @@ pub struct Args {
     run: Option<RunId>,
 
     /// The latest run of this context, as `siftr history` shows it (e.g. the `ingest --context` name)
+    ///
+    /// A context is one project plus one command line exactly as typed, and that is what makes two
+    /// runs comparable: `bundle exec rspec` and `bundle exec rspec spec/models` are two contexts
+    /// with two separate baselines.
     #[arg(long, value_name = "NAME", conflicts_with = "run")]
     context: Option<String>,
 

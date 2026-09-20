@@ -29,6 +29,10 @@ pub struct Args {
     limit: usize,
 
     /// Only runs of this context (the command, or an `ingest --context` name)
+    ///
+    /// A context is one project plus one command line exactly as typed, and that is what makes two
+    /// runs comparable: `bundle exec rspec` and `bundle exec rspec spec/models` are two contexts
+    /// with two separate baselines.
     #[arg(long, value_name = "NAME")]
     context: Option<String>,
 
