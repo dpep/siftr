@@ -117,3 +117,40 @@ included. Zero new signals, zero changed ones.
 
 This is a weaker false-positive test than §3's backtest — it is a replay of fixed captures, not
 256 independent comparisons — but it is the one that covers the newly admitted population.
+
+## 7. What this exposed once log lines scope to their request
+
+Measured after both changes landed, because the defect exists only at their intersection: neither
+could produce it alone, and each passed its own acceptance checks.
+
+With log lines scoped to the enclosing HTTP request, a run carrying two regressions on one endpoint
+reports **two headlines**:
+
+```
+r4 vs 3 baseline runs (r1 r2 r3): 2 changes
+  s1   FREQUENCY   GET PostsController#index 2xx  queries 16 → 48
+       supporting: the view line, the new query, the preload that vanished
+  s5   LATENCY     GET PostsController#index 2xx  2ms → 414ms
+```
+
+Five signals in two groups. Four collapse correctly under the request, each carrying
+`phase: request`. The fifth is a LATENCY on **the same behavior**, and it carries
+`attribution: null` and stands alone.
+
+Corpus: three healthy batches of eight identical requests against a running server, then one batch
+with the eager-load removed **and** a 0.4s sleep in the action. Local, not committed.
+
+**Mechanism.** `Comparison::owners` asks `scoped_value` for a scope's own value, and for any measure
+other than `count` that reads the per-scope **sums**. `Aggregator` records `event.measures` into
+scope cells while `event.duration` goes to the histogram, so `scoped_value(…, "duration_ms")` is
+`0.0` in every run. The endpoint scope fails the `median != now` filter, `owners` comes back empty,
+and the signal falls to `Key::Behavior(id)`.
+
+Neither signal is wrong: both are true and both rank tier 2. It is a readability defect — one cause,
+two headlines — and it is the kind that only an integration test of two changes can find.
+
+**Recommendation. Needs evidence.** Let a signal on an `http.request` behavior key on its own
+endpoint scope when `owners` yields nothing. Pre-registered check: the two-regression run above must
+go from 2 groups to 1, headed by the request with the latency as a member; a run carrying only the
+N+1 must stay 1 group; a run carrying only the slowdown must stay 1 signal; and `rails_demo`'s N+1
+must stay 1 group with its example attribution intact.
