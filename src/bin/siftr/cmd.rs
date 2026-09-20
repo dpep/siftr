@@ -10,6 +10,7 @@ pub mod gc;
 pub mod history;
 pub mod ingest;
 pub mod run;
+pub mod scorecard;
 pub mod sources;
 pub mod status;
 pub mod summary;

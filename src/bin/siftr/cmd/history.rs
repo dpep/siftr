@@ -38,6 +38,11 @@ pub struct Args {
     /// What each of these runs read instead: the sources it recorded, or that it recorded none
     #[arg(long, conflicts_with = "signals")]
     sources: bool,
+
+    /// What became of these runs' signals instead, totalled by kind: how many were examined, and how many
+    /// resolved with no siftr command ever run against them
+    #[arg(long, conflicts_with_all = ["signals", "sources"])]
+    scorecard: bool,
 }
 
 pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
@@ -60,6 +65,9 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     }
     if args.sources {
         return sources(&store, &runs, project.as_str(), globals);
+    }
+    if args.scorecard {
+        return super::scorecard::render(&store, &runs, project.as_str(), globals);
     }
     // (code-level changes, signals, complete) per run.
     let counts = runs
@@ -311,7 +319,7 @@ pub fn still_open(
 /// What became of a signal, judged by re-running its own rule against the baseline it was judged against, on
 /// each later run of its context. The live baseline can't say: it absorbs a change that stays, so the signal
 /// stops firing whether or not anything was fixed.
-struct Outcome {
+pub(super) struct Outcome {
     /// Whether today's rules still produce the signal on its own run; if not, later runs can't be judged.
     reproducible: bool,
     /// The setting that pruned runs the judgement needs; then there is no judgement.
@@ -356,7 +364,7 @@ impl Outcome {
 
     /// The latest verdict, not the first: a change that recurred and was fixed again reads as resolved, and one
     /// that recurred is only "recurred" while it is actually there.
-    fn status(&self) -> &'static str {
+    pub(super) fn status(&self) -> &'static str {
         match (self.reproducible, self.firing, self.resolved_in) {
             (false, _, _) => "unknown",
             (true, true, Some(_)) => "recurred",
@@ -382,7 +390,7 @@ impl Outcome {
         self.recurrences == 0 && !in_window
     }
 
-    fn investigated(&self) -> bool {
+    pub(super) fn investigated(&self) -> bool {
         self.feedback.iter().any(|f| {
             matches!(
                 f.kind,
@@ -391,7 +399,7 @@ impl Outcome {
         })
     }
 
-    fn dismissed(&self) -> bool {
+    pub(super) fn dismissed(&self) -> bool {
         self.feedback
             .iter()
             .any(|f| f.kind == FeedbackKind::Dismissed)
@@ -440,7 +448,7 @@ fn key(signal: &Signal) -> Key {
 
 /// Judged on the later runs of `run`'s context, up to and including `until` when given. Unknown, never a
 /// verdict from partial data, when retention pruned a run the judgement reads.
-fn outcomes(
+pub(super) fn outcomes(
     store: &Store,
     run: &RunRecord,
     signals: &[StoredSignal],
