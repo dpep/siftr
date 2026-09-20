@@ -29,9 +29,12 @@ if [ -z "${SKIP_GATE:-}" ]; then
   failed=$(grep -c '^test result: FAILED' "$SCRATCH/test.log" || true)
   ok=$(grep -c '^test result: ok' "$SCRATCH/test.log" || true)
   echo "tests: $ok binaries ok, $failed failed (log: $SCRATCH/test.log)"
+  # Each failing step sets `failed`, or the script exits 0 while printing FAILED: lint and format
+  # verdicts were reported and then discarded, so a caller gating on the exit status shipped them.
   cargo clippy --all-targets --manifest-path "$WT/Cargo.toml" -- -D warnings >"$SCRATCH/clippy.log" 2>&1 \
-    && echo "clippy: ok" || echo "clippy: FAILED (log: $SCRATCH/clippy.log)"
-  cargo fmt --check --manifest-path "$WT/Cargo.toml" >/dev/null 2>&1 && echo "fmt: ok" || echo "fmt: FAILED"
+    && echo "clippy: ok" || { echo "clippy: FAILED (log: $SCRATCH/clippy.log)"; failed=1; }
+  cargo fmt --check --manifest-path "$WT/Cargo.toml" >/dev/null 2>&1 \
+    && echo "fmt: ok" || { echo "fmt: FAILED"; failed=1; }
   if command -v gitleaks >/dev/null 2>&1; then
     # $WT's .gitignore excludes target/, and gitleaks respects it in a git tree.
     if gitleaks dir "$WT" --no-banner --redact --exit-code 1 >"$SCRATCH/secrets.log" 2>&1; then
