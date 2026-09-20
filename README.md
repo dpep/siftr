@@ -294,6 +294,19 @@ $ siftr history --signals
 next: siftr history
 ```
 
+`--scorecard` rolls those same lines up by kind, which is the only way to ask which kinds get looked at and which get fixed with siftr never asked for more:
+
+```
+$ siftr history --scorecard
+what became of 4 signals over 5 runs in /tmp/proj_run
+  kind         raised  judged   examined   resolved   unexamined  open  recurred
+  DISAPPEARED       1       1     0  0.0          1     1  1.0      0         0
+  FREQUENCY         3       3     2  0.7          3     1  0.3      0         0
+  all               4       4     2  0.5          4     2  0.5      0         0
+```
+
+`examined` means `explain`, `evidence` or `ack` ran on the signal's behavior before it resolved — a fact the feedback ledger records, not a guess from how fast it went away. It is a floor on attention, not a measure of what was ignored: a change you read in the run summary and fix without asking siftr for more reads as unexamined. Rates keep only the figures their counts back, so 3 of 4 is 0.8 and two rates over different denominators need not sum to 1 — the counts beside them are the answer. Signals siftr can no longer judge, because retention pruned the runs a verdict reads or today's rules wouldn't raise them, are counted apart and left out of every rate.
+
 `--sources` lists what each of those runs actually read. `siftr sources` says what siftr *can* read here, before running anything; this says what the recording observed, per run, afterwards. Two runs of the same command in the same directory, with `rails_log` switched off in `.siftr.toml` between r2 and r3:
 
 ```
