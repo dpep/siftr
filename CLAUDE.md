@@ -17,15 +17,17 @@ Not a cloud service, dashboard, config language, or log search tool. The last of
 those is the load-bearing distinction: siftr answers "what changed since last
 time", never "show me the lines matching this". Nobody writes a query.
 
-**Direction, and what is not yet true (2026-09-20).** Toward ingesting a web
+**Direction, and what is not yet true (2026-09-24).** Toward reading a web
 tier's worth of Rails logs and finding production issues at scale. Two things
-stand between here and there, both measured rather than assumed: a stream nobody
-closes has no run boundary, which is why `siftr follow` deliberately compares
-nothing; and `docs/findings/log-contexts.md` found a whole-system log producing
-**10,362 signals and being refused outright**, where a narrow one reports fine —
-**width, not volume, is what breaks it**. Its fix, per-source contexts, was
-measured on a syslog header a Rails log does not have. Until that transfer is
-demonstrated, treat web-tier ingestion as the goal, not as a capability.
+stand between here and there, both measured rather than assumed: a run boundary
+is still the input ending, so a live read compares nothing until EOF or a Ctrl-C
+and a stream nobody ever closes never gets a comparison at all — windowing an
+endless stream is open; and `docs/findings/log-contexts.md` found a whole-system
+log producing **10,362 signals and being refused outright**, where a narrow one
+reports fine — **width, not volume, is what breaks it**. Its fix, per-source
+contexts, was measured on a syslog header a Rails log does not have. Until that
+transfer is demonstrated, treat web-tier reading as the goal, not as a
+capability.
 
 ## First principles
 
@@ -152,7 +154,8 @@ logging to stderr, flag > env > XDG for paths).
 - Data dir: `--home` > `SIFTR_HOME` > `$XDG_DATA_HOME/siftr` > `~/.local/share/siftr`.
   Every test sets `SIFTR_HOME` to a temp dir.
 - `siftr run -- CMD…` exits with CMD's code; siftr's own failure before the
-  child starts exits 125; 126 cannot execute, 127 not found. `ingest` exits 0 or 2.
+  child starts exits 125; 126 cannot execute, 127 not found. A read (`siftr FILE`,
+  `siftr -`, `siftr DIR`, a piped `siftr`) exits 0 or 2.
 - Query commands: `0` results, `1` empty, `2` error.
 - IDs are short and copyable; every command's human output ends with the next
   command to run for drill-down.
