@@ -410,7 +410,7 @@ fn concurrent_opens_of_an_unmigrated_home_all_succeed() {
     }
 }
 
-/// Stats for 21 runs of each command, evidence for 2, commands idle for 30 days forgotten.
+/// Stats for 21 runs of each context, evidence for 2, contexts idle for 30 days forgotten.
 fn smallest_retention() -> siftr::store::Retention {
     siftr::store::Retention::from_vars(|name| match name {
         "SIFTR_KEEP_RUNS" => Some("21".to_owned()),

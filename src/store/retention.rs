@@ -1,8 +1,9 @@
 //! Retention: how much siftr keeps, so a data dir left alone for months stays bounded.
 //!
-//! Per command, newest runs first: stats for the last `SIFTR_KEEP_RUNS`, evidence (exemplar lines and the raw
-//! capture, most of the bytes) for the last `SIFTR_KEEP_EVIDENCE`. A command idle for `SIFTR_KEEP_DAYS` keeps
-//! neither: every distinct command line is its own command, so their number grows too, not just their runs.
+//! Per context, newest runs first: stats for the last `SIFTR_KEEP_RUNS`, evidence (exemplar lines and the raw
+//! capture, most of the bytes) for the last `SIFTR_KEEP_EVIDENCE`. A context idle for `SIFTR_KEEP_DAYS` keeps
+//! neither: every distinct command line is its own context, as is every `--context` name a read is given, so
+//! their number grows too, not just their runs.
 //!
 //! Past the limits, still kept: a run still recording (it holds a lock in its run dir until it finishes, which
 //! the OS drops if siftr dies), and what answers about the latest usable run read. `changes` reads its baseline
@@ -80,11 +81,11 @@ impl fmt::Display for Setting {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Retention {
-    /// Runs per command whose stats are kept: what baselines, `explain` and signal outcomes read.
+    /// Runs per context whose stats are kept: what baselines, `explain` and signal outcomes read.
     pub runs: Setting,
-    /// Runs per command whose evidence is kept: exemplar lines and raw captures.
+    /// Runs per context whose evidence is kept: exemplar lines and raw captures.
     pub evidence: Setting,
-    /// Days a command may go unrun before all its runs are pruned.
+    /// Days a context may go unrun before all its runs are pruned.
     pub days: Setting,
 }
 
@@ -175,11 +176,11 @@ impl fmt::Display for Pruned {
             Tier::Stats => "stats and evidence were",
         };
         let why = match env {
-            "SIFTR_KEEP_DAYS" => format!("its command hadn't run for {n} days"),
+            "SIFTR_KEEP_DAYS" => format!("its context hadn't run for {n} days"),
             "SIFTR_KEEP_EVIDENCE" => {
-                format!("siftr keeps evidence for the last {n} runs of each command")
+                format!("siftr keeps evidence for the last {n} runs of each context")
             }
-            _ => format!("siftr keeps the last {n} runs of each command"),
+            _ => format!("siftr keeps the last {n} runs of each context"),
         };
         write!(f, "{}'s {what} pruned: {why} ({env})", self.run)
     }
@@ -416,7 +417,7 @@ pub struct Database {
     pub orphaned: Vec<PathBuf>,
 }
 
-/// One command's runs.
+/// One context's runs.
 #[derive(Debug)]
 pub struct ContextRuns {
     pub context: Context,

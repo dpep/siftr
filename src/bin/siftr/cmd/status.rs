@@ -176,7 +176,7 @@ fn human(
 fn keep(w: &mut dyn Write, retention: &Retention) -> io::Result<()> {
     writeln!(
         w,
-        "keep      stats of the last {} runs of each command ({})",
+        "keep      stats of the last {} runs of each context ({})",
         retention.runs.value,
         source(&retention.runs)
     )?;
@@ -188,7 +188,7 @@ fn keep(w: &mut dyn Write, retention: &Retention) -> io::Result<()> {
     )?;
     writeln!(
         w,
-        "          nothing of a command not run for {} days ({})",
+        "          nothing of a context not run for {} days ({})",
         retention.days.value,
         source(&retention.days)
     )

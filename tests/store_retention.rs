@@ -102,7 +102,7 @@ fn what_retention_pruned_is_named_never_read_as_empty() {
     let explain = sandbox.siftr(&["explain", "s1"]);
     assert_eq!(explain.status.code(), Some(2));
     assert!(
-        stderr(&explain).contains("r3's stats and evidence were pruned: siftr keeps the last 21 runs of each command (SIFTR_KEEP_RUNS)"),
+        stderr(&explain).contains("r3's stats and evidence were pruned: siftr keeps the last 21 runs of each context (SIFTR_KEEP_RUNS)"),
         "{}",
         stderr(&explain)
     );
@@ -115,7 +115,7 @@ fn what_retention_pruned_is_named_never_read_as_empty() {
     let evidence = sandbox.siftr(&["explain", &behavior, "--run", "r4"]);
     assert_eq!(evidence.status.code(), Some(2));
     assert!(
-        stderr(&evidence).contains("r4's evidence was pruned: siftr keeps evidence for the last 2 runs of each command (SIFTR_KEEP_EVIDENCE)"),
+        stderr(&evidence).contains("r4's evidence was pruned: siftr keeps evidence for the last 2 runs of each context (SIFTR_KEEP_EVIDENCE)"),
         "{}",
         stderr(&evidence)
     );

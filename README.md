@@ -625,9 +625,9 @@ data      ~/.local/share/siftr
 database  104 KB, schema 12
 captures  32.3 KB for 1 run
 runs      1 run of 1 context; oldest r1 0s ago, newest r1 0s ago
-keep      stats of the last 100 runs of each command (default; set SIFTR_KEEP_RUNS)
+keep      stats of the last 100 runs of each context (default; set SIFTR_KEEP_RUNS)
           evidence, raw lines and captures, of the last 20 (default; set SIFTR_KEEP_EVIDENCE)
-          nothing of a command not run for 30 days (default; set SIFTR_KEEP_DAYS)
+          nothing of a context not run for 30 days (default; set SIFTR_KEEP_DAYS)
 config    rails_log off (~/code/app/.siftr.toml)
           rspec on (default)
           rusage on (default)
