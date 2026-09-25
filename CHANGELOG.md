@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-09-25
 
 - `siftr log/production.log`, `cat log | siftr` and `tail -f log | siftr` are one reading path, differing only in whether the input ends. Each **streams every behavior the first time it is seen, while the input is still open**, then records the run, compares it with earlier runs of the same context, and reports. Pointing siftr at a live log used to produce nothing at all: `ingest` read to EOF before it recorded or compared anything, and a `tail -f` never reaches EOF, so it sat silent until the writer went away. `siftr follow` existed to cover the other half — it streamed but recorded nothing, compared nothing and summarised nothing — and a user should not have to know which half they want. The stream comes from the same recording that stores the run, so the two can never disagree about what a template is.
 - Ctrl-C ends the input the same way EOF does: the run is kept and reported and — being partial — **never compared and never used as a baseline**, since a partial run reads as mass DISAPPEARED. siftr then dies *by* the signal rather than exiting 0, so a shell loop stops. A terminal sends SIGINT to the whole pipeline, so the writer dies of the same signal and its EOF races the wake-up; which of the two ended the input is decided by a flag set in the handler, not by whichever arrived first, because the loser of that race is a partial run entering a baseline it has no business in.
