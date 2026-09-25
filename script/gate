@@ -4,6 +4,7 @@
 #
 #   script/gate              cargo test, clippy, fmt; exits 1 if any failed
 #   script/gate --self-test  prove siftr cannot change a step's code or output
+#   script/gate --which      print the siftr it would record with, and exit
 #   SIFTR_GATE=off script/gate     no recording at all
 #   SIFTR_BIN=path script/gate     record with that binary instead
 #
@@ -23,7 +24,16 @@ siftr_binary() {
   if [ -n "${SIFTR_BIN:-}" ]; then
     candidates=("$SIFTR_BIN")
   else
-    candidates=("$ROOT/target/release/siftr" "$(command -v siftr || true)")
+    # Newest local build first. The gate exists to accumulate a baseline from the siftr being
+    # developed, and preferring release unconditionally meant a build from last week quietly
+    # recorded work whose analyzer it predated -- the baseline was of a siftr nobody was writing.
+    local release=$ROOT/target/release/siftr debug=$ROOT/target/debug/siftr
+    if [ -x "$debug" ] && [ ! "$release" -nt "$debug" ]; then
+      candidates=("$debug" "$release")
+    else
+      candidates=("$release" "$debug")
+    fi
+    candidates+=("$(command -v siftr || true)")
   fi
   for candidate in "${candidates[@]}"; do
     [ -n "$candidate" ] && [ -x "$candidate" ] || continue
@@ -112,6 +122,13 @@ failed=0
 if [ "${1:-}" = --self-test ]; then
   self_test
   exit $?
+fi
+
+# "What is the baseline actually a baseline of?" -- unanswerable from the outside until now, which is
+# how a release build four days stale went on recording every gate run unnoticed.
+if [ "${1:-}" = --which ]; then
+  printf '%s\n' "${SIFTR:-none}"
+  exit 0
 fi
 
 cd "$ROOT" || exit 2

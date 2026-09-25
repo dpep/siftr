@@ -45,3 +45,58 @@ fn siftr_gate_off_beats_a_siftr_that_works() {
         "the kill switch left something wrapped:\n{report}"
     );
 }
+
+/// The gate's baseline is only worth having if it is a baseline of the siftr being developed. It used to
+/// prefer `target/release` unconditionally, so a release build from last week went on recording runs whose
+/// analyzer it predated -- and nothing said which binary was doing the recording.
+#[test]
+fn the_gate_records_with_the_newest_local_build_and_says_which() {
+    use std::fs;
+    use std::time::{Duration, SystemTime};
+
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("script")).unwrap();
+    fs::copy(script("gate"), root.path().join("script/gate")).unwrap();
+
+    let build = |profile: &str, at: SystemTime| {
+        let dir = root.path().join("target").join(profile);
+        fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("siftr");
+        fs::write(
+            &bin,
+            "#!/bin/sh\ncase $1 in --version) echo 'siftr 0';; *) exit 125;; esac\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&bin).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        fs::set_permissions(&bin, perms).unwrap();
+        fs::File::open(&bin)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(at))
+            .unwrap();
+        bin
+    };
+    let which = || {
+        let output = Command::new(root.path().join("script/gate"))
+            .arg("--which")
+            .env_remove("SIFTR_BIN")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    };
+
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let new = old + Duration::from_secs(86_400);
+
+    let release = build("release", new);
+    let debug = build("debug", old);
+    assert_eq!(which(), release.to_string_lossy(), "release is newer here");
+
+    build("debug", new + Duration::from_secs(1));
+    assert_eq!(
+        which(),
+        debug.to_string_lossy(),
+        "and a debug build made since wins, because that is the siftr being written"
+    );
+}
