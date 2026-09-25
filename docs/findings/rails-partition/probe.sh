@@ -36,13 +36,13 @@ for v in a_plain b_tagged c_info d_tagged_info; do
   n=$((n + 1))
   mkdir -p "$scratch/dir_$v"
   cp "$scratch/$v.log" "$scratch/dir_$v/test.log"
-  # --dir names the file test.log, the only stream that reaches the Rails interpreter.
-  "$siftr" ingest --dir "$scratch/dir_$v" --context "$v" --no-report
+  # The directory names the file test.log, the only stream that reaches the Rails interpreter.
+  "$siftr" "$scratch/dir_$v" --context "$v" --no-report
   printf '%-16s %5s lines  ' "$v" "$(wc -l <"$scratch/$v.log")"
   kinds "r$n"
 done
 
-# The same untagged bytes through the other ingest path, which reads them as stdout.
-"$siftr" ingest --context stdout_plain --no-report "$scratch/a_plain.log"
+# The same untagged bytes read as a file, which reaches the interpreters as stdout.
+"$siftr" "$scratch/a_plain.log" --context stdout_plain --no-report
 printf '%-16s %5s lines  ' "a_plain (stdin)" "$(wc -l <"$scratch/a_plain.log")"
 kinds "r$((n + 1))"

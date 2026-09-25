@@ -36,7 +36,7 @@ fn behaviors(log: &str, context: &str) -> Vec<String> {
         );
         serde_json::from_slice(&output.stdout).unwrap()
     };
-    siftr(&["ingest", "-j", "--context", context], Some(log));
+    siftr(&["-j", "-", "--context", context], Some(log));
     siftr(&["summary", "r1", "-j"], None)["behaviors"]
         .as_array()
         .unwrap()

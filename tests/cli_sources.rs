@@ -130,10 +130,7 @@ fn a_run_reports_the_streams_it_actually_captured() {
 
     // A replayed scenario: its stderr.txt is empty, so only the three streams with bytes are captured.
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/rails_demo/n_plus_one");
-    let doc = document(&siftr(
-        bare.path(),
-        &["ingest", "-j", "--dir", fixture.to_str().unwrap()],
-    ));
+    let doc = document(&siftr(bare.path(), &["-j", fixture.to_str().unwrap()]));
     assert_eq!(
         doc["streams"],
         serde_json::json!(["stdout", "file:rspec-events", "file:log/test.log"]),
@@ -233,10 +230,7 @@ fn history_says_what_each_run_read() {
     // An ingested run replays a capture rather than choosing sources, so it recorded none. That is unknown,
     // not empty: claiming it read nothing would be a provenance answer siftr doesn't have.
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/rails_demo/baseline");
-    let ingested = siftr(
-        project.path(),
-        &["ingest", "--dir", fixture.to_str().unwrap()],
-    );
+    let ingested = siftr(project.path(), &[fixture.to_str().unwrap()]);
     assert!(ingested.status.success(), "{}", stdout(&ingested));
     let doc = document(&siftr(project.path(), &["history", "--sources", "-j"]));
     assert_eq!(

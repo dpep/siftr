@@ -32,8 +32,9 @@ impl Sandbox {
     fn ingest(&self, scenario: &str) -> Value {
         let dir = fixture(scenario);
         let output = Command::new(env!("CARGO_BIN_EXE_siftr"))
-            .args(["ingest", "--context", "cargo", "-j", "--dir"])
+            .arg("-j")
             .arg(&dir)
+            .args(["--context", "cargo"])
             .current_dir(self.project.path())
             .env("SIFTR_HOME", self.home.path())
             .env_remove("XDG_DATA_HOME")

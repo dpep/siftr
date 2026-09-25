@@ -52,8 +52,7 @@ impl Sandbox {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures/rails_demo")
             .join(scenario);
-        let args = ["ingest", "-j", "--context", "rd", "--dir"];
-        let output = self.siftr(&[&args[..], &[dir.to_str().unwrap()]].concat());
+        let output = self.siftr(&["-j", dir.to_str().unwrap(), "--context", "rd"]);
         serde_json::from_slice(&output.stdout).unwrap()
     }
 

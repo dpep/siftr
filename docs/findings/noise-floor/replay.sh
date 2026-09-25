@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Ingests a corpus of captured runs in order into one fresh context and dumps
+# Replays a corpus of captured runs in order into one fresh context and dumps
 # `changes -j` after each, which is exactly what a developer would have seen
 # after that run.
 #
 #   replay.sh <siftr> <corpus_dir> <out_dir> [context]
 #
 # <corpus_dir> holds one subdirectory per run (traffic.sh's output, or any
-# `ingest --dir` scenario). <out_dir>/<nnn>.json is the comparison for that run;
+# `siftr DIR` scenario). <out_dir>/<nnn>.json is the comparison for that run;
 # feed the directory to tally.rb.
 set -uo pipefail
 
@@ -20,7 +20,7 @@ for d in "$CORPUS"/*/; do
   [ -d "$d" ] || continue
   i=$((i + 1))
   n=$(printf '%03d' "$i")
-  "$SIFTR" ingest --context "$CTX" --dir "$d" --no-report || echo "ingest failed: $d" >&2
+  "$SIFTR" "$d" --context "$CTX" --no-report || echo "replay failed: $d" >&2
   "$SIFTR" changes --context "$CTX" -j > "$OUT/$n.json"
 done
 "$SIFTR" summary -j -n 100000 > "$OUT/summary.json" 2>/dev/null

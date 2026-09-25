@@ -3,8 +3,9 @@
 //! 1. what follows `--` is a command to wrap (`siftr -- make` is `siftr run -- make`);
 //! 2. a subcommand;
 //! 3. a preset (`cron`);
-//! 4. an existing file, or `-`, is ingested (`./cron` for a file named like a preset);
-//! 5. nothing but flags, with stdin piped or redirected: ingest stdin (`tail -f log | siftr -J`),
+//! 4. an existing file, or `-`, is read (`./cron` for a file named like a preset), and a directory
+//!    holding a captured scenario is replayed;
+//! 5. nothing but flags, with stdin piped or redirected: read stdin (`tail -f log | siftr -J`),
 //!    except `--help`/`--version`, which answer for themselves;
 //! 6. nothing at all otherwise: clap prints help;
 //! 7. any other word is an error naming the subcommands and presets, never input.
@@ -15,12 +16,14 @@ use std::path::Path;
 use crate::output;
 
 pub const SUBCOMMANDS: &[&str] = &[
-    "run", "ingest", "changes", "summary", "explain", "ack", "history", "sources", "status", "gc",
+    "run", "changes", "summary", "explain", "ack", "history", "sources", "status", "gc",
 ];
 pub const PRESETS: &[&str] = &["cron"];
 
 pub enum PathKind {
     File,
+    /// A directory holding a captured scenario: at least one of the files a replay reads.
+    Scenario,
     Dir,
 }
 
@@ -28,7 +31,7 @@ pub enum PathKind {
 pub struct Env<'a> {
     pub stdin_piped: bool,
     pub path_kind: &'a dyn Fn(&Path) -> Option<PathKind>,
-    /// The context a file ingested by path compares within.
+    /// The context a file read by path compares within.
     pub context_for: &'a dyn Fn(&Path) -> String,
 }
 
@@ -49,7 +52,7 @@ pub fn dispatch(mut args: Vec<OsString>, env: &Env) -> anyhow::Result<Vec<OsStri
         args.insert(at, "run".into());
         return Ok(args);
     }
-    // Flags and nothing to apply them to: piped stdin is the input, so this is an ingest of it, and
+    // Flags and nothing to apply them to: piped stdin is the input, so this reads it, and
     // `tail -f log | siftr -J` streams rather than printing help. `--help` and `--version` are answers
     // in themselves, and a positional we didn't recognise stays an error rather than becoming a flag's
     // argument.
@@ -83,8 +86,15 @@ pub fn dispatch(mut args: Vec<OsString>, env: &Env) -> anyhow::Result<Vec<OsStri
             args.splice(at..at, ingest);
             Ok(args)
         }
+        // A replay gets no synthesized context: the scenarios of one sequence are meant to compare with each
+        // other, and a context per directory would leave every one of them with nothing to compare against.
+        Some(PathKind::Scenario) => {
+            args.splice(at..at, ["ingest".into(), "--dir".into()]);
+            Ok(args)
+        }
         Some(PathKind::Dir) => Err(output::usage(format!(
-            "{first} is a directory; siftr ingest --dir {first} replays a captured scenario"
+            "{first} is a directory, and not a captured scenario: one holds at least one of {}",
+            crate::cmd::ingest::scenario_files().join(", ")
         ))),
         None if first.contains('/') => Err(output::not_found(format!("no such file: {first}"))),
         None => Err(output::usage(unknown(&first))),
@@ -118,7 +128,7 @@ fn is_answer(arg: &OsString) -> bool {
 /// Commands that were removed, the exact thing to type instead, and — where the replacement does more than
 /// the word did — what the reader would otherwise assume they had lost. A word a user's fingers still type
 /// deserves the answer rather than the whole list, and the edit distance below cannot reach any of these:
-/// `dismiss` is nowhere near `ack`, nor `evidence` near `explain`, nor `follow` near anything.
+/// `dismiss` is nowhere near `ack`, nor `evidence` near `explain`, nor `follow` or `ingest` near anything.
 const RETIRED: &[(&str, &str, &str)] = &[
     ("dismiss", "siftr ack SIGNAL --wrong", ""),
     ("evidence", "siftr explain BEHAVIOR", ""),
@@ -126,6 +136,11 @@ const RETIRED: &[(&str, &str, &str)] = &[
         "follow",
         "siftr - (or siftr FILE)",
         "it streams the same behaviors, and then records and compares the run",
+    ),
+    (
+        "ingest",
+        "siftr FILE (or siftr -, siftr DIR)",
+        "a captured scenario replays by naming its directory, as --dir did",
     ),
 ];
 
@@ -173,15 +188,19 @@ fn distance(a: &str, b: &str) -> usize {
 mod tests {
     use super::*;
 
+    /// A directory whose name starts with this is a captured scenario; any other is a plain directory.
+    const SCENARIO: &str = "scenario";
     fn with(files: &[&str], dirs: &[&str], piped: bool, args: &[&str]) -> Result<String, String> {
         let path_kind = |path: &Path| {
             let path = path.to_str().unwrap();
             if files.contains(&path) {
                 Some(PathKind::File)
-            } else if dirs.contains(&path) {
-                Some(PathKind::Dir)
-            } else {
+            } else if !dirs.contains(&path) {
                 None
+            } else if path.starts_with(SCENARIO) {
+                Some(PathKind::Scenario)
+            } else {
+                Some(PathKind::Dir)
             }
         };
         let context_for = |path: &Path| format!("ctx:{}", path.display());
@@ -203,7 +222,7 @@ mod tests {
     fn ok(args: &[&str]) -> String {
         with(
             &["log/production.log", "./cron", "./status"],
-            &["fixtures"],
+            &["fixtures", "scenario/baseline"],
             false,
             args,
         )
@@ -243,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn an_existing_file_or_dash_is_ingested() {
+    fn an_existing_file_or_dash_is_read() {
         assert_eq!(
             ok(&["-j", "log/production.log"]),
             "-j ingest --context ctx:log/production.log log/production.log"
@@ -254,10 +273,29 @@ mod tests {
             "a context given is kept"
         );
         assert_eq!(ok(&["-"]), "ingest");
-        let dir = with(&[], &["fixtures"], false, &["fixtures"]).unwrap_err();
-        assert!(dir.contains("siftr ingest --dir fixtures"), "{dir}");
         let missing = with(&[], &[], false, &["log/missing.log"]).unwrap_err();
         assert_eq!(missing, "no such file: log/missing.log");
+    }
+
+    /// A directory is replayed when it says it is a capture, and refused when it doesn't: recognition, not a
+    /// guess. Unlike a file it gets no context of its own — the scenarios of one sequence compare with each
+    /// other, and a context per directory would leave each of them nothing to compare against.
+    #[test]
+    fn a_directory_replays_only_when_it_holds_a_captured_scenario() {
+        assert_eq!(ok(&["scenario/baseline"]), "ingest --dir scenario/baseline");
+        assert_eq!(
+            ok(&["-j", "scenario/baseline", "--context", "demo"]),
+            "-j ingest --dir scenario/baseline --context demo"
+        );
+        let plain = with(&[], &["fixtures"], false, &["fixtures"]).unwrap_err();
+        assert!(
+            plain.starts_with("fixtures is a directory, and not a captured scenario: one holds"),
+            "{plain}"
+        );
+        assert!(
+            plain.contains("rspec.ndjson"),
+            "it names the files: {plain}"
+        );
     }
 
     #[test]

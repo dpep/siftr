@@ -37,13 +37,7 @@ impl Sandbox {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures/rails_demo")
             .join(scenario);
-        self.siftr(&[
-            "ingest",
-            "--context",
-            "rails_demo",
-            "--dir",
-            dir.to_str().unwrap(),
-        ]);
+        self.siftr(&[dir.to_str().unwrap(), "--context", "rails_demo"]);
     }
 
     fn siftr(&self, args: &[&str]) -> Output {

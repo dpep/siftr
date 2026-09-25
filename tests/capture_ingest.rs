@@ -1,4 +1,4 @@
-//! `siftr ingest --dir`: replaying a captured scenario records every stream byte for byte.
+//! `siftr DIR`: replaying a captured scenario records every stream byte for byte.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -36,10 +36,7 @@ fn json(output: &Output) -> Value {
 fn a_scenario_is_replayed_into_the_runs_capture_byte_for_byte() {
     let home = tempfile::tempdir().unwrap();
     let dir = fixture("n_plus_one");
-    let run = json(&siftr(
-        &home,
-        &["ingest", "-j", "--dir", dir.to_str().unwrap()],
-    ));
+    let run = json(&siftr(&home, &["-j", dir.to_str().unwrap()]));
 
     let run_dir = home
         .path()
@@ -64,26 +61,40 @@ fn a_scenario_is_replayed_into_the_runs_capture_byte_for_byte() {
 }
 
 #[test]
-fn the_scenarios_exit_code_is_recorded_but_ingest_still_succeeds() {
+fn the_scenarios_exit_code_is_recorded_but_the_replay_still_succeeds() {
     let home = tempfile::tempdir().unwrap();
     let dir = fixture("fail");
-    let run = json(&siftr(
-        &home,
-        &["ingest", "-j", "--dir", dir.to_str().unwrap()],
-    ));
+    let run = json(&siftr(&home, &["-j", dir.to_str().unwrap()]));
     assert_eq!(run["run"]["exit_code"], 1);
 }
 
+/// A directory has to say it is a capture before siftr replays it, and the refusal says what would make it
+/// one — this is the only thing `siftr DIR` can be, so there is nothing else to fall back to.
 #[test]
 fn a_directory_without_captured_streams_is_an_error_and_records_nothing() {
     let home = tempfile::tempdir().unwrap();
     let empty = tempfile::tempdir().unwrap();
-    let output = siftr(&home, &["ingest", "--dir", empty.path().to_str().unwrap()]);
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("no captured streams"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = siftr(&home, &[empty.path().to_str().unwrap()]);
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{message}");
+    assert!(message.contains("not a captured scenario"), "{message}");
+    assert!(message.contains("stdout.txt"), "{message}");
     assert_eq!(siftr(&home, &["history"]).status.code(), Some(1));
+}
+
+/// One file is enough, and it need not be stdout: a cargo scenario is stderr and an exit code.
+#[test]
+fn a_directory_holding_any_one_captured_file_is_a_scenario() {
+    for name in ["stdout.txt", "stderr.txt", "rspec.ndjson", "test.log"] {
+        let home = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(name), "one line\n").unwrap();
+        let run = json(&siftr(&home, &["-j", dir.path().to_str().unwrap()]));
+        assert_eq!(run["run"]["lines"], 1, "{name}");
+    }
+    let home = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("exit_code.txt"), "3\n").unwrap();
+    let run = json(&siftr(&home, &["-j", dir.path().to_str().unwrap()]));
+    assert_eq!(run["run"]["exit_code"], 3);
 }

@@ -1,4 +1,4 @@
-//! `siftr ingest [FILE]`: the one way a log gets into siftr, whether it is named (`siftr app.log`), piped
+//! Reading: the one way a log gets into siftr, whether it is named (`siftr app.log`), piped
 //! (`cat app.log | siftr`) or still being written (`tail -f app.log | siftr`). The three differ in one thing
 //! only — whether the input ends — so they take one path:
 //!
@@ -10,9 +10,12 @@
 //! Streaming is bounded rather than a firehose: `docs/findings/log-contexts.md` §1 measured 100 templates
 //! carrying 70% of a real log's lines, so a follow falls quiet after a short warm-up.
 //!
-//! `siftr ingest --dir DIR` is the exception, and replays a captured scenario — its stdout, stderr and
-//! side-channel streams — without streaming: the replay feeds whole files one after another, so a
-//! first-seen order taken from it would describe the directory layout rather than the run.
+//! `siftr DIR` is the exception, and replays a captured scenario — its stdout, stderr and side-channel
+//! streams — without streaming: the replay feeds whole files one after another, so a first-seen order taken
+//! from it would describe the directory layout rather than the run.
+//!
+//! No word reaches this module: [`crate::dispatch`] is what routes every spelling of a read here, and the
+//! `ingest`/`--dir` tokens it emits are the run's own record of what it did, not a line to type.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -44,7 +47,7 @@ pub struct Args {
     /// File to record [default: stdin]
     file: Option<PathBuf>,
 
-    /// Replay a captured scenario: stdout.txt, stderr.txt, rspec.ndjson, test.log, exit_code.txt (each optional)
+    /// Replay a captured scenario. Dispatch's spelling of `siftr DIR`, and what the run records having read
     #[arg(long, value_name = "DIR", conflicts_with = "file")]
     dir: Option<PathBuf>,
 
@@ -426,15 +429,37 @@ fn shape(
 }
 
 /// A scenario's streams in the order `run` feeds them: rspec events must precede the log they index.
-fn scenario(dir: &Path) -> Result<(Inputs, Option<i32>)> {
-    let layout = [
+fn streams() -> [(&'static str, Stream); 4] {
+    [
         ("stdout.txt", Stream::Stdout),
         ("stderr.txt", Stream::Stderr),
         ("rspec.ndjson", sources::rspec_events()),
         ("test.log", sources::rails_log()),
-    ];
+    ]
+}
+
+/// The one scenario file that is not a stream.
+const EXIT_CODE: &str = "exit_code.txt";
+
+/// What a captured scenario is made of, each file optional. Dispatch names these when it refuses a directory,
+/// and [`is_scenario`] recognises one by them, so the list a replay reads is the only list.
+pub fn scenario_files() -> Vec<&'static str> {
+    streams()
+        .iter()
+        .map(|(name, _)| *name)
+        .chain([EXIT_CODE])
+        .collect()
+}
+
+/// Whether `dir` holds a captured scenario. Recognition rather than a guess: `siftr DIR` replays only a
+/// directory that carries at least one of the files a replay reads.
+pub fn is_scenario(dir: &Path) -> bool {
+    scenario_files().iter().any(|name| dir.join(name).is_file())
+}
+
+fn scenario(dir: &Path) -> Result<(Inputs, Option<i32>)> {
     let mut inputs: Inputs = Vec::new();
-    for (name, stream) in layout {
+    for (name, stream) in streams() {
         let path = dir.join(name);
         match File::open(&path) {
             Ok(file) => inputs.push((stream, Box::new(file))),
@@ -442,15 +467,15 @@ fn scenario(dir: &Path) -> Result<(Inputs, Option<i32>)> {
             Err(error) => return Err(error).context(format!("opening {}", path.display())),
         }
     }
-    let exit_code = match std::fs::read_to_string(dir.join("exit_code.txt")) {
+    let exit_code = match std::fs::read_to_string(dir.join(EXIT_CODE)) {
         Ok(text) => Some(
             text.trim()
                 .parse()
-                .with_context(|| format!("{}/exit_code.txt is not an exit code", dir.display()))?,
+                .with_context(|| format!("{}/{EXIT_CODE} is not an exit code", dir.display()))?,
         ),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => {
-            return Err(error).context(format!("reading {}/exit_code.txt", dir.display()));
+            return Err(error).context(format!("reading {}/{EXIT_CODE}", dir.display()));
         }
     };
     if inputs.is_empty() && exit_code.is_none() {

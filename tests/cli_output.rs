@@ -42,13 +42,7 @@ impl Sandbox {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures/rails_demo")
             .join(scenario);
-        self.text(&[
-            "ingest",
-            "--context",
-            "rails_demo",
-            "--dir",
-            dir.to_str().unwrap(),
-        ])
+        self.text(&[dir.to_str().unwrap(), "--context", "rails_demo"])
     }
 }
 
@@ -145,7 +139,7 @@ fn a_change_after_the_last_example_reads_as_teardown() {
         std::fs::copy(fixture.join(name), after.path().join(name)).unwrap();
     }
     let dir = after.path().to_str().unwrap();
-    sandbox.text(&["ingest", "--context", "rails_demo", "--dir", dir]);
+    sandbox.text(&[dir, "--context", "rails_demo"]);
 
     let changes: Value = serde_json::from_slice(&sandbox.siftr(&["changes", "-j"]).stdout).unwrap();
     let signal = &changes["signals"][0];

@@ -156,7 +156,7 @@ impl Sandbox {
     fn ingest(&self, name: &str, log: &str) -> Value {
         let path = self.project.path().join(format!("{name}.log"));
         std::fs::write(&path, log).unwrap();
-        self.json(&["ingest", "--context", "cap", "-j", path.to_str().unwrap()])
+        self.json(&["-j", path.to_str().unwrap(), "--context", "cap"])
     }
 
     fn ingest_fixture(&self, family: &str, scenario: &str) -> Value {
@@ -164,14 +164,7 @@ impl Sandbox {
             .join("fixtures")
             .join(family)
             .join(scenario);
-        self.json(&[
-            "ingest",
-            "--context",
-            family,
-            "-j",
-            "--dir",
-            dir.to_str().unwrap(),
-        ])
+        self.json(&["-j", dir.to_str().unwrap(), "--context", family])
     }
 }
 

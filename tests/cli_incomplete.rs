@@ -53,7 +53,7 @@ impl Sandbox {
 
     fn ingest(&self, dir: &Path) -> String {
         let dir = dir.to_str().unwrap();
-        self.text(&["ingest", "--context", "rails_demo", "--dir", dir])
+        self.text(&[dir, "--context", "rails_demo"])
     }
 }
 

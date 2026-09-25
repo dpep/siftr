@@ -41,13 +41,7 @@ impl Sandbox {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures/rspec_hunt")
             .join(scenario);
-        self.text(&[
-            "ingest",
-            "--context",
-            "hunt",
-            "--dir",
-            dir.to_str().unwrap(),
-        ]);
+        self.text(&[dir.to_str().unwrap(), "--context", "hunt"]);
     }
 }
 

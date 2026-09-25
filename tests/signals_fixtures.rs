@@ -1,4 +1,4 @@
-//! The signal rules end to end over captured rails_demo scenarios, replayed with `siftr ingest --dir`.
+//! The signal rules end to end over captured rails_demo scenarios, replayed with `siftr DIR`.
 //!
 //! Only three clean captures exist, so every comparison here has n ≤ 3 and E(3) = 0.8 caps the
 //! confidence of count rules; signals.md's backtest covers n = 5 and 10.
@@ -48,14 +48,7 @@ impl Sandbox {
 
     fn ingest(&self, scenario: &str) -> Value {
         let dir = fixture(scenario);
-        let output = self.siftr(&[
-            "ingest",
-            "--context",
-            "rails_demo",
-            "-j",
-            "--dir",
-            dir.to_str().unwrap(),
-        ]);
+        let output = self.siftr(&["-j", dir.to_str().unwrap(), "--context", "rails_demo"]);
         serde_json::from_slice(&output.stdout).unwrap()
     }
 

@@ -1,6 +1,6 @@
 //! Baseline eligibility and incompleteness across suites that grow, shrink, stay red under `--fail-fast`, or
 //! fix a spec file that never loaded; and signal outcomes across focus and load-error runs. Each run is a real
-//! RSpec capture of a small project (`fixtures/rspec_hunt/<state>`), replayed with `siftr ingest --dir`.
+//! RSpec capture of a small project (`fixtures/rspec_hunt/<state>`), replayed with `siftr DIR`.
 
 use std::path::Path;
 use std::process::Command;
@@ -44,14 +44,7 @@ impl Home {
             let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("fixtures/rspec_hunt")
                 .join(state);
-            last = self.siftr(&[
-                "ingest",
-                "--context",
-                "hunt",
-                "-j",
-                "--dir",
-                dir.to_str().unwrap(),
-            ]);
+            last = self.siftr(&["-j", dir.to_str().unwrap(), "--context", "hunt"]);
         }
         last
     }

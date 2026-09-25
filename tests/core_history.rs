@@ -49,8 +49,8 @@ fn an_incomplete_run_is_marked_in_the_run_table() {
             .join("fixtures/rails_demo")
             .join(scenario);
         let ingest = Command::new(env!("CARGO_BIN_EXE_siftr"))
-            .args(["ingest", "--context", "rails_demo", "--dir"])
             .arg(dir)
+            .args(["--context", "rails_demo"])
             .current_dir(project.path())
             .env("SIFTR_HOME", home.path())
             .env_remove("XDG_DATA_HOME")

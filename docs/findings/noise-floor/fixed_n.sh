@@ -20,9 +20,9 @@ for ((i = N; i < ${#RUNS[@]}; i++)); do
   rm -rf "$home"; mkdir -p "$home"
   export SIFTR_HOME=$home
   for ((j = i - N; j < i; j++)); do
-    "$SIFTR" ingest --context "$CTX" --dir "${RUNS[$j]}" --no-report
+    "$SIFTR" "${RUNS[$j]}" --context "$CTX" --no-report
   done
-  "$SIFTR" ingest --context "$CTX" --dir "${RUNS[$i]}" --no-report
+  "$SIFTR" "${RUNS[$i]}" --context "$CTX" --no-report
   "$SIFTR" changes --context "$CTX" -j > "$OUT/$(printf '%03d' "$((i + 1))").json"
 done
 rm -rf "$OUT/home"

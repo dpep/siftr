@@ -128,7 +128,7 @@ fn a_behavior_is_reported_while_the_writer_still_holds_stdin_open() {
 fn ndjson_rows_arrive_while_stdin_is_still_open_and_end_with_the_report() {
     let sandbox = Sandbox::new();
     let mut child = sandbox
-        .siftr(&["ingest", "-J"])
+        .siftr(&["-J"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -147,7 +147,7 @@ fn ndjson_rows_arrive_while_stdin_is_still_open_and_end_with_the_report() {
     // And the stream ends with the comparison, so a consumer that read the rows gets the report from the
     // same pipe rather than having to run a second command. A fresh sandbox: the run above already holds
     // this context's history, and a run that was compared has changes to report instead of a description.
-    let out = Sandbox::new().piped(&["ingest", "-J"], CORPUS);
+    let out = Sandbox::new().piped(&["-J"], CORPUS);
     let printed = stdout(&out);
     let lines: Vec<&str> = printed.lines().collect();
     let (last, rows) = lines.split_last().unwrap();
@@ -167,7 +167,7 @@ fn ndjson_rows_arrive_while_stdin_is_still_open_and_end_with_the_report() {
 #[test]
 fn streamed_behaviors_are_exactly_the_ones_recorded() {
     let sandbox = Sandbox::new();
-    let streamed = sandbox.piped(&["ingest", "-J"], CORPUS);
+    let streamed = sandbox.piped(&["-J"], CORPUS);
     let mut from_stream: Vec<(String, String)> = stdout(&streamed)
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
@@ -264,7 +264,7 @@ fn a_first_run_describes_its_input_and_claims_no_change() {
 #[test]
 fn the_description_is_a_document_too() {
     let sandbox = Sandbox::new();
-    let out = sandbox.piped(&["-j", "ingest"], CORPUS);
+    let out = sandbox.piped(&["-j"], CORPUS);
     let document: Value = serde_json::from_slice(&out.stdout).unwrap();
     let described = &document["described"];
     assert_eq!(described["events"], 8, "{document}");
@@ -291,12 +291,12 @@ fn a_compared_run_reports_changes_instead_of_a_description() {
     for _ in 0..2 {
         assert!(
             sandbox
-                .piped(&["ingest", "--context", "app"], CORPUS)
+                .piped(&["-", "--context", "app"], CORPUS)
                 .status
                 .success()
         );
     }
-    let report = sandbox.report(&["ingest", "--context", "app"], CORPUS);
+    let report = sandbox.report(&["-", "--context", "app"], CORPUS);
     assert!(report.contains("vs 2 baseline runs"), "{report}");
     assert!(
         !report.contains("in this input, not a comparison"),
@@ -315,14 +315,14 @@ fn an_interrupt_keeps_the_run_reports_it_and_never_baselines_it() {
     for _ in 0..2 {
         assert!(
             sandbox
-                .piped(&["ingest", "--context", "app"], CORPUS)
+                .piped(&["-", "--context", "app"], CORPUS)
                 .status
                 .success()
         );
     }
 
     let mut child = sandbox
-        .siftr(&["ingest", "--context", "app"])
+        .siftr(&["-", "--context", "app"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -387,7 +387,7 @@ fn an_interrupt_keeps_the_run_reports_it_and_never_baselines_it() {
     assert_eq!(changes["run"]["interrupted"], 2, "{changes}");
 
     // A fourth, clean run: its baseline is the two clean runs, never the interrupted one.
-    let out = sandbox.piped(&["ingest", "--context", "app"], CORPUS);
+    let out = sandbox.piped(&["-", "--context", "app"], CORPUS);
     assert!(out.status.success(), "{out:?}");
     let report = stdout(&out);
     assert!(report.contains("vs 2 baseline runs (r1 r2)"), "{report}");
@@ -403,7 +403,7 @@ fn an_interrupt_keeps_the_run_reports_it_and_never_baselines_it() {
 fn asking_for_quiet_silences_the_stream_too() {
     let sandbox = Sandbox::new();
     for flag in ["--no-report", "--quiet-unless-changed"] {
-        let out = sandbox.piped(&["ingest", flag], CORPUS);
+        let out = sandbox.piped(&[flag], CORPUS);
         assert!(out.status.success(), "{flag}: {out:?}");
         assert!(stdout(&out).is_empty(), "{flag}: {}", stdout(&out));
     }

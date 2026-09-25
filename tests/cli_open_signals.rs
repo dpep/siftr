@@ -46,8 +46,7 @@ impl Sandbox {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures/rails_demo")
             .join(scenario);
-        let args = ["ingest", "-j", "--context", "rails_demo", "--dir"];
-        self.json(&[&args[..], &[dir.to_str().unwrap()]].concat())
+        self.json(&["-j", dir.to_str().unwrap(), "--context", "rails_demo"])
     }
 
     fn text(&self, args: &[&str]) -> String {
@@ -154,7 +153,7 @@ fn a_run_whose_comparison_was_refused_reminds_of_nothing() {
     let ingest = |name: &str, body: &str| -> Value {
         let path = sandbox.project.path().join(name);
         std::fs::write(&path, body).unwrap();
-        sandbox.json(&["ingest", "-j", "--context", "c", path.to_str().unwrap()])
+        sandbox.json(&["-j", path.to_str().unwrap(), "--context", "c"])
     };
     let base: String = (0..20)
         .map(|i| format!("alpha item {} ready\n", letters(i)))
@@ -225,7 +224,7 @@ fn a_truncated_later_run_does_not_resolve_an_earlier_disappearance() {
     let ingest = |name: &str, body: &str| -> Value {
         let path = sandbox.project.path().join(format!("{name}.log"));
         std::fs::write(&path, body).unwrap();
-        sandbox.json(&["ingest", "-j", "--context", "cap", path.to_str().unwrap()])
+        sandbox.json(&["-j", path.to_str().unwrap(), "--context", "cap"])
     };
     // One under the cap, so adding a single behavior still fits and adding two does not.
     let common: String = (0..MAX_BEHAVIORS - 1)

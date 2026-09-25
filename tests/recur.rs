@@ -51,8 +51,7 @@ impl Sandbox {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures/rails_demo")
             .join(scenario);
-        let args = ["ingest", "-j", "--context", "rails_demo", "--dir"];
-        self.json(&[&args[..], &[dir.to_str().unwrap()]].concat())
+        self.json(&["-j", dir.to_str().unwrap(), "--context", "rails_demo"])
     }
 
     fn text(&self, args: &[&str]) -> String {

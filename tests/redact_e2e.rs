@@ -52,7 +52,7 @@ impl Sandbox {
     fn ingest(&self, text: &str, env: &[(&str, &str)]) {
         let file = self.project.path().join("input.log");
         std::fs::write(&file, text).unwrap();
-        self.siftr(&["ingest", file.to_str().unwrap()], env);
+        self.siftr(&[file.to_str().unwrap()], env);
     }
 
     fn db(&self) -> Connection {
@@ -307,7 +307,7 @@ fn a_redacted_log_line_leaves_every_query_in_its_example() {
     let scopes = |line: &str| {
         let scenario = with_log_line(line);
         let sandbox = Sandbox::new();
-        sandbox.siftr(&["ingest", "--dir", scenario.path().to_str().unwrap()], &[]);
+        sandbox.siftr(&[scenario.path().to_str().unwrap()], &[]);
         let mut scopes = sandbox.column(
             "SELECT b.template || ' @ ' || e.template || ' x' || s.count FROM aggregate_scopes s
              JOIN behaviors b ON b.id = s.behavior_id LEFT JOIN behaviors e ON e.id = s.scope_id

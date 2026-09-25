@@ -19,15 +19,17 @@ use clap::{Parser, Subcommand};
 const AFTER_HELP: &str = "\
 Without a subcommand:
   siftr -- CMD…    same as siftr run -- CMD…
-  siftr FILE       same as siftr ingest FILE, compared with earlier ingests of that file (./cron for a file named like a preset)
-  siftr -          ingest stdin; a bare siftr does too when stdin is piped
-  Each of these streams every behavior the first time it is seen, then reports when the input ends.
+  siftr FILE       record a log, compared with earlier readings of that file (./cron for a file named like a preset)
+  siftr -          record stdin; a bare siftr does too when stdin is piped
+  siftr DIR        replay a captured scenario: stdout.txt, stderr.txt, rspec.ndjson, test.log, exit_code.txt
+  A file and stdin stream every behavior the first time it is seen, then report when the input ends; a
+  replay has no first-seen order to stream, and reports once.
   Ctrl-C ends the input: the run is kept and reported, but never compared and never used as a baseline.
   Any other word is an error, never a file name.
 
 Exit codes:
   run      the command's own code; 125 if siftr fails before starting it, 126 if it can't be executed, 127 if not found
-  ingest   0 recorded, 2 error (Ctrl-C included: the run is kept)
+  reading  0 recorded, 2 error (Ctrl-C included: the run is kept) — siftr FILE, siftr -, siftr DIR, a piped siftr
   cron     0 found jobs or cron output, 1 nothing found, 2 error
   sources  0 listed, 2 error
   queries  0 results, 1 nothing found, 2 error
@@ -84,7 +86,9 @@ struct Cli {
 enum Command {
     /// Run a command, passing its output through, and record what it did
     Run(cmd::run::Args),
-    /// Record a file or stdin as if it were a command's output, streaming each behavior as it is first seen
+    /// Record a file, stdin or a captured scenario. Dispatch's target, never a word: `siftr FILE`, `siftr -`,
+    /// `siftr DIR` and a piped `siftr` all arrive here, and a typed `ingest` is answered as retired instead.
+    #[command(hide = true)]
     Ingest(cmd::ingest::Args),
     /// Preset: what runs on a schedule here, where cron's output goes, and how to record a job. Read-only
     Cron(cmd::cron::Args),
@@ -112,7 +116,7 @@ fn main() -> ExitCode {
     let env = dispatch::Env {
         stdin_piped: stdin_piped(),
         path_kind: &path_kind,
-        context_for: &ingest_context,
+        context_for: &reading_context,
     };
     let args = match dispatch::dispatch(raw, &env) {
         Ok(args) => args,
@@ -183,15 +187,16 @@ fn stdin_piped() -> bool {
 
 fn path_kind(path: &Path) -> Option<dispatch::PathKind> {
     let meta = std::fs::metadata(path).ok()?;
-    Some(match meta.is_dir() {
-        true => dispatch::PathKind::Dir,
-        false => dispatch::PathKind::File,
+    Some(match (meta.is_dir(), cmd::ingest::is_scenario(path)) {
+        (false, _) => dispatch::PathKind::File,
+        (true, true) => dispatch::PathKind::Scenario,
+        (true, false) => dispatch::PathKind::Dir,
     })
 }
 
-/// A file ingested by path compares with earlier ingests of the same file, however it was spelled: its path under
+/// A file read by path compares with earlier readings of the same file, however it was spelled: its path under
 /// the project, else its absolute path. One shared context would compare unrelated files with each other.
-fn ingest_context(path: &Path) -> String {
+fn reading_context(path: &Path) -> String {
     let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     project::current()
         .ok()

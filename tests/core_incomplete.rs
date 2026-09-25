@@ -1,4 +1,4 @@
-//! A current run that didn't run the suite, replayed with `siftr ingest --dir` after clean captures: its one
+//! A current run that didn't run the suite, replayed with `siftr DIR` after clean captures: its one
 //! change is the incompleteness, not what it never ran.
 
 use std::path::Path;
@@ -11,8 +11,9 @@ fn ingest(home: &Path, project: &Path, scenario: &str) -> Value {
         .join("fixtures/rails_demo")
         .join(scenario);
     let output = Command::new(env!("CARGO_BIN_EXE_siftr"))
-        .args(["ingest", "--context", "rails_demo", "-j", "--dir"])
+        .arg("-j")
         .arg(dir)
+        .args(["--context", "rails_demo"])
         .current_dir(project)
         .env("SIFTR_HOME", home)
         .env_remove("XDG_DATA_HOME")

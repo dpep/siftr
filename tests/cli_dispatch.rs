@@ -111,7 +111,7 @@ fn a_subcommand_or_preset_is_never_read_as_a_file_of_that_name() {
 }
 
 #[test]
-fn an_existing_file_is_ingested_and_compared_only_with_that_file() {
+fn an_existing_file_is_read_and_compared_only_with_that_file() {
     let sandbox = Sandbox::new();
     sandbox.write("log/a.log", "alpha\n");
     sandbox.write("log/b.log", "beta\n");
@@ -130,9 +130,53 @@ fn an_existing_file_is_ingested_and_compared_only_with_that_file() {
     let dir = sandbox.output(&["log"]);
     assert_eq!(code(&dir), 2);
     assert!(
-        stderr(&dir).contains("siftr ingest --dir log"),
+        stderr(&dir).contains("log is a directory, and not a captured scenario"),
         "{}",
         stderr(&dir)
+    );
+}
+
+/// A directory of captured streams replays; the same directory without them is refused. Nothing between the
+/// two is a judgement call, which is the point: `siftr DIR` recognises a capture, it never tries one out.
+#[test]
+fn a_captured_scenario_directory_replays_and_a_plain_one_is_refused() {
+    let sandbox = Sandbox::new();
+    sandbox.write("capture/stdout.txt", "alpha ready\nbeta ready\n");
+    sandbox.write("capture/exit_code.txt", "0\n");
+    sandbox.write("notes/readme.txt", "not a capture\n");
+
+    let replayed = json(&sandbox.output(&["-j", "capture"]));
+    assert_eq!(replayed["run"]["lines"], 2, "{replayed}");
+    assert_eq!(
+        sandbox.recorded(),
+        ["siftr ingest --context ingest --dir capture"]
+    );
+
+    let refused = sandbox.output(&["notes"]);
+    assert_eq!(code(&refused), 2);
+    assert!(
+        stderr(&refused).contains("rspec.ndjson"),
+        "the refusal names what would make it one: {}",
+        stderr(&refused)
+    );
+    assert_eq!(sandbox.recorded().len(), 1, "nothing else was recorded");
+}
+
+/// A word siftr used to have: answered with the line to type, because the edit distance can't reach it.
+#[test]
+fn a_retired_word_is_answered_with_what_replaced_it() {
+    let sandbox = Sandbox::new();
+    let gone = sandbox.output(&["ingest", "--dir", "somewhere"]);
+    assert_eq!(code(&gone), 2);
+    assert!(
+        stderr(&gone).contains("'ingest' was removed; use `siftr FILE (or siftr -, siftr DIR)`"),
+        "{}",
+        stderr(&gone)
+    );
+    assert!(
+        stderr(&gone).contains("replays by naming its directory"),
+        "--dir is the half a reader would think they had lost: {}",
+        stderr(&gone)
     );
 }
 

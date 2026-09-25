@@ -6,7 +6,7 @@
 #
 # Each batch lands in <out_dir>/<nnn>/test.log — the bytes appended to
 # log/development.log while that batch was in flight. Replay one with
-# `siftr ingest --dir`. See traffic.rb for what is and is not real here.
+# `siftr DIR`. See traffic.rb for what is and is not real here.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

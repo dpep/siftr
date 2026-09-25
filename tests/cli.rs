@@ -35,9 +35,10 @@ impl Sandbox {
         self.siftr(args).output().unwrap()
     }
 
-    fn ingest(&self, args: &[&str], input: &str) -> Output {
+    /// `siftr - …`: the spelling that names stdin even with a flag in front of the input.
+    fn read_stdin(&self, args: &[&str], input: &str) -> Output {
         let mut child = self
-            .siftr(&[&["ingest"], args].concat())
+            .siftr(&[&["-"], args].concat())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -118,10 +119,10 @@ fn signal_summary(changes: &Value) -> Vec<(String, String, f64, f64)> {
 fn a_regression_surfaces_as_new_disappeared_and_frequency_signals() {
     let sandbox = Sandbox::new();
     for k in 1..=3 {
-        let baseline = sandbox.ingest(&["--context", "suite"], &app_log(k, false));
+        let baseline = sandbox.read_stdin(&["--context", "suite"], &app_log(k, false));
         assert_eq!(code(&baseline), 0, "{}", stderr(&baseline));
     }
-    let regressed = sandbox.ingest(&["--context", "suite", "-j"], &app_log(4, true));
+    let regressed = sandbox.read_stdin(&["--context", "suite", "-j"], &app_log(4, true));
     assert_eq!(code(&regressed), 0, "{}", stderr(&regressed));
     let changes = json(&regressed);
     assert_eq!(changes["run"]["id"], "r4");
@@ -193,7 +194,7 @@ fn a_regression_surfaces_as_new_disappeared_and_frequency_signals() {
 fn a_steady_run_has_no_changes() {
     let sandbox = Sandbox::new();
     for _ in 0..4 {
-        assert_eq!(code(&sandbox.ingest(&[], &app_log(1, false))), 0);
+        assert_eq!(code(&sandbox.read_stdin(&[], &app_log(1, false))), 0);
     }
     let changes = sandbox.output(&["changes"]);
     assert_eq!(

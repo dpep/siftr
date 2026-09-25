@@ -37,11 +37,7 @@ fn ingest_writes_paths_under_the_project_as_root_and_records_their_roles() {
     )
     .unwrap();
 
-    siftr(
-        home.path(),
-        project.path(),
-        &["ingest", "-j", log.to_str().unwrap()],
-    );
+    siftr(home.path(), project.path(), &["-j", log.to_str().unwrap()]);
     let summary = siftr(home.path(), project.path(), &["summary", "-j"]);
     let mut behaviors: Vec<(&str, Vec<&str>)> = summary["behaviors"]
         .as_array()

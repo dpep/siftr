@@ -1,5 +1,5 @@
 //! Baseline eligibility end to end: a captured run that didn't run the whole suite, replayed with
-//! `siftr ingest --dir`, must not silence the rules for the runs after it.
+//! `siftr DIR`, must not silence the rules for the runs after it.
 
 use std::path::Path;
 use std::process::Command;
@@ -11,8 +11,9 @@ fn ingest(home: &Path, project: &Path, scenario: &str) -> Value {
         .join("fixtures/rails_demo")
         .join(scenario);
     let output = Command::new(env!("CARGO_BIN_EXE_siftr"))
-        .args(["ingest", "--context", "rails_demo", "-j", "--dir"])
+        .arg("-j")
         .arg(dir)
+        .args(["--context", "rails_demo"])
         .current_dir(project)
         .env("SIFTR_HOME", home)
         .env_remove("XDG_DATA_HOME")

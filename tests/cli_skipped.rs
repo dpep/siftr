@@ -45,13 +45,7 @@ impl Sandbox {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures/rails_demo")
             .join(scenario);
-        self.text(&[
-            "ingest",
-            "--context",
-            context,
-            "--dir",
-            dir.to_str().unwrap(),
-        ])
+        self.text(&[dir.to_str().unwrap(), "--context", context])
     }
 }
 

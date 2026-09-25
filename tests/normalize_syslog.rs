@@ -49,7 +49,7 @@ fn one_message_across_days_hosts_and_months_is_one_behavior_with_no_changes() {
                 )
             })
             .collect();
-        let ingested = siftr(&["ingest", "-j", "--context", "system.log"], Some(&log));
+        let ingested = siftr(&["-j", "-", "--context", "system.log"], Some(&log));
         assert_eq!(
             ingested["signals"],
             serde_json::json!([]),

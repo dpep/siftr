@@ -18,13 +18,7 @@ fn history_columns_align_across_one_and_two_digit_run_ids() {
             .unwrap()
     };
     for _ in 0..11 {
-        let ingest = siftr(&[
-            "ingest",
-            "--context",
-            "demo",
-            "--dir",
-            fixture.to_str().unwrap(),
-        ]);
+        let ingest = siftr(&[fixture.to_str().unwrap(), "--context", "demo"]);
         assert!(
             ingest.status.success(),
             "{}",
@@ -60,7 +54,7 @@ fn history_agrees_line_counts_with_their_noun_and_keeps_the_columns() {
     for (name, text) in [("one.log", "only line\n"), ("two.log", "first\nsecond\n")] {
         let path = project.path().join(name);
         std::fs::write(&path, text).unwrap();
-        let ingest = siftr(&["ingest", "--context", "logs", path.to_str().unwrap()]);
+        let ingest = siftr(&[path.to_str().unwrap(), "--context", "logs"]);
         assert!(
             ingest.status.success(),
             "{}",

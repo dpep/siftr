@@ -89,8 +89,9 @@ fn replay(runs: &[bool]) -> Value {
 
 fn ingest(home: &Path, project: &Path, dir: &Path) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_siftr"))
-        .args(["ingest", "--context", "pair", "-j", "--dir"])
+        .arg("-j")
         .arg(dir)
+        .args(["--context", "pair"])
         .current_dir(project)
         .env("SIFTR_HOME", home)
         .env_remove("XDG_DATA_HOME")

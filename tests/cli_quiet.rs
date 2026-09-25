@@ -162,7 +162,7 @@ fn json_refuses_the_flag_before_running_the_command() {
             "-c",
             "echo ran",
         ],
-        &["ingest", "-j", "--quiet-unless-changed", "app.log"],
+        &["-j", "app.log", "--quiet-unless-changed"],
     ];
     sandbox.queries(1);
     for spelling in spellings {
@@ -183,7 +183,7 @@ fn json_refuses_the_flag_before_running_the_command() {
 #[test]
 fn ingest_is_quiet_the_same_way() {
     let sandbox = Sandbox::new();
-    let ingest = ["ingest", "--quiet-unless-changed", "app.log"];
+    let ingest = ["app.log", "--quiet-unless-changed"];
     sandbox.queries(5);
     for run in 1..=3 {
         let out = sandbox.siftr(&ingest);
@@ -272,7 +272,7 @@ fn no_report_json_refuses_the_flag_before_running_the_command() {
     let spellings: [&[&str]; 3] = [
         &["-j", "--no-report", "--", "sh", "-c", "echo ran"],
         &["run", "--no-report", "-j", "--", "sh", "-c", "echo ran"],
-        &["ingest", "-j", "--no-report", "app.log"],
+        &["-j", "app.log", "--no-report"],
     ];
     sandbox.queries(1);
     for spelling in spellings {

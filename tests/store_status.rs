@@ -46,13 +46,7 @@ impl Sandbox {
 
     fn ingest(&self) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/rails_demo/baseline");
-        let args = [
-            "ingest",
-            "--context",
-            "demo",
-            "--dir",
-            dir.to_str().unwrap(),
-        ];
+        let args = [dir.to_str().unwrap(), "--context", "demo"];
         assert!(self.siftr(&args, &[]).status.success());
     }
 

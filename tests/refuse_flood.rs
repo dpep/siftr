@@ -64,7 +64,7 @@ impl Sandbox {
             .collect();
         let path = self.project.path().join(format!("flood{run}.log"));
         std::fs::write(&path, log).unwrap();
-        self.json(&["ingest", "--context", "flood", "-j", path.to_str().unwrap()])
+        self.json(&["-j", path.to_str().unwrap(), "--context", "flood"])
     }
 
     /// One run of `new` stderr messages no earlier run had, every one of them sharing the 60-character
@@ -90,14 +90,7 @@ impl Sandbox {
         let dir = self.project.path().join(format!("prefixed{run}"));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("stderr.txt"), log).unwrap();
-        self.json(&[
-            "ingest",
-            "--context",
-            "prefixed",
-            "-j",
-            "--dir",
-            dir.to_str().unwrap(),
-        ])
+        self.json(&["-j", dir.to_str().unwrap(), "--context", "prefixed"])
     }
 
     fn ingest_fixture(&self, family: &str, scenario: &str) -> Value {
@@ -105,14 +98,7 @@ impl Sandbox {
             .join("fixtures")
             .join(family)
             .join(scenario);
-        self.json(&[
-            "ingest",
-            "--context",
-            family,
-            "-j",
-            "--dir",
-            dir.to_str().unwrap(),
-        ])
+        self.json(&["-j", dir.to_str().unwrap(), "--context", family])
     }
 }
 
