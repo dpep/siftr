@@ -19,7 +19,7 @@ Reproduce: the rule functions in `noise/analyze.rb` mirror
 re-define `presence`/`frequency`/`error`/`latency` with identical logic that
 also returns the baseline values each used, so candidate formulas can be
 derived from the same recorded data. Fixtures were replayed with
-`siftr ingest --context … -j --dir fixtures/<corpus>/<state>` into a scratch
+`siftr fixtures/<corpus>/<state> --context … -j` into a scratch
 `SIFTR_HOME`. The harness was three throwaway scripts; nothing in `src/` or
 `tests/` was changed, and no rule was re-tuned.
 

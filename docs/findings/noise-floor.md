@@ -159,8 +159,9 @@ NEW group ranks last of four and falls below the three shown. Its cost is one
 of the three slots on the 24 comparisons that carry nothing else, and a
 permanently drifting behavior table underneath.
 
-**The normalizer already handles all three shapes.** `siftr follow` on those
-lines returns `#<Demo::Stats:<hex> @lock=#<Thread::Mutex:<hex>>, @n=<int>>` and
+**The normalizer already handles all three shapes.** Reading those lines
+(`siftr -`, into a throwaway `SIFTR_HOME`) templates them as
+`#<Demo::Stats:<hex> @lock=#<Thread::Mutex:<hex>>, @n=<int>>` and
 `is expected to eq <float>`. The masking is not missing; the example path
 deliberately does not use it.
 

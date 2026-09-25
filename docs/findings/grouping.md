@@ -213,10 +213,12 @@ it was there.
 
    **`hunt_grown` is reproducible from the repository**, which §7 previously left only to
    the deleted scratch directory: replay `fixtures/rspec_hunt/a4_clean` three times, then
-   `fixtures/rspec_hunt/a10_fail_warn`, into one context with `ingest --dir`. That is the
-   suite growing 4 → 10 examples in the run that also regressed. Re-measured 2026-09-19 on
-   `main` after the suite-size demotion shipped: still **8 changes in 8 groups**, headed by
-   `ERROR ./spec/a_spec.rb # a a1`, so the target above stands unchanged. The control that
+   `fixtures/rspec_hunt/a10_fail_warn`, into one context by naming each directory
+   (`siftr <dir> --context hunt`). That is the suite growing 4 → 10 examples in the run
+   that also regressed. Re-measured 2026-09-19 on `main` after the suite-size demotion
+   shipped: **8 changes in 8 groups**, headed by `ERROR ./spec/a_spec.rb # a a1`, so the
+   target above stands unchanged. That is the *before* number — with the collapse now
+   shipped the same replay gives **3**, as the Result above records. The control that
    confirms the identification is `a10_fail` in place of `a10_fail_warn` — identical but
    without the deprecation warning — which gives 7.
 
