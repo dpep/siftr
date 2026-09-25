@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A read's command is now printed as a line that still works. A read is stored under the spelling dispatch builds — `siftr ingest --context C X` — and 0.3.0 retired `ingest`, so `siftr history` and `siftr summary` were handing a reader a line that errors when pasted back; an agent evaluating siftr copied one and hit exactly that. The stored value is unchanged, because `docs/json.md` documents it, consumers read it, and two schema migrations match on it: the inverse happens where a human reads it. `siftr ingest --context C X` prints as `siftr X --context C`, `--dir D` as `siftr D --context C`, and an unnamed pipe's `--context ingest` as `siftr -`. `--context` follows the input because `siftr --context C X` is a usage error. Only the shapes dispatch writes are inverted — a wrapped command, or a read an older siftr spelled differently, prints as it stands. `run.command` in `-j` is **unchanged** and still not always retypable.
+
 ## 0.3.0 — 2026-09-25
 
 - `siftr log/production.log`, `cat log | siftr` and `tail -f log | siftr` are one reading path, differing only in whether the input ends. Each **streams every behavior the first time it is seen, while the input is still open**, then records the run, compares it with earlier runs of the same context, and reports. Pointing siftr at a live log used to produce nothing at all: `ingest` read to EOF before it recorded or compared anything, and a `tail -f` never reaches EOF, so it sat silent until the writer went away. `siftr follow` existed to cover the other half — it streamed but recorded nothing, compared nothing and summarised nothing — and a user should not have to know which half they want. The stream comes from the same recording that stores the run, so the two can never disagree about what a template is.

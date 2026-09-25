@@ -78,7 +78,9 @@ These appear inside several commands' documents.
 **`command` is how siftr recorded the run, not always a line you can retype.** A
 read is stored under an internal `siftr ingest …` spelling, whatever the user
 typed — and `ingest` is no longer a word the CLI accepts, so pasting one back is
-an error. Group runs by `context`, never by parsing this.
+an error. Group runs by `context`, never by parsing this. siftr's own human
+output shows the line you would type today instead, so the terminal and this
+field will differ for a read; the field is the record, not the instruction.
 
 `interrupted` is the signal number, or null; an interrupted run is never compared
 and never becomes a baseline. `complete` is false when the run is unfinished,
