@@ -41,12 +41,12 @@ pub struct Env<'a> {
 /// `args` without the program name, rewritten into an explicit subcommand, or why they can't be.
 pub fn dispatch(mut args: Vec<OsString>, env: &Env) -> anyhow::Result<Vec<OsString>> {
     let at = globals_end(&args);
-    let Some(first) = args.get(at).map(|arg| arg.to_string_lossy().into_owned()) else {
+    if args.get(at).is_none() {
         if env.stdin_piped {
             args.push("ingest".into());
         }
         return Ok(args);
-    };
+    }
     let wraps = args[at..]
         .iter()
         .position(|arg| arg == "--")
@@ -63,6 +63,15 @@ pub fn dispatch(mut args: Vec<OsString>, env: &Env) -> anyhow::Result<Vec<OsStri
         args.insert(at, "ingest".into());
         return Ok(args);
     }
+    // A read's input may precede or follow the read's own valueless flags: `siftr -J app.log` and
+    // `siftr app.log -J` are one command, so normalize to the second and let the one ladder below decide
+    // what the input is. Only valueless flags move — `--context app.log` would otherwise have its value
+    // taken for the input — and only when something follows them, so a bare flag stays clap's to answer.
+    let lead = args[at..].iter().take_while(|arg| valueless(arg)).count();
+    if lead > 0 && at + lead < args.len() {
+        args[at..].rotate_left(lead);
+    }
+    let first = args[at].to_string_lossy().into_owned();
     if is_flag(&args[at])
         || first == "help"
         || SUBCOMMANDS.contains(&first.as_str())
@@ -121,6 +130,15 @@ fn globals_end(args: &[OsString]) -> usize {
 fn is_flag(arg: &OsString) -> bool {
     arg.to_str()
         .is_some_and(|arg| arg.len() > 1 && arg.starts_with('-') && arg != "--")
+}
+
+/// A flag a read takes that consumes no argument, and so may sit either side of the input. `--home` and `-j`
+/// are already behind us (`globals_end`); `--dir` and `--context` take values and stay where they were typed.
+fn valueless(arg: &OsString) -> bool {
+    matches!(
+        arg.to_str(),
+        Some("-J" | "--ndjson" | "--quiet-unless-changed" | "--no-report")
+    )
 }
 
 /// A flag that is the whole answer, so it never becomes a subcommand's.
@@ -395,9 +413,46 @@ mod tests {
             "no pipe, no input: still clap's to reject"
         );
         assert_eq!(
-            with(&[], &[], true, &["-J", "nope"]).unwrap(),
-            "-J nope",
-            "an unrecognised positional never becomes a flag's argument"
+            with(&[], &[], true, &["-J", "nope"]).unwrap_err(),
+            "'nope' is not a command, preset or existing file; commands: run, changes, summary, explain, \
+             ack, history, sources, status, gc; presets: cron",
+            "an unrecognised positional never becomes a flag's argument: it is the error, not the flag"
+        );
+    }
+
+    /// `siftr -J app.log` and `siftr app.log -J` are the same command, and only the second used to work.
+    #[test]
+    fn a_reads_valueless_flags_may_precede_its_input() {
+        assert_eq!(
+            with(&["app.log"], &[], false, &["-J", "app.log"]).unwrap(),
+            "ingest --context ctx:app.log app.log -J",
+            "and the input still names its own context"
+        );
+        assert_eq!(
+            with(&["app.log"], &[], false, &["--no-report", "-J", "app.log"]).unwrap(),
+            "ingest --context ctx:app.log app.log --no-report -J"
+        );
+        assert_eq!(
+            with(&[], &[SCENARIO], false, &["-J", SCENARIO]).unwrap(),
+            format!("ingest --dir {SCENARIO} -J"),
+            "a replay too, and it still gets no context of its own"
+        );
+        assert_eq!(
+            with(
+                &["app.log"],
+                &[],
+                false,
+                &["--context", "app.log", "app.log"]
+            )
+            .unwrap(),
+            "--context app.log app.log",
+            "a flag that takes a value is never stepped over, so its value cannot be read as the input; \
+             this stays clap's usage error, as it was"
+        );
+        assert_eq!(
+            with(&[], &[], false, &["-J"]).unwrap(),
+            "-J",
+            "a flag with nothing after it is still clap's to answer"
         );
     }
 
