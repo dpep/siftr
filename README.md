@@ -1,6 +1,13 @@
 # siftr
 
-Wrap your test command. siftr turns its output into behaviors: an example, a request, an SQL statement, a log message. It compares them with the last few runs of the same command and tells you what changed, why it matters, and which raw lines prove it. It isn't log search. You never grep. You get one line saying `UsersController#show` went from 3 queries to 10, with the evidence one command away.
+Wrap your test command, or point siftr at a log. Either way it turns the output into behaviors — an example, a request, an SQL statement, a log message — compares them with the last few runs of the same command (or reads of the same log), and tells you what changed, why it matters, and which raw lines prove it. It isn't log search. You never grep. You get one line saying `UsersController#show` went from 3 queries to 10, with the evidence one command away.
+
+```
+siftr run -- bundle exec rspec     # wrap a command
+siftr log/production.log           # or read a log
+cat log | siftr                    # a pipe
+tail -f log | siftr                # or a live one, reported as it arrives
+```
 
 Local only: a Rust binary and a SQLite file. Built for RSpec + Rails first.
 
@@ -28,6 +35,48 @@ The suite passed, and the N+1 costs under a millisecond, so neither the exit cod
 **A baseline is keyed on the project and the command as you typed it.** This is the one fact to take away before anything else: `bundle exec rspec` and `bundle exec rspec spec/models` are two different contexts with two separate baselines, and the second starts from nothing. Use the same command line every time, or siftr has nothing to compare against. (The project is the nearest directory with a manifest — `Gemfile`, `Cargo.toml`, `package.json` — and [Limitations](#limitations) has the corner cases.)
 
 **Practising? Point siftr at a throwaway data directory.** Every run you make becomes baseline for the next one, so replaying the examples below a few times genuinely changes what siftr says about them — that is the tool working, not a bug, and it means a directory you have been experimenting in will not reproduce them. `siftr --home /tmp/siftr-practice run -- …` (or `SIFTR_HOME=/tmp/siftr-practice`) keeps practice runs out of your real history, and `rm -rf /tmp/siftr-practice` is a clean slate.
+
+## Point it at a log
+
+No wrapping, no subcommand, no config. `siftr FILE`, `cat log | siftr` and `tail -f log | siftr` are one path, differing only in whether the input ends: each reports every behavior the first time it sees it, **while the input is still open**, then records the run and compares it with earlier runs of the same context.
+
+The first read has nothing to compare with, so siftr says what the input held instead:
+
+```
+$ siftr app.log
+siftr: reading; each behavior is reported the first time it is seen
+      1  log            I, [<timestamp> #<int>] INFO -- : Started GET "/users/<int>" for <ip> at <timestamp>
+      2  log            I, [<timestamp> #<int>] INFO -- : Completed <int> OK in <duration> (Views: <duration> | ActiveRecord: <duration>)
+     17  log            E, [<timestamp> #<int>] ERROR -- : PG::ConnectionBad: could not connect to server on port <int>
+r1: 17 lines, 3 behaviors; no earlier runs of this context to compare with
+  in this input, not a comparison:
+    all 3 behaviors, 17 events
+        8  log            I, [<timestamp> #<int>] INFO -- : Completed <int> OK in <duration> (Views: <du…
+        8  log            I, [<timestamp> #<int>] INFO -- : Started GET "/users/<int>" for <ip> at <time…
+        1  log            E, [<timestamp> #<int>] ERROR -- : PG::ConnectionBad: could not connect to ser…
+    error lines: 1 on 1 behavior — E, [<timestamp> #<int>] ERROR -- : PG::ConnectionBad: could not connec…
+    most time: 37ms over 8 occurrences — I, [<timestamp> #<int>] INFO -- : Completed <int> OK in <duratio…
+    seen once: 1 of 3, 5.9% of events
+next: siftr summary r1
+```
+
+The three indented lines at the top are the stream: each behavior as it is first seen, numbered by the line it was first seen on. The block below is a **description of the input, not a verdict on it** — what dominates, what the log itself marked as an error, the largest total duration, how many shapes occurred exactly once. Nothing in it is a finding and it says so, because novelty on a log is not news: treating it as news on a real log produced 10,362 findings and a comparison siftr refused outright ([docs/findings/log-contexts.md](docs/findings/log-contexts.md)).
+
+News needs something to compare against, and siftr wants two earlier reads before anything but ERROR can fire. So read the next two days' logs the same way — both quiet — and on the fourth day the database starts refusing connections:
+
+```
+$ siftr app.log
+siftr: reading; each behavior is reported the first time it is seen
+      1  log            I, [<timestamp> #<int>] INFO -- : Started GET "/users/<int>" for <ip> at <timestamp>
+      2  log            I, [<timestamp> #<int>] INFO -- : Completed <int> OK in <duration> (Views: <duration> | ActiveRecord: <duration>)
+     17  log            E, [<timestamp> #<int>] ERROR -- : PG::ConnectionBad: could not connect to server on port <int>
+r4 vs 3 baseline runs (r1 r2 r3): 1 change
+  s1   FREQUENCY   3 baseline runs  E, [<timestamp> #<int>] ERROR -- : PG::ConnectionBad: could not connect to serve…  count 1 → 12
+       evidence: 8 lines
+next: siftr explain s1
+```
+
+A run that was compared has changes to report, so it gets no description: they would compete. [Reading a log](#reading-a-log) has the rest — a live `tail -f`, what Ctrl-C does, and why a pipe compares with other pipes rather than with the file it came from.
 
 ## Install
 
