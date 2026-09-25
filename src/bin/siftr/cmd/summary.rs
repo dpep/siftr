@@ -9,7 +9,8 @@ use siftr::store::{Order, RunId};
 
 use super::{Globals, found, no_runs, resolve_run};
 use crate::output::{
-    self, behavior_json, duration, exact, plural, printable, roles_label, run_json, stats_json,
+    self, behavior_json, duration, exact, plural, printable, retypable, roles_label, run_json,
+    stats_json,
 };
 
 #[derive(clap::Args)]
@@ -63,7 +64,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             run.id,
             plural(lines, "line"),
             plural(total, "behavior"),
-            run.command
+            retypable(&run.command)
         )?;
         if run.overflow_events > 0 {
             writeln!(

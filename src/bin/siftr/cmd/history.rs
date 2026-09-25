@@ -18,7 +18,7 @@ use siftr::store::{Feedback, FeedbackKind, Pruned, RunId, RunRecord, Store, Stor
 
 use super::{Globals, found};
 use crate::output::{
-    self, age, feedback_json, groups, label, plural, printable, run_json, signal_json,
+    self, age, feedback_json, groups, label, plural, printable, retypable, run_json, signal_json,
 };
 use crate::project;
 
@@ -132,7 +132,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
                 // RunId's Display ignores width, so pad the rendered string.
                 run.id.to_string(),
                 age(run.started_at),
-                printable(&run.command, 80)
+                printable(&retypable(&run.command), 80)
             )?;
         }
         match runs.iter().find(|run| run.end.is_some()) {
@@ -191,7 +191,7 @@ fn sources(
                 "  {:<5} {:>8}  {read:<34}  {}",
                 run.id.to_string(),
                 age(run.started_at),
-                printable(&run.command, 60)
+                printable(&retypable(&run.command), 60)
             )?;
         }
         match rows.first() {

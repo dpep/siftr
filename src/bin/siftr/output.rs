@@ -91,6 +91,7 @@
 //!   doesn't exist), `busy` (another siftr held the store past its wait; worth retrying) or `failed` (anything
 //!   else).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 use std::io::{self, Write};
@@ -1350,6 +1351,76 @@ pub fn age(time: SystemTime) -> String {
     }
 }
 
+/// A stored command as it would be typed today.
+///
+/// A read is recorded under the spelling [`crate::dispatch`] hands it — `siftr ingest --context C X` — and
+/// `ingest` was retired in 0.3.0, so printing that verbatim gives a reader a line that now errors. The stored
+/// value can't change (`docs/json.md` documents it, and two migrations match on it), so the inverse happens
+/// here, where a human reads it. `--context` follows the input because `siftr --context C X` is a usage
+/// error: the order is part of the command, not layout.
+///
+/// Only the shapes dispatch writes are inverted. Anything else — a wrapped command, or a read an older siftr
+/// spelled some other way — is returned as it stands rather than guessed at.
+pub fn retypable(command: &str) -> Cow<'_, str> {
+    let unchanged = Cow::Borrowed(command);
+    let Some(words) = shell_split(command) else {
+        return unchanged;
+    };
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let ["siftr", "ingest", "--context", context, rest @ ..] = words.as_slice() else {
+        return unchanged;
+    };
+    let input = match rest {
+        [] => None,
+        ["--dir", dir] if !dir.is_empty() => Some(*dir),
+        // A path that reads as a flag would come back as one; dispatch never routes such a word to a read.
+        [path] if !path.is_empty() && !path.starts_with('-') => Some(*path),
+        _ => return unchanged,
+    };
+    // `cmd::ingest`'s default for a pipe with no name: `siftr -` alone reproduces the run, so naming it here
+    // would print a word the user never typed.
+    let named = input.is_some() || *context != "ingest";
+    let mut argv = vec!["siftr", input.unwrap_or("-")];
+    if named {
+        argv.extend(["--context", context]);
+    }
+    Cow::Owned(siftr::context::shell_join(&argv))
+}
+
+/// Splits what [`siftr::context::shell_join`] joined: plain words, and single-quoted runs where a quote is
+/// `'\''`. `None` for anything it can't read back, which is then left alone.
+fn shell_split(line: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut started = false;
+    let mut quoted = false;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' if !quoted => {
+                if started {
+                    words.push(std::mem::take(&mut word));
+                    started = false;
+                }
+                continue;
+            }
+            '\'' => quoted = !quoted,
+            '\\' if !quoted => word.push(chars.next()?),
+            // Never emitted unquoted, so this line came from somewhere else.
+            '"' | '$' | '`' if !quoted => return None,
+            c => word.push(c),
+        }
+        started = true;
+    }
+    if quoted {
+        return None;
+    }
+    if started {
+        words.push(word);
+    }
+    Some(words)
+}
+
 /// For a terminal: drops ANSI escapes and control characters, and truncates to `max_chars`.
 pub fn printable(text: &str, max_chars: usize) -> String {
     let mut out = String::with_capacity(text.len().min(max_chars + 3));
@@ -1382,6 +1453,62 @@ pub fn printable(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `tests/cli_retypable.rs` proves these lines actually run; this covers the shapes that are awkward to
+    /// record, and the ones that must come back untouched.
+    #[test]
+    fn a_read_is_printed_as_it_would_be_typed_today() {
+        let cases = [
+            (
+                "siftr ingest --context app app.log",
+                "siftr app.log --context app",
+            ),
+            (
+                "siftr ingest --context demo --dir fixtures/rails_demo/baseline",
+                "siftr fixtures/rails_demo/baseline --context demo",
+            ),
+            // The context an unnamed pipe lands in: `siftr -` alone reproduces it.
+            ("siftr ingest --context ingest", "siftr -"),
+            ("siftr ingest --context app", "siftr - --context app"),
+            // A name the shell would split stays quoted, and its quoting survives the round trip.
+            (
+                "siftr ingest --context 'my logs' app.log",
+                "siftr app.log --context 'my logs'",
+            ),
+            (
+                r"siftr ingest --context 'it'\''s'",
+                r"siftr - --context 'it'\''s'",
+            ),
+            // A file named like the default context still names its own, so the name is kept.
+            (
+                "siftr ingest --context ingest app.log",
+                "siftr app.log --context ingest",
+            ),
+        ];
+        for (stored, typed) in cases {
+            assert_eq!(retypable(stored), typed, "{stored}");
+        }
+    }
+
+    #[test]
+    fn anything_that_is_not_a_read_siftr_recorded_is_left_alone() {
+        let untouched = [
+            // A wrapped command is stored as itself, and `ingest` in it is the child's word, not siftr's.
+            "bundle exec rspec",
+            "sh -c 'siftr ingest --context app app.log'",
+            // Shapes dispatch doesn't write: a guess here would be a line that runs and means something else.
+            "siftr ingest app.log",
+            "siftr ingest --dir capture",
+            "siftr ingest --context app --dir capture extra",
+            "siftr ingest --context app -J",
+            "siftr run -- rspec",
+            // Unbalanced quoting: not something shell_join produced.
+            "siftr ingest --context 'app",
+        ];
+        for command in untouched {
+            assert_eq!(retypable(command), command);
+        }
+    }
 
     #[test]
     fn printable_strips_escapes_and_truncates() {
