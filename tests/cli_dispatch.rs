@@ -162,9 +162,10 @@ fn a_captured_scenario_directory_replays_and_a_plain_one_is_refused() {
     assert_eq!(sandbox.recorded().len(), 1, "nothing else was recorded");
 }
 
-/// A word siftr used to have: answered with the line to type, because the edit distance can't reach it.
+/// The words siftr used to have, and a program it never had: each is answered with the line to type, because
+/// the edit distance below can reach none of them.
 #[test]
-fn a_retired_word_is_answered_with_what_replaced_it() {
+fn a_retired_word_and_a_program_on_path_are_each_answered_not_listed() {
     let sandbox = Sandbox::new();
     let gone = sandbox.output(&["ingest", "--dir", "somewhere"]);
     assert_eq!(code(&gone), 2);
@@ -178,6 +179,16 @@ fn a_retired_word_is_answered_with_what_replaced_it() {
         "--dir is the half a reader would think they had lost: {}",
         stderr(&gone)
     );
+
+    // `sh` is on PATH everywhere this test runs; siftr still refuses to run it, and says how.
+    let program = sandbox.output(&["sh", "-c", "echo hi"]);
+    assert_eq!(code(&program), 2);
+    assert!(
+        stderr(&program).contains("to run it: siftr -- sh -c 'echo hi'"),
+        "{}",
+        stderr(&program)
+    );
+    assert!(sandbox.recorded().is_empty(), "nothing was ever run");
 }
 
 #[test]

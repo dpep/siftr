@@ -8,7 +8,8 @@
 //! 5. nothing but flags, with stdin piped or redirected: read stdin (`tail -f log | siftr -J`),
 //!    except `--help`/`--version`, which answer for themselves;
 //! 6. nothing at all otherwise: clap prints help;
-//! 7. any other word is an error naming the subcommands and presets, never input.
+//! 7. any other word is an error naming the subcommands and presets — or, when it is a program on
+//!    PATH, the line that wraps it — never input.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -33,6 +34,8 @@ pub struct Env<'a> {
     pub path_kind: &'a dyn Fn(&Path) -> Option<PathKind>,
     /// The context a file read by path compares within.
     pub context_for: &'a dyn Fn(&Path) -> String,
+    /// Whether a word names a program a shell would find, for the error that says how to wrap it.
+    pub on_path: &'a dyn Fn(&str) -> bool,
 }
 
 /// `args` without the program name, rewritten into an explicit subcommand, or why they can't be.
@@ -97,7 +100,7 @@ pub fn dispatch(mut args: Vec<OsString>, env: &Env) -> anyhow::Result<Vec<OsStri
             crate::cmd::ingest::scenario_files().join(", ")
         ))),
         None if first.contains('/') => Err(output::not_found(format!("no such file: {first}"))),
-        None => Err(output::usage(unknown(&first))),
+        None => Err(output::usage(unknown(&first, &args[at + 1..], env))),
     }
 }
 
@@ -144,13 +147,27 @@ const RETIRED: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn unknown(word: &str) -> String {
+/// `word` isn't a command: say what it is instead of handing back the list, whenever siftr can tell. `rest` is
+/// what followed it, so a program on PATH gets a line to paste rather than a form to adapt.
+fn unknown(word: &str, rest: &[OsString], env: &Env) -> String {
     if let Some((_, replacement, why)) = RETIRED.iter().find(|(name, ..)| *name == word) {
         let why = match *why {
             "" => String::new(),
             why => format!(" — {why}"),
         };
         return format!("'{word}' was removed; use `{replacement}`{why}");
+    }
+    // siftr reserves its first word, as `git` and `cargo` do, so a program never runs by happening to be
+    // installed — the same command line would then mean different things on different machines. The
+    // ergonomics go in the error instead, ahead of "did you mean" because `gcc` is not a misspelt `gc`.
+    if (env.on_path)(word) {
+        let argv: Vec<String> = std::iter::once(word.to_owned())
+            .chain(rest.iter().map(|arg| arg.to_string_lossy().into_owned()))
+            .collect();
+        return format!(
+            "'{word}' is not a command, preset or existing file; to run it: siftr -- {}",
+            siftr::context::shell_join(&argv)
+        );
     }
     let nearest = SUBCOMMANDS
         .iter()
@@ -190,6 +207,9 @@ mod tests {
 
     /// A directory whose name starts with this is a captured scenario; any other is a plain directory.
     const SCENARIO: &str = "scenario";
+    /// The one program these tests pretend is installed: what is really on the box must never decide a row.
+    const INSTALLED: &str = "rspec";
+
     fn with(files: &[&str], dirs: &[&str], piped: bool, args: &[&str]) -> Result<String, String> {
         let path_kind = |path: &Path| {
             let path = path.to_str().unwrap();
@@ -204,10 +224,12 @@ mod tests {
             }
         };
         let context_for = |path: &Path| format!("ctx:{}", path.display());
+        let on_path = |word: &str| word == INSTALLED;
         let env = Env {
             stdin_piped: piped,
             path_kind: &path_kind,
             context_for: &context_for,
+            on_path: &on_path,
         };
         dispatch(args.iter().map(OsString::from).collect(), &env)
             .map(|args| {
@@ -323,6 +345,27 @@ mod tests {
         );
         let far = with(&[], &[], false, &["xyzzy"]).unwrap_err();
         assert!(!far.contains("did you mean"), "{far}");
+    }
+
+    /// A program still isn't a subcommand — running one because it happens to be installed would make the same
+    /// command line mean different things on different machines. But the error can hand back the line that
+    /// does run it, arguments and all, so it is a paste rather than a form to fill in.
+    #[test]
+    fn a_program_on_path_is_told_how_to_be_wrapped_not_run() {
+        let wrap = with(
+            &[],
+            &[],
+            false,
+            &[INSTALLED, "spec/a_spec.rb", "-e", "n + 1"],
+        )
+        .unwrap_err();
+        assert_eq!(
+            wrap,
+            "'rspec' is not a command, preset or existing file; to run it: siftr -- rspec spec/a_spec.rb -e 'n + 1'"
+        );
+        // Not installed: still the list, and still the near match.
+        let absent = with(&[], &[], false, &["statu"]).unwrap_err();
+        assert!(absent.contains("did you mean 'status'?"), "{absent}");
     }
 
     /// `-J` is ingest's flag, not a global, so a lone one used to reach clap as a subcommandless

@@ -117,6 +117,7 @@ fn main() -> ExitCode {
         stdin_piped: stdin_piped(),
         path_kind: &path_kind,
         context_for: &reading_context,
+        on_path: &on_path,
     };
     let args = match dispatch::dispatch(raw, &env) {
         Ok(args) => args,
@@ -191,6 +192,18 @@ fn path_kind(path: &Path) -> Option<dispatch::PathKind> {
         (false, _) => dispatch::PathKind::File,
         (true, true) => dispatch::PathKind::Scenario,
         (true, false) => dispatch::PathKind::Dir,
+    })
+}
+
+/// Whether a bare word names a program a shell would find. Only for the error that says how to wrap it: siftr
+/// reserves its first word, so what is installed here never decides what a command line means.
+fn on_path(word: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| {
+            std::fs::metadata(dir.join(word))
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        })
     })
 }
 
