@@ -102,22 +102,27 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
             // Not `plural`: the count stays right-aligned in its own column.
             let lines = |n: u64| format!("{n:>8} {:<5}", if n == 1 { "line" } else { "lines" });
             let status = match run.end {
-                Some(end) if run.interrupted.is_some() => format!(
-                    "interrupted (signal {}) {}",
-                    run.interrupted.unwrap_or_default(),
-                    lines(end.lines).trim_end()
-                ),
                 Some(end) => {
                     let exit = end
                         .exit_code
                         .map_or_else(|| "-".to_owned(), |code| code.to_string());
-                    // Its changes don't mean what a whole run's do.
-                    let marker = if complete { "" } else { "  incomplete" };
-                    format!(
-                        "exit {exit:<3} {}  {:<10}{marker}",
-                        lines(end.lines),
+                    // A run siftr declined to compare has no verdict, so the cell stays empty rather than
+                    // reporting "0 changes" about a comparison that never happened. It keeps its width:
+                    // what follows belongs to the same columns as every other row's.
+                    let verdict = if run.interrupted.is_some() || run.uncompared.is_some() {
+                        String::new()
+                    } else {
                         plural(changes as u64, "change")
-                    )
+                    };
+                    // Rare facts are markers rather than columns: a column apiece would pad every row for
+                    // the sake of a few. Its changes don't mean what a whole run's do.
+                    let marks = match run.interrupted {
+                        // The interruption is *why* it is incomplete, so saying both says one thing twice.
+                        Some(signal) => format!("  interrupted (signal {signal})"),
+                        None if !complete => "  incomplete".to_owned(),
+                        None => String::new(),
+                    };
+                    format!("exit {exit:<3} {}  {verdict:<10}{marks}", lines(end.lines))
                 }
                 None => "unfinished".to_owned(),
             };
