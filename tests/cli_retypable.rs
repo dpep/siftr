@@ -1,9 +1,12 @@
-//! A command siftr prints to a human has to be one that still works when it is retyped.
+//! siftr never presents something as a command unless it is one, and a command it prints has to work when it
+//! is retyped.
 //!
-//! A read is stored under dispatch's own spelling — `siftr ingest --context C X` — and `ingest` was retired in
-//! 0.3.0, so printing that verbatim hands the reader a line that errors. The store keeps it (`docs/json.md`,
-//! and two migrations match on it); only the printing is inverted. So these tests retype what was printed and
-//! check the run it records lands in the same context, rather than comparing strings to strings.
+//! Two ways that broke. A read is stored under dispatch's own spelling — `siftr ingest --context C X` — and
+//! `ingest` was retired in 0.3.0, so printing that verbatim hands the reader a line that errors; the store
+//! keeps it (`docs/json.md`, and two migrations match on it), so only the printing is inverted. And a read's
+//! *context* is its `--context` name rather than a command line at all, so the places that printed one as a
+//! command were offering `ingest` or `app` to be typed. These tests retype what was printed and check the run
+//! it records lands in the same context, rather than comparing strings to strings.
 
 use std::io::Write;
 use std::path::Path;
@@ -209,4 +212,51 @@ fn a_wrapped_command_is_printed_exactly_as_it_was_stored() {
     let stored = run["command"].as_str().unwrap().to_owned();
     assert_eq!(stored, "/bin/echo 'ingest --context x'");
     assert_eq!(sandbox.printed(run["id"].as_str().unwrap()), stored);
+}
+
+/// The first-run note exists to be acted on: it names the baseline this command isn't joining so the reader
+/// can join it instead. A read's context is its `--context` name, which nothing can be typed from, so the
+/// note carries the neighbouring run's own command.
+#[test]
+fn the_first_run_note_names_its_neighbour_by_a_command_that_joins_it() {
+    let sandbox = Sandbox::new();
+    sandbox.siftr(&["logs/app.log", "--context", "app"]);
+    let fresh = sandbox.siftr(&["run", "--", "/bin/echo", "hi"]);
+    let note = String::from_utf8_lossy(&fresh.stderr).into_owned()
+        + &String::from_utf8_lossy(&fresh.stdout);
+
+    assert!(note.contains("new baseline:"), "{note}");
+    assert!(
+        note.contains("rather than joining `siftr logs/app.log --context app`"),
+        "the neighbour has to be a line that joins it:\n{note}"
+    );
+    // The reader is invited to type it, so it had better work — and land where the note said.
+    let retyped = sandbox.retype("siftr logs/app.log --context app");
+    assert!(
+        retyped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retyped.stderr)
+    );
+    assert_eq!(sandbox.newest()["context"].as_str().unwrap(), "app");
+}
+
+/// `siftr status` lists contexts, and its column said COMMAND over them — so a read appeared as the command
+/// `ingest`, which is the retired word. The values are what `--context` takes, so that is what heads them.
+#[test]
+fn status_heads_the_contexts_it_lists_with_the_word_that_selects_one() {
+    let sandbox = Sandbox::new();
+    sandbox.siftr(&["-"]);
+    let stdout = sandbox.stdout(&["status"]);
+    let header = stdout
+        .lines()
+        .find(|line| line.contains("NEWEST"))
+        .unwrap_or_else(|| panic!("no listing header:\n{stdout}"));
+    assert!(header.ends_with("CONTEXT"), "{stdout}");
+    assert!(!header.contains("COMMAND"), "{stdout}");
+    // The row under it is a context name and never was a command: that is the whole reason the header moved.
+    assert!(
+        stdout.lines().any(|line| line.ends_with("  ingest")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("1 run of 1 context;"), "{stdout}");
 }

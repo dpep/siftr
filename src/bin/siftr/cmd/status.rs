@@ -17,7 +17,7 @@ use crate::output::{self, age, plural, printable};
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// How many commands to list, most runs first
+    /// How many contexts to list, most runs first
     #[arg(short = 'n', long, default_value_t = 5)]
     limit: usize,
 }
@@ -116,7 +116,7 @@ fn human(
             w,
             "runs      {} of {}; oldest {} {}, newest {} {}",
             plural(runs, "run"),
-            plural(db.contexts.len() as u64, "command"),
+            plural(db.contexts.len() as u64, "context"),
             oldest.0,
             age(oldest.1),
             newest.0,
@@ -137,7 +137,9 @@ fn human(
     if !db.contexts.is_empty() {
         writeln!(
             w,
-            "  {:>6} {:>6} {:>9} {:>9}  {:<8}  COMMAND",
+            // CONTEXT, not COMMAND: these are `context.name()`, and a read's is its `--context` name rather
+            // than a line to type. The column is what `--context` takes, so it is named for the flag.
+            "  {:>6} {:>6} {:>9} {:>9}  {:<8}  CONTEXT",
             "RUNS", "STATS", "EVIDENCE", "CAPTURES", "NEWEST"
         )?;
         for c in db.contexts.iter().take(limit) {
@@ -156,7 +158,7 @@ fn human(
             writeln!(
                 w,
                 "  … and {} more",
-                plural((db.contexts.len() - limit) as u64, "command")
+                plural((db.contexts.len() - limit) as u64, "context")
             )?;
         }
     }

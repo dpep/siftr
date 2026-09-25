@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use siftr::context::Context;
 use siftr::observation::Stream;
-use siftr::store::{Store, StoredSignal};
+use siftr::store::{RunRecord, Store, StoredSignal};
 use signal_hook::consts::{SIGINT, SIGPIPE, SIGTERM};
 
 use super::Globals;
@@ -594,7 +594,7 @@ const NEIGHBOUR_WINDOW: usize = 50;
 fn neighbour(store: &Store, context: &Context) -> Option<Neighbour> {
     let recent = store.runs(context.project(), NEIGHBOUR_WINDOW).ok()?;
     let more = recent.len() == NEIGHBOUR_WINDOW;
-    let mut counted: Vec<(&str, u64, siftr::store::RunId)> = Vec::new();
+    let mut counted: Vec<(&str, u64, &RunRecord)> = Vec::new();
     for run in &recent {
         if run.context == *context || run.end.is_none() || run.interrupted.is_some() {
             continue;
@@ -605,14 +605,16 @@ fn neighbour(store: &Store, context: &Context) -> Option<Neighbour> {
         {
             Some((_, runs, _)) => *runs += 1,
             // Newest first, so the first run seen for a context is also its most recent.
-            None => counted.push((run.context.name(), 1, run.id)),
+            None => counted.push((run.context.name(), 1, run)),
         }
     }
-    let (command, runs, _) = counted
+    let (_, runs, newest) = counted
         .into_iter()
-        .max_by_key(|&(name, runs, id)| (shared_words(context.name(), name), runs, id))?;
+        .max_by_key(|&(name, runs, run)| (shared_words(context.name(), name), runs, run.id))?;
+    // Its newest run's command, not the context's name: a read's context is the `--context` value, which is
+    // not a line anyone can type, and the note exists to be acted on. A wrapped run's two are the same string.
     Some(Neighbour {
-        command: command.to_owned(),
+        command: newest.command.clone(),
         runs,
         more,
     })

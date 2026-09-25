@@ -294,7 +294,8 @@ pub struct Unread {
 
 /// A context in the same project that already has history a new context won't share.
 pub struct Neighbour {
-    /// Its command line, as the user would retype it.
+    /// Its newest run's command, as stored. A read's context is its `--context` name rather than a command
+    /// line, so the run's own command is what a reader can act on; for a wrapped run the two are one string.
     pub command: String,
     /// Its finished runs among those looked at.
     pub runs: u64,
@@ -335,7 +336,7 @@ impl FirstRun<'_> {
                 "  new baseline: a baseline is keyed on the project and the command as you typed it, so \
                  `{}` starts from nothing rather than joining `{}` ({} here)",
                 self.command,
-                near.command,
+                retypable(&near.command),
                 near.runs_label(),
             )?;
         }

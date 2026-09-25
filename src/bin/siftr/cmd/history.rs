@@ -28,7 +28,7 @@ pub struct Args {
     #[arg(short = 'n', long, default_value_t = 20)]
     limit: usize,
 
-    /// Only runs of this context (the command, or an `ingest --context` name)
+    /// Only runs of this context (a wrapped command, or a read's `--context` name)
     ///
     /// A context is one project plus one command line exactly as typed, and that is what makes two
     /// runs comparable: `bundle exec rspec` and `bundle exec rspec spec/models` are two contexts
