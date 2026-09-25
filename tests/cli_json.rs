@@ -32,7 +32,7 @@ fn nothing_found_is_still_a_document() {
     let cases: [(&[&str], Value); 4] = [
         (
             &["-j", "changes"],
-            json!({ "run": null, "behaviors": 0, "streams": null, "baseline_runs": [], "skipped_runs": [], "changes": 0, "groups_total": 0, "signals_total": 0, "groups": [], "signals": [], "open_signals": [] }),
+            json!({ "run": null, "behaviors": 0, "streams": null, "baseline_runs": [], "skipped_runs": [], "changes": 0, "groups_total": 0, "signals_total": 0, "groups": [], "signals": [], "open_signals": [], "described": null }),
         ),
         (
             &["-j", "summary"],

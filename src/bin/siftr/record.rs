@@ -5,8 +5,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context as _, Result};
+use siftr::aggregate::Exemplar;
 use siftr::analyze::{Analysis, Analyzer, RunSource};
 use siftr::baseline::{Baseline, Ineligible, MAX_RUNS};
+use siftr::behavior::Behavior;
 use siftr::context::Context;
 use siftr::interpret::resources::Resources;
 use siftr::normalize::secrets::{Mode, Redactor, Scanner};
@@ -164,6 +166,27 @@ impl Recording {
         splitter.feed_raw(bytes, |raw| sink.line(stream, scanner, raw));
     }
 
+    /// Behaviors first recorded since the last call, with the occurrence each was first seen at, so a
+    /// caller can speak as the input arrives instead of only at [`Recording::finish`].
+    pub fn drain_new_behaviors(&mut self, report: impl FnMut(&Behavior, &Exemplar)) {
+        self.analyzer.drain_new_behaviors(report);
+    }
+
+    /// Puts each stream's buffered partial line through the analyzer. [`Recording::finish`] does this too
+    /// and a second call drains nothing, so a caller streaming new behaviors calls this at EOF to see the
+    /// last line of an input that ended without a newline.
+    pub fn flush(&mut self) {
+        let mut sink = Sink {
+            capture: &mut self.capture,
+            redactor: &mut self.redactor,
+            redact: self.redact,
+            analyzer: &mut self.analyzer,
+        };
+        for (stream, splitter, scanner) in &mut self.streams {
+            splitter.finish_raw(|raw| sink.line(stream, scanner, raw));
+        }
+    }
+
     pub fn finish(self, exit_code: Option<i32>) -> Result<Recorded> {
         let (mut store, run, context, wall, analysis, streams) = self.analyze();
 
@@ -235,29 +258,22 @@ impl Recording {
 
     /// Drains buffered lines through the analyzer and closes the capture: shared tail of `finish` and
     /// `finish_interrupted`.
-    fn analyze(self) -> (Store, RunId, Context, Duration, Analysis, Vec<String>) {
+    fn analyze(mut self) -> (Store, RunId, Context, Duration, Analysis, Vec<String>) {
+        // The input's own span, before siftr's own work on it.
+        let wall = self.started.elapsed();
+        self.flush();
         let Recording {
             store,
             run,
             context,
-            mut capture,
-            mut streams,
+            capture,
+            streams,
             sources,
             mut redactor,
             redact,
-            mut analyzer,
-            started,
+            analyzer,
+            ..
         } = self;
-        let wall = started.elapsed();
-        let mut sink = Sink {
-            capture: &mut capture,
-            redactor: &mut redactor,
-            redact,
-            analyzer: &mut analyzer,
-        };
-        for (stream, splitter, scanner) in &mut streams {
-            splitter.finish_raw(|raw| sink.line(stream, scanner, raw));
-        }
         let captured = captured(&streams);
         if let Some(capture) = capture
             && let Err(error) = capture.finish()

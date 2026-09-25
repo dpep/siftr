@@ -76,6 +76,12 @@ impl Report {
         Ok(())
     }
 
+    /// Whether siftr may print as the input arrives. Neither flag survives streaming: one asks for nothing
+    /// at all, the other for nothing *until* something changed, which isn't known until the input ends.
+    pub fn streams(&self) -> bool {
+        self.shows(&[], &[])
+    }
+
     /// Worth reading: a change `changes` counts, or one still open. A first run, a setup-only change and an
     /// interrupted run aren't. `--no-report` overrides all of that: nothing of siftr's own prints, ever.
     pub fn shows(&self, signals: &[StoredSignal], open: &[StoredSignal]) -> bool {
@@ -634,6 +640,8 @@ fn report(
         skipped_runs: &recorded.skipped_runs,
         signals: &recorded.signals,
         open_signals: open,
+        // `ingest` describes a run it just read; a run read back, and `run` itself, have no such block.
+        described: None,
     };
     let printed = match (json, first) {
         // The document on stdout is a contract shared with `changes`, which can't reconstruct the note; it

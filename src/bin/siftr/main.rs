@@ -21,12 +21,13 @@ Without a subcommand:
   siftr -- CMD…    same as siftr run -- CMD…
   siftr FILE       same as siftr ingest FILE, compared with earlier ingests of that file (./cron for a file named like a preset)
   siftr -          ingest stdin; a bare siftr does too when stdin is piped
+  Each of these streams every behavior the first time it is seen, then reports when the input ends.
+  Ctrl-C ends the input: the run is kept and reported, but never compared and never used as a baseline.
   Any other word is an error, never a file name.
 
 Exit codes:
   run      the command's own code; 125 if siftr fails before starting it, 126 if it can't be executed, 127 if not found
-  ingest   0 recorded, 2 error
-  follow   0 the input ended, 2 error
+  ingest   0 recorded, 2 error (Ctrl-C included: the run is kept)
   cron     0 found jobs or cron output, 1 nothing found, 2 error
   sources  0 listed, 2 error
   queries  0 results, 1 nothing found, 2 error
@@ -37,7 +38,8 @@ Exit codes:
 Machine-readable output:
   -j prints exactly one JSON document on stdout, on every command, empty results and errors included.
   Every document's fields, and the shapes that differ between commands: docs/json.md
-  siftr follow streams, so it takes -J (one compact object per line) instead: -j has no end to print.
+  -J streams instead: one compact object per behavior as it is first seen, then the -j document as one
+  final line. Use it wherever -j would have to wait for an input that may never end.
 
 What siftr stores (the command's own output always passes through unchanged):
   SIFTR_REDACT=secrets  default: credentials (tokens, keys, passwords, cookies) are masked before anything is stored
@@ -49,7 +51,7 @@ Examples:
   siftr run -- bundle exec rspec
   siftr --quiet-unless-changed -- backup.sh   silent unless something changed, for cron, CI and git hooks
   siftr log/production.log
-  tail -f log/production.log | siftr follow
+  tail -f log/production.log | siftr
   siftr sources -- bundle exec rspec
   siftr cron
   siftr changes
@@ -82,10 +84,8 @@ struct Cli {
 enum Command {
     /// Run a command, passing its output through, and record what it did
     Run(cmd::run::Args),
-    /// Record a file or stdin as if it were a command's output
+    /// Record a file or stdin as if it were a command's output, streaming each behavior as it is first seen
     Ingest(cmd::ingest::Args),
-    /// Report each shape on stdin the first time it's seen, while the input is still open. Records nothing
-    Follow(cmd::follow::Args),
     /// Preset: what runs on a schedule here, where cron's output goes, and how to record a job. Read-only
     Cron(cmd::cron::Args),
     /// Behavioral changes in a run
@@ -138,7 +138,6 @@ fn main() -> ExitCode {
         // `run` owns its exit code: the child's, or siftr's own 125/126/127.
         Command::Run(args) => return cmd::run::run(args, &globals),
         Command::Ingest(args) => cmd::ingest::run(args, &globals),
-        Command::Follow(args) => cmd::follow::run(args, &globals),
         Command::Cron(args) => cmd::cron::run(args, &globals),
         Command::Changes(args) => cmd::changes::run(args, &globals),
         Command::Summary(args) => cmd::summary::run(args, &globals),

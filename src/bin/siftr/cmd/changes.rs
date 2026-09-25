@@ -65,6 +65,8 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         skipped_runs: &skipped,
         signals: &signals,
         open_signals: &open,
+        // `ingest` describes a run it just read; a run read back, and `run` itself, have no such block.
+        described: None,
     };
     output::emit(
         globals.json,

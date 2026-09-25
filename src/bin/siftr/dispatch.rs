@@ -14,8 +14,7 @@ use std::path::Path;
 use crate::output;
 
 pub const SUBCOMMANDS: &[&str] = &[
-    "run", "ingest", "follow", "changes", "summary", "explain", "ack", "history", "sources",
-    "status", "gc",
+    "run", "ingest", "changes", "summary", "explain", "ack", "history", "sources", "status", "gc",
 ];
 pub const PRESETS: &[&str] = &["cron"];
 
@@ -102,17 +101,27 @@ fn is_flag(arg: &OsString) -> bool {
         .is_some_and(|arg| arg.len() > 1 && arg.starts_with('-') && arg != "--")
 }
 
-/// Commands that were removed, and the exact thing to type instead. A word a user's fingers still
-/// type deserves the answer rather than the whole list — and the edit distance below cannot reach
-/// either of these: `dismiss` is nowhere near `ack`, nor `evidence` near `explain`.
-const RETIRED: &[(&str, &str)] = &[
-    ("dismiss", "siftr ack SIGNAL --wrong"),
-    ("evidence", "siftr explain BEHAVIOR"),
+/// Commands that were removed, the exact thing to type instead, and — where the replacement does more than
+/// the word did — what the reader would otherwise assume they had lost. A word a user's fingers still type
+/// deserves the answer rather than the whole list, and the edit distance below cannot reach any of these:
+/// `dismiss` is nowhere near `ack`, nor `evidence` near `explain`, nor `follow` near anything.
+const RETIRED: &[(&str, &str, &str)] = &[
+    ("dismiss", "siftr ack SIGNAL --wrong", ""),
+    ("evidence", "siftr explain BEHAVIOR", ""),
+    (
+        "follow",
+        "siftr - (or siftr FILE)",
+        "it streams the same behaviors, and then records and compares the run",
+    ),
 ];
 
 fn unknown(word: &str) -> String {
-    if let Some((_, replacement)) = RETIRED.iter().find(|(name, _)| *name == word) {
-        return format!("'{word}' was removed; use `{replacement}`");
+    if let Some((_, replacement, why)) = RETIRED.iter().find(|(name, ..)| *name == word) {
+        let why = match *why {
+            "" => String::new(),
+            why => format!(" — {why}"),
+        };
+        return format!("'{word}' was removed; use `{replacement}`{why}");
     }
     let nearest = SUBCOMMANDS
         .iter()
@@ -268,12 +277,22 @@ mod tests {
     /// the edit distance to find: answer it instead of handing back the whole list.
     #[test]
     fn a_retired_command_names_what_replaced_it() {
-        for (word, replacement) in RETIRED {
+        for (word, replacement, _) in RETIRED {
             let gone = with(&[], &[], false, &[word]).unwrap_err();
-            assert_eq!(gone, format!("'{word}' was removed; use `{replacement}`"));
+            assert!(
+                gone.starts_with(&format!("'{word}' was removed; use `{replacement}`")),
+                "{gone}"
+            );
+            // Each is beyond the did-you-mean fallback, which is the only reason this table exists.
+            assert!(
+                SUBCOMMANDS
+                    .iter()
+                    .chain(PRESETS)
+                    .all(|name| distance(word, name) > 2)
+            );
         }
-        // Each is beyond the did-you-mean fallback, which is the only reason this table exists.
-        assert!(distance("dismiss", "ack") > 2);
-        assert!(distance("evidence", "explain") > 2);
+        // `follow` did less than what replaced it, so the message has to say so or it reads as a loss.
+        let follow = with(&[], &[], false, &["follow"]).unwrap_err();
+        assert!(follow.contains("records and compares the run"), "{follow}");
     }
 }

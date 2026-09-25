@@ -44,7 +44,16 @@
 //!   changes are left out, and so is any change headed by DISAPPEARED). Earlier is not limited to
 //!   `baseline_runs`: a change that was fixed and came back is still here however long ago it was raised, so
 //!   it keeps being listed, while one nobody ever fixed settles and drops off once every run siftr compares
-//!   against has it.
+//!   against has it. `described` is null wherever a comparison was made; on a run that made none — a first
+//!   run of a context, an interrupted one, or one whose comparison was refused — `ingest` fills it with what
+//!   the input held and nothing about what changed: `behaviors` and `events` (the run's own behaviors
+//!   carrying at least one event, `run.resources` excluded, and their total occurrences), `head` (the most
+//!   frequent few, each {`behavior`, `stats`}), `head_share` (the percentage of `events` they carry, or null
+//!   when `head` is every behavior there is), `errors` ({`lines`, `behaviors`, `worst`} — lines the input
+//!   itself marked as errors, not siftr's judgement; null when none did), `slowest` ({`behavior`,
+//!   `total_ms`, `count`} — the largest total parsed duration in this run, which is not a claim that it is
+//!   slow; null when no line carried one) and `seen_once` ({`behaviors`, `share_of_events`}, null when every
+//!   behavior recurred). Shares are percentages rounded to two significant figures where they are built.
 //! - feedback (`ack -j`, `dismiss -j`): `kind` (surfaced|investigated|evidence_requested|dismissed|acked),
 //!   `at_ms`, `command` (the siftr command that recorded it; for surfaced, where it was shown), `interface`
 //!   (human|json), `run` (whose data was shown), `behavior` (16 hex), `signal` (id, or null when a
@@ -361,6 +370,174 @@ pub fn note_first_run(run: RunId, first: &FirstRun<'_>) {
     let _ = first.render(&mut out);
 }
 
+/// How many of a run's own behaviors the description lists.
+const DESCRIBED_HEAD: usize = 3;
+
+/// What a run's own aggregates say about the input, for a run that made no comparison — a first run of a
+/// context, an interrupted one, or one whose comparison was refused.
+///
+/// Every number here is a count of this run's own events. Nothing is a change, a judgement or a prediction:
+/// with no baseline there is nothing to be different from, and `docs/findings/log-contexts.md` §2–5 measured
+/// what happens when novelty in a log is treated as signal — 67% of templates are one-offs carrying 4.8% of
+/// lines, and calling them findings produced 10,362 of them and a refused run. So this describes and stops.
+pub struct Described {
+    /// Behaviors carrying at least one event, so the run-level `run.resources` behavior (no line behind it,
+    /// and no rule ever judges it) is out of every count below.
+    pub behaviors: u64,
+    pub events: u64,
+    /// The most frequent few, most frequent first.
+    pub head: Vec<(Behavior, Stats)>,
+    /// The share of events `head` carries, already rounded; `None` when the head is every behavior there is,
+    /// where "the top 3 of 3 carry 100%" states nothing.
+    pub head_share: Option<f64>,
+    /// Lines the input itself marked as errors, the behaviors they fell on, and the worst of those.
+    pub errors: Option<(u64, u64, Behavior)>,
+    /// The behavior with the most total parsed duration: the largest number in this run, which is not a
+    /// claim that it is slow. `None` when no line carried a duration.
+    pub slowest: Option<(Behavior, DurationSummary)>,
+    /// Behaviors that occurred exactly once and the share of events they carry, already rounded.
+    pub once: Option<(u64, f64)>,
+}
+
+impl Described {
+    /// `rows` is every behavior of the run, most frequent first, as [`crate::cmd::describe`] reads them.
+    pub fn of(rows: Vec<(Behavior, Stats)>) -> Option<Described> {
+        let mut rows: Vec<(Behavior, Stats)> = rows
+            .into_iter()
+            .filter(|(behavior, _)| behavior.kind != Kind::Resources)
+            .collect();
+        let events: u64 = rows.iter().map(|(_, stats)| stats.count).sum();
+        if rows.is_empty() || events == 0 {
+            return None;
+        }
+        let behaviors = rows.len() as u64;
+        let head_events: u64 = rows
+            .iter()
+            .take(DESCRIBED_HEAD)
+            .map(|(_, stats)| stats.count)
+            .sum();
+        let head_share = (rows.len() > DESCRIBED_HEAD).then(|| share(head_events, events));
+        let error_lines: u64 = rows.iter().map(|(_, stats)| stats.errors).sum();
+        let errors = rows
+            .iter()
+            .filter(|(_, stats)| stats.errors > 0)
+            .max_by_key(|(_, stats)| stats.errors)
+            .map(|(behavior, _)| {
+                let on = rows.iter().filter(|(_, s)| s.errors > 0).count() as u64;
+                (error_lines, on, behavior.clone())
+            });
+        let slowest = rows
+            .iter()
+            .filter_map(|(behavior, stats)| Some((behavior, exact(stats.duration?))))
+            .max_by_key(|(_, duration)| duration.total)
+            .map(|(behavior, duration)| (behavior.clone(), duration));
+        let once_count = rows.iter().filter(|(_, stats)| stats.count == 1).count() as u64;
+        let once = (once_count > 0).then(|| (once_count, share(once_count, events)));
+        rows.truncate(DESCRIBED_HEAD);
+        Some(Described {
+            behaviors,
+            events,
+            head: rows,
+            head_share,
+            errors,
+            slowest,
+            once,
+        })
+    }
+
+    pub fn json(&self) -> Value {
+        json!({
+            "behaviors": self.behaviors,
+            "events": self.events,
+            "head": self.head.iter().map(|(behavior, stats)| json!({
+                "behavior": behavior_json(behavior),
+                "stats": stats_json(stats),
+            })).collect::<Vec<_>>(),
+            "head_share": self.head_share,
+            "errors": self.errors.as_ref().map(|(lines, on, worst)| json!({
+                "lines": lines,
+                "behaviors": on,
+                "worst": behavior_json(worst),
+            })),
+            "slowest": self.slowest.as_ref().map(|(behavior, d)| json!({
+                "behavior": behavior_json(behavior),
+                "total_ms": micros(d.total) / 1000,
+                "count": d.count,
+            })),
+            "seen_once": self.once.map(|(behaviors, of_events)| json!({
+                "behaviors": behaviors,
+                "share_of_events": of_events,
+            })),
+        })
+    }
+
+    fn render(&self, w: &mut dyn Write) -> io::Result<()> {
+        // Said once, above everything under it: with no baseline, none of this is a change.
+        writeln!(w, "  in this input, not a comparison:")?;
+        match self.head_share {
+            Some(share) => writeln!(
+                w,
+                "    top {} of {} carry {}% of {}",
+                self.head.len(),
+                plural(self.behaviors, "behavior"),
+                share,
+                plural(self.events, "event"),
+            )?,
+            None => writeln!(
+                w,
+                "    all {}, {}",
+                plural(self.behaviors, "behavior"),
+                plural(self.events, "event"),
+            )?,
+        }
+        for (behavior, stats) in &self.head {
+            writeln!(
+                w,
+                "    {:>5}  {:<13}  {}",
+                stats.count,
+                behavior.kind.as_str(),
+                printable(&behavior.template, 78),
+            )?;
+        }
+        if let Some((lines, on, worst)) = &self.errors {
+            // What the input said about itself, counted — not siftr deciding something went wrong.
+            writeln!(
+                w,
+                "    error lines: {} on {} — {}",
+                lines,
+                plural(*on, "behavior"),
+                printable(&worst.template, 70),
+            )?;
+        }
+        if let Some((behavior, d)) = &self.slowest {
+            writeln!(
+                w,
+                "    most time: {} over {} — {}",
+                duration(d.total),
+                plural(d.count, "occurrence"),
+                printable(&behavior.template, 64),
+            )?;
+        }
+        if let Some((behaviors, of_events)) = self.once {
+            writeln!(
+                w,
+                "    seen once: {} of {}, {of_events}% of events",
+                behaviors, self.behaviors,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// A share as a percentage, to the two significant figures a ratio of counts has. Rounded here, where it is
+/// built, so `-j` can never print digits the human line was careful not to claim.
+fn share(part: u64, whole: u64) -> f64 {
+    match whole {
+        0 => 0.0,
+        whole => round_sig(part as f64 * 100.0 / whole as f64, 2),
+    }
+}
+
 /// Signals that share a group, headline first.
 pub struct Group<'a> {
     pub rank: u32,
@@ -421,6 +598,9 @@ pub struct Changes<'a> {
     pub signals: &'a [StoredSignal],
     /// Earlier signals the baseline has absorbed without their change going away.
     pub open_signals: &'a [StoredSignal],
+    /// What the input held, for a run that made no comparison and so has no changes to report. `None`
+    /// wherever a comparison was made, or wasn't this command's to describe.
+    pub described: Option<&'a Described>,
 }
 
 impl Changes<'_> {
@@ -476,6 +656,7 @@ impl Changes<'_> {
             })).collect::<Vec<_>>(),
             "signals": signals.into_iter().map(signal_json).collect::<Vec<_>>(),
             "open_signals": self.open_signals.iter().map(signal_json).collect::<Vec<_>>(),
+            "described": self.described.map(Described::json),
         })
     }
 
@@ -493,6 +674,7 @@ impl Changes<'_> {
             "groups": [],
             "signals": [],
             "open_signals": [],
+            "described": null,
         })
     }
 
@@ -595,6 +777,9 @@ impl Changes<'_> {
         }
         if let Some(first) = first {
             first.render(w)?;
+        }
+        if let Some(described) = self.described {
+            described.render(w)?;
         }
         // `-n` says how many changes to read; without it the report shows its usual few. Either way the line
         // below counts the rest, and `-j` without `-n` is still the whole report.
