@@ -4,7 +4,8 @@
 //! 2. a subcommand;
 //! 3. a preset (`cron`);
 //! 4. an existing file, or `-`, is ingested (`./cron` for a file named like a preset);
-//! 5. nothing at all, with stdin piped or redirected: ingest stdin;
+//! 5. nothing but flags, with stdin piped or redirected: ingest stdin (`tail -f log | siftr -J`),
+//!    except `--help`/`--version`, which answer for themselves;
 //! 6. nothing at all otherwise: clap prints help;
 //! 7. any other word is an error naming the subcommands and presets, never input.
 
@@ -46,6 +47,14 @@ pub fn dispatch(mut args: Vec<OsString>, env: &Env) -> anyhow::Result<Vec<OsStri
         .is_some_and(|end| args[at..at + end].iter().all(is_flag));
     if wraps {
         args.insert(at, "run".into());
+        return Ok(args);
+    }
+    // Flags and nothing to apply them to: piped stdin is the input, so this is an ingest of it, and
+    // `tail -f log | siftr -J` streams rather than printing help. `--help` and `--version` are answers
+    // in themselves, and a positional we didn't recognise stays an error rather than becoming a flag's
+    // argument.
+    if args[at..].iter().all(is_flag) && env.stdin_piped && !args[at..].iter().any(is_answer) {
+        args.insert(at, "ingest".into());
         return Ok(args);
     }
     if is_flag(&args[at])
@@ -99,6 +108,11 @@ fn globals_end(args: &[OsString]) -> usize {
 fn is_flag(arg: &OsString) -> bool {
     arg.to_str()
         .is_some_and(|arg| arg.len() > 1 && arg.starts_with('-') && arg != "--")
+}
+
+/// A flag that is the whole answer, so it never becomes a subcommand's.
+fn is_answer(arg: &OsString) -> bool {
+    matches!(arg.to_str(), Some("-h" | "--help" | "-V" | "--version"))
 }
 
 /// Commands that were removed, the exact thing to type instead, and — where the replacement does more than
@@ -271,6 +285,39 @@ mod tests {
         );
         let far = with(&[], &[], false, &["xyzzy"]).unwrap_err();
         assert!(!far.contains("did you mean"), "{far}");
+    }
+
+    /// `-J` is ingest's flag, not a global, so a lone one used to reach clap as a subcommandless
+    /// invocation and print help — with a log on stdin waiting to be read.
+    #[test]
+    fn flags_over_a_piped_stdin_ingest_it() {
+        assert_eq!(with(&[], &[], true, &["-J"]).unwrap(), "ingest -J");
+        assert_eq!(
+            with(&[], &[], true, &["--no-report"]).unwrap(),
+            "ingest --no-report"
+        );
+        assert_eq!(
+            with(&[], &[], true, &["-j", "-J"]).unwrap(),
+            "-j ingest -J",
+            "a global still lifts ahead of the subcommand"
+        );
+        for answer in ["-h", "--help", "-V", "--version"] {
+            assert_eq!(
+                with(&[], &[], true, &[answer]).unwrap(),
+                answer,
+                "{answer} answers for itself"
+            );
+        }
+        assert_eq!(
+            with(&[], &[], false, &["-J"]).unwrap(),
+            "-J",
+            "no pipe, no input: still clap's to reject"
+        );
+        assert_eq!(
+            with(&[], &[], true, &["-J", "nope"]).unwrap(),
+            "-J nope",
+            "an unrecognised positional never becomes a flag's argument"
+        );
     }
 
     /// A command we removed is a word fingers keep typing, and it is too far from its replacement for
