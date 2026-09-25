@@ -99,8 +99,13 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
     };
 
     let context = Context::named(location.project, context_name);
+    let store = globals.open_store()?;
+    // Asked before this run exists, because the note below belongs to the context rather than to a run that
+    // compared with nothing: an interrupted read never joins a baseline, so "no baseline" recurs and "no
+    // earlier run" happens once.
+    let first_of_context = store.latest_run_of(&context)?.is_none();
     let mut recording = Recording::begin(
-        globals.open_store()?,
+        store,
         context,
         &shell_join(&argv),
         &location.cwd,
@@ -133,6 +138,7 @@ pub fn run(args: Args, globals: &Globals) -> Result<ExitCode> {
         // nothing; only an input siftr has just read as a stream is an input it can describe.
         streamed: args.dir.is_none(),
         unnamed: args.file.is_none() && args.dir.is_none() && named_context.is_none(),
+        first_of_context,
         ndjson: args.ndjson,
     };
     report(globals, &args.report, read, &recorded)?;
@@ -152,6 +158,8 @@ struct Reading {
     streamed: bool,
     /// Read from a pipe siftr can't name, and so filed in the context every other unnamed pipe shares.
     unnamed: bool,
+    /// Whether the context held no run before this one.
+    first_of_context: bool,
     ndjson: bool,
 }
 
@@ -188,7 +196,7 @@ fn report(
     } else {
         output::emit(globals.json, || changes.json(), |w| changes.human(w))?;
     }
-    if read.unnamed && recorded.baseline_runs.is_empty() {
+    if read.unnamed && read.first_of_context {
         note_unnamed(recorded.run.id);
     }
     let shown = output::surfaced(&recorded.signals, globals.json)

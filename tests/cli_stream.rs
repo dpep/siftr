@@ -408,3 +408,51 @@ fn asking_for_quiet_silences_the_stream_too() {
         assert!(stdout(&out).is_empty(), "{flag}: {}", stdout(&out));
     }
 }
+
+/// The note teaches a rule about the *context*, so it belongs to that context's first run. Keying it on an
+/// empty baseline said it again on every Ctrl-C, because an interrupted read never joins one.
+#[test]
+fn the_unnamed_pipe_note_is_said_once_however_often_a_read_is_interrupted() {
+    let sandbox = Sandbox::new();
+    const NOTE: &str = "stdin has no name";
+
+    let first = interrupted_unnamed_read(&sandbox);
+    assert!(
+        first.contains(NOTE),
+        "the context's first run teaches the rule: {first}"
+    );
+    let second = interrupted_unnamed_read(&sandbox);
+    assert!(
+        !second.contains(NOTE),
+        "and no later run repeats it, though neither has a baseline: {second}"
+    );
+}
+
+/// A bare `siftr -` ended by a signal rather than by its writer closing, as a `tail -f` is. Returns stderr.
+fn interrupted_unnamed_read(sandbox: &Sandbox) -> String {
+    let mut child = sandbox
+        .siftr(&["-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let (kept, _) = CORPUS.rsplit_once("job ").unwrap();
+    stdin.write_all(kept.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    // Proof the bytes reached the analyzer before the signal does.
+    first_line(&mut child);
+
+    kill_process(Pid::from_child(&child), Signal::INT).unwrap();
+    child.wait().unwrap();
+    drop(stdin);
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    stderr
+}
