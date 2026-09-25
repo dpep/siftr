@@ -15,6 +15,19 @@ machine, one day apart. Every ingest used `--context`, a scratch `--home` and a
 scratch project dir. No private log content appears below; templates are siftr's
 own output, and every reproduction case is synthetic.
 
+**Status, checked 2026-09-25.** Everything below records **0.1.3** and is kept as
+the measurement that justified the fixes, so its numbers are of that build and
+are deliberately not re-run. What has been re-measured since:
+
+| gap | status |
+|---|---|
+| 2.1 a weekday splits one behavior seven ways | **fixed** in `6181bd8` (2026-09-16) — the reproduction now yields one behavior |
+| 2.2 the host is unmasked after ISO-8601 | **fixed** in the same commit — the reproduction now yields one behavior |
+| 2.3 nothing bounds a run's signal count | **fixed** — `signal::MAX_SIGNALS` (1,000); a comparison producing more records none and the run reads `uncompared` |
+| 2.4 grouping never fires outside RSpec | **still open**, and seen again on 2026-09-25: a cargo suite gaining 14 tests reported 14 separate signals |
+
+2.5–2.8 have not been re-measured; treat them as neither confirmed nor resolved.
+
 ## 1. What it got right
 
 **The template is the right unit on BSD syslog.** 3796 lines of one day's
@@ -43,6 +56,12 @@ window in about 1s.
 ## 2. What it got wrong
 
 ### 2.1 The weekday name is not masked, so every behavior splits seven ways
+
+> **Fixed** in `6181bd8` (2026-09-16), "Mask a ctime weekday and an ISO-8601
+> line's host". Re-run 2026-09-25, the reproduction below gives **one** behavior
+> rather than three, and the weekday masks into `<timestamp>`. The table's 254
+> signals were measured against the broken build and stay as the evidence that
+> earned the fix. Held by `normalize_timestamps::a_ctime_weekday_is_part_of_the_timestamp`.
 
 `wifi.log` uses ctime stamps. siftr masks the time but keeps the weekday, so one
 log statement becomes seven behaviors — `Tue Sep <int> <timestamp> …`,
@@ -93,6 +112,11 @@ fractional seconds.
 
 ### 2.2 The host is only masked after a BSD timestamp, not after ISO-8601
 
+> **Fixed** in the same commit, `6181bd8`. Re-run 2026-09-25, the six lines below
+> are **one** behavior — `<timestamp> <host> foo[<int>]: widget ready` — where
+> this section records three. Held by
+> `normalize_timestamps::two_hosts_in_three_timestamp_formats_are_one_behavior`.
+
 Synthetic reproduction, two hosts in three timestamp formats:
 
 ```
@@ -124,6 +148,11 @@ thing `pii` exists to keep out.
 
 ### 2.3 Nothing bounds a run's signal count
 
+> **Fixed.** `signal::MAX_SIGNALS` is 1,000: a comparison producing more records
+> **none** of them, and the run reads `uncompared` with the count it would have
+> produced. "The comparison failed" is now what siftr says, rather than a headline
+> number implying it succeeded. Held by `tests/refuse_flood.rs`.
+
 One `unified` window produced **8,952 changes**. Across the 8-run context siftr
 recorded **38,244 signals**, of which 9,366 were still open at the end. `changes`
 does cap what it *prints* (top 3, then "… 8,949 more"), but the store, the
@@ -135,6 +164,12 @@ Principle 3 says a signal the developer ignores is a cost. Here the cost is the
 entire output.
 
 ### 2.4 Grouping never fires outside RSpec
+
+> **Still open**, and no longer only about logs. On 2026-09-25 siftr's own gate
+> recorded a cargo suite that had gained 14 tests and reported **14 separate
+> NEW signals** — one action, fourteen findings. rspec examples group by their
+> spec file (`signal::tests::examples_added_in_one_file_are_one_group`); a cargo
+> test carries no file to group by, so nothing can.
 
 `changes r25 -j`: 8,952 signals, 8,952 groups, maximum group size 1.
 
