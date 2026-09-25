@@ -1,13 +1,19 @@
 # siftr's JSON output
 
-`-j` prints exactly one JSON document on stdout, on every command but `follow`.
-This file says what shape each one is. **JSON field names are a contract; human
-text is not.**
+`-j` prints exactly one JSON document on stdout, on every command. This file says
+what shape each one is. **JSON field names are a contract; human text is not.**
 
-`follow` streams, so a pretty document — which has one beginning and one end —
-could never end: it takes `-J` instead, one compact object per line, with the
-fields `seq`, `stream`, `behavior`, `kind` and `template`. `follow -j` is a
-usage error.
+`-j` deliberately cannot stream: a pretty document has one beginning and one end,
+and a read's input may never reach an end. So the reading path — `siftr FILE`,
+`siftr -`, `siftr DIR`, a piped `siftr` — also takes **`-J`**: one compact object
+per behavior as it is first seen, with the fields `seq`, `stream`, `behavior`,
+`kind` and `template`, then the whole `-j` document as one final line, so a single
+pipe carries both the stream and the comparison. The two flags can't be combined.
+`-J` is the reading path's alone; every other command has one answer and prints it
+with `-j`.
+
+A replayed directory has no first-seen order to stream, so under `-J` it prints
+the final document and nothing before it.
 
 Every example here was produced by running the binary, not written by hand.
 
@@ -55,7 +61,7 @@ These appear inside several commands' documents.
   "id": "r5",
   "project": "/path/to/project",
   "context": "demo",
-  "command": "siftr ingest --context demo --dir …",
+  "command": "siftr ingest --context demo --dir fixtures/rails_demo/baseline",
   "cwd": "/path/to/project",
   "started_at_ms": 1789623164816,
   "finished": true,
@@ -68,6 +74,11 @@ These appear inside several commands' documents.
   "complete": true
 }
 ```
+
+**`command` is how siftr recorded the run, not always a line you can retype.** A
+read is stored under an internal `siftr ingest …` spelling, whatever the user
+typed — and `ingest` is no longer a word the CLI accepts, so pasting one back is
+an error. Group runs by `context`, never by parsing this.
 
 `interrupted` is the signal number, or null; an interrupted run is never compared
 and never becomes a baseline. `complete` is false when the run is unfinished,
@@ -182,15 +193,19 @@ at 1024 bytes with credentials masked; raw ANSI is preserved as captured.
 
 ## Per command
 
-### `changes` — also `run -j` and `ingest -j`
+### `changes` — also `run -j` and a read's own document
 
-An object. All three emit the same document.
+An object. `siftr changes`, `siftr run -j` and a read (`siftr FILE`, `siftr -`,
+`siftr DIR`, a piped `siftr`) all emit the same document. Two of its fields,
+`streams` and `described`, are filled by some of those commands and null in the
+others — see [Traps](#traps).
 
 ```json
 {
   "run": { "…": "the run object" },
   "behaviors": 47,
   "streams": null,
+  "described": null,
   "baseline_runs": ["r4", "r3", "r2", "r1"],
   "skipped_runs": [],
   "changes": 1,
@@ -209,8 +224,8 @@ An object. All three emit the same document.
   (highest-ranked first) and the signals those groups name, so
   **`groups_total` greater than `groups | length` is what a limit left out.**
   `changes` and both totals are the run's own numbers and never shrink with
-  `-n`. Without `-n` the document is complete, and `run -j` and `ingest -j`
-  always are.
+  `-n`. Without `-n` the document is complete, and `run -j` and a read's own
+  document always are.
 - A run with `uncompared` set recorded no signals at all: `signals`, `groups`
   and `open_signals` are empty and `signals_total` is 0, while
   `run.uncompared` says how many signals were refused — signals, not the
@@ -229,7 +244,49 @@ An object. All three emit the same document.
 - `run -j` adds `not_recorded: {code, message}` when the store was unusable or
   busy. The exit code is still the wrapped command's.
 
-**`streams` is the trap.** See below.
+**`streams` and `described` are the traps.** See below.
+
+#### `described`
+
+What the input held, on a run that made **no comparison** — a context's first
+run, an interrupted one, or one whose comparison was refused. Null wherever a
+comparison was made, and null in `changes -j` and `run -j` always: **only a
+streaming read ever fills it**, so a replayed directory gets null too. See
+[Traps](#traps).
+
+Nothing in it is a finding. It has no confidence, no anomaly claim and no
+prediction about what will recur, because novelty in a log is not news — treating
+it as news on a real log produced 10,362 of them and a comparison siftr refused
+outright ([findings/log-contexts.md](findings/log-contexts.md)). **Don't gate on
+it.**
+
+```json
+{
+  "behaviors": 5,
+  "events": 10,
+  "head": [ { "behavior": { "…": "behavior object" }, "stats": { "…": "stats object" } } ],
+  "head_share": 80.0,
+  "errors": { "lines": 1, "behaviors": 1, "worst": { "…": "behavior object" } },
+  "slowest": { "behavior": { "…": "behavior object" }, "total_ms": 15, "count": 3 },
+  "seen_once": { "behaviors": 2, "share_of_events": 20.0 }
+}
+```
+
+- `behaviors` and `events` count the run's own behaviors carrying at least one
+  event, and their total occurrences. The run-level `run.resources` behavior has
+  no line behind it and is out of every number here.
+- `head` is the three most frequent, most frequent first, each
+  `{behavior, stats}`. `head_share` is the percentage of `events` they carry, and
+  is **null when `head` is every behavior there is** — "the top 3 of 3 carry 100%"
+  states nothing.
+- `errors` is `{lines, behaviors, worst}`: lines the input *itself* marked as
+  errors, not siftr's judgement. Null when none did.
+- `slowest` is `{behavior, total_ms, count}` — the largest total parsed duration
+  in the run, which is not a claim that it is slow. Null when no line carried one.
+- `seen_once` is `{behaviors, share_of_events}` for behaviors that occurred
+  exactly once. Null when every behavior recurred.
+
+Shares are percentages, rounded to two significant figures where they are built.
 
 ### `summary`
 
@@ -386,8 +443,9 @@ null for a source that opens none (`rusage` reads the kernel's accounting, not a
 file).
 
 `sources: null` means **the run recorded none, so it cannot say what it read** —
-not that it read nothing. `ingest` replays a capture rather than choosing
-sources, so an ingested run is always null:
+not that it read nothing. A read chooses no sources — it takes the bytes it was
+handed — so a run from `siftr FILE`, `siftr -`, `siftr DIR` or a pipe is always
+null:
 
 ```json
 [
@@ -531,7 +589,7 @@ command, wrapped}]}]` and `evidence` `[{source, status, detail, lines}]`.
 
 These are the places where a reasonable guess is wrong.
 
-**`streams` is null in `changes`, a list in `run` and `ingest`.** Same field,
+**`streams` is null in `changes`, a list in `run -j` and a read.** Same field,
 same document type, two different things:
 
 ```
@@ -554,15 +612,35 @@ produced nothing. So `changes` reports null rather than answering the question i
 can answer under the name of the one it can't. For a run's provenance after the
 fact, use `history --sources`.
 
+**`described` needs two things at once, and `changes -j` can never give you
+either.** It is filled only when the run made **no comparison** *and* the input
+was streamed — so `siftr FILE`, `siftr -` and a piped `siftr` can fill it, and
+`changes -j`, `run -j` and a replayed `siftr DIR` never do:
+
+```
+$ siftr -j app.log | jq '.described.behaviors'   # first read of this log
+5
+
+$ siftr changes r1 -j | jq .described            # the same run, asked afterwards
+null
+```
+
+A replay is null because it has no first-seen order to describe; `changes` and
+`run -j` are null because the description is built from the run's aggregates as
+the read reports them, not stored. So **null here never means "the run was
+compared"** — to ask whether it was, read `baseline_runs`, `run.interrupted` and
+`run.uncompared`. And a run that made no comparison has no verdict, so nothing
+may judge from it: not a gate, not an exit code, not another signal's outcome.
+
 **"What siftr can read" and "what a run read" are different questions.**
 `siftr sources` is prospective and configuration-shaped; `history --sources` is
 what the recording observed. They legitimately disagree — a source can be `on`
 and `applies: true` and still feed a run nothing, in which case it appears in
 `sources` but not in that run's recorded sources.
 
-**Absent is not zero.** `sources: null`, `streams: null`, `duration: null`,
-`attribution: null`, `database: null` and `unknown_reason` all mean "no answer
-available", never "the answer is none".
+**Absent is not zero.** `sources: null`, `streams: null`, `described: null`,
+`duration: null`, `attribution: null`, `database: null` and `unknown_reason` all
+mean "no answer available", never "the answer is none".
 
 **`-n` truncates silently in most commands.** `changes` and `summary` carry
 totals beside their limited arrays (`groups_total`/`signals_total`,
