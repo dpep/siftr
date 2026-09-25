@@ -16,7 +16,7 @@ pub struct Args {
     /// Run id, like r42 [default: the latest run in this project, or in --context]
     run: Option<RunId>,
 
-    /// The latest run of this context, as `siftr history` shows it (e.g. the `ingest --context` name)
+    /// The latest run of this context, as `siftr history` shows it (a wrapped command, or a read's `--context` name)
     ///
     /// A context is one project plus one command line exactly as typed, and that is what makes two
     /// runs comparable: `bundle exec rspec` and `bundle exec rspec spec/models` are two contexts
