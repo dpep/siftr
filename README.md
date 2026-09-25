@@ -94,23 +94,23 @@ Or from a clone: `cargo install --path .`
 
 ```
 siftr -- CMD…     same as siftr run -- CMD…
-siftr FILE        same as siftr ingest FILE, compared only with earlier ingests of that file
-siftr -           ingest stdin; so does a bare siftr when stdin is piped or redirected
+siftr FILE        same as siftr ingest FILE, compared only with earlier reads of that file
+siftr -           the same for stdin; so does a bare siftr when stdin is piped or redirected
 ```
 
 A subcommand or a preset always wins over a file of the same name: `siftr status` is the command, `siftr ./status` the file. A dated or rotated file compares with nothing until you name its context: `siftr app-0915.log --context app`. Any other word is an error, never a file name:
 
 ```
 $ siftr statu; echo "exit=$?"
-siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, follow, changes, summary, explain, ack, history, sources, status, gc; presets: cron
+siftr: error: 'statu' is not a command, preset or existing file; did you mean 'status'? commands: run, ingest, changes, summary, explain, ack, history, sources, status, gc; presets: cron
 exit=2
 ```
 
-A command that used to exist is answered directly with what to type instead, rather than with the whole list:
+A command that used to exist is answered directly with what to type instead, rather than with the whole list — and, where the replacement does more than the old word did, with what you would otherwise assume you had lost:
 
 ```
-$ siftr dismiss s1; echo "exit=$?"
-siftr: error: 'dismiss' was removed; use `siftr ack SIGNAL --wrong`
+$ siftr follow; echo "exit=$?"
+siftr: error: 'follow' was removed; use `siftr - (or siftr FILE)` — it streams the same behaviors, and then records and compares the run
 exit=2
 ```
 
@@ -269,6 +269,55 @@ r4 vs 3 baseline runs (r1 r2 r3): 2 changes, most important first
 next: siftr explain s1
 ```
 
+### Reading a log
+
+`siftr FILE`, `cat log | siftr` and `tail -f log | siftr` are one path, differing only in whether the input ends. Each streams every behavior the first time it is seen, then records the run, compares it with earlier runs of the same context, and reports — the walkthrough is under [Point it at a log](#point-it-at-a-log). `siftr ingest` is the same path spelled out, and the only spelling that takes `--context`, `--dir`, `-J` and the quiet flags; `-j` and `--home` work on the bare form too.
+
+The stream doesn't wait for an EOF, which is what makes a live tail work at all:
+
+```
+$ tail -f log/production.log | siftr
+siftr: reading; each behavior is reported the first time it is seen
+      1  log            I, [<timestamp> #<int>] INFO -- : Started GET "/users/<int>" for <ip> at <timestamp>
+      2  log            I, [<timestamp> #<int>] INFO -- : Completed <int> OK in <duration> (Views: <duration> | ActiveRecord: <duration>)
+^C
+r5: interrupted by signal 2; kept as evidence, not compared, never a baseline
+  in this input, not a comparison:
+    all 2 behaviors, 12 events
+        6  log            I, [<timestamp> #<int>] INFO -- : Completed <int> OK in <duration> (Views: <du…
+        6  log            I, [<timestamp> #<int>] INFO -- : Started GET "/users/<int>" for <ip> at <time…
+    most time: 27ms over 6 occurrences — I, [<timestamp> #<int>] INFO -- : Completed <int> OK in <duratio…
+next: siftr summary r5
+```
+
+The behaviors are stdout, as data; everything siftr says about itself is stderr. Only the **first** sighting of a behavior prints, which is what keeps a tail readable rather than a second copy of the log: 100 templates carry 70% of a real log's lines and 1,000 carry 88% ([docs/findings/log-contexts.md](docs/findings/log-contexts.md)), so after a short warmup siftr is quiet until something genuinely novel arrives. It doesn't go *silent* — the one-off tail keeps trickling, about 4.8% of lines on a whole-system log and 0.3% on a narrow one. Past 20,000 distinct behaviors siftr says so once on stderr and reports no more. Only the template ever streams, never a raw line, so no `SIFTR_REDACT` setting changes what it can disclose.
+
+**Ctrl-C ends the input the way EOF does.** The run is kept, reported and described, and — being partial — never compared and never used as a baseline: its missing tail would read as everything disappearing. siftr then dies of the signal rather than exiting 0, so a shell loop around it stops. An interrupted run doesn't poison what follows; `siftr history` marks it `interrupted (signal 2)`, and the next whole read compares as normal.
+
+**A pipe has no name.** `cat a.log | siftr` and `cat b.log | siftr` are the same file descriptor, so siftr cannot tell them apart: every unnamed pipe in a project shares one context, while `siftr app.log`, which does have a name, gets its own. Whenever an unnamed read has no baseline to compare with, siftr says so on stderr:
+
+```
+siftr: r5: stdin has no name, so this compares with other unnamed pipes here rather than with `siftr FILE` of the same log; --context NAME gives it one
+```
+
+Filing one log under two contexts costs you a "no earlier runs" line and is fixed by naming it; filing two different logs under one context is the failure that floods a comparison until siftr refuses it.
+
+Flags, on the `siftr ingest` spelling:
+
+- `--context NAME` groups comparable inputs (default `ingest`, the context every unnamed pipe shares). This is how a piped log joins a named one, and how a dated or rotated file joins yesterday's.
+- `--dir DIR` replays a captured scenario — any of `stdout.txt`, `stderr.txt`, `rspec.ndjson`, `test.log`, `exit_code.txt`. Whole files, one after another: a replay doesn't stream.
+- `-j` prints exactly one document, when the input ends, and never streams. `-J` prints one compact JSON object per behavior as it is first seen (`seq`, `stream`, `behavior`, `kind`, `template`), then the whole `-j` report as a final line, so one pipe carries the stream and the comparison. The two can't be combined.
+- `--quiet-unless-changed` and `--no-report` work as they do for `run` — and both stop the stream as well, since one asks for nothing at all and the other for nothing until something changed, which isn't known until the input ends. Neither is any use on a tail.
+
+```
+$ siftr ingest --context demo --dir fixtures/rails_demo/baseline      # and baseline_2
+$ siftr ingest --context demo --dir fixtures/rails_demo/slow
+r3 vs 2 baseline runs (r1 r2): 1 change
+  s1   LATENCY     2 baseline runs  ./spec/models/post_spec.rb # Post summarizes the body  5.37ms → 311ms
+       evidence: 1 line
+next: siftr explain s1
+```
+
 ### `siftr changes [RUN]`
 
 The same report for any run (default: the latest in this project). `--context NAME` picks the latest run of a context instead.
@@ -345,7 +394,7 @@ next: siftr explain 332a3a42c0 --run r4
 
 ### `siftr history`
 
-Runs recorded in this project, newest first. `--context NAME` filters (a context with no runs is an error, exit 2), `-n` limits. `incomplete` marks a run that skipped examples its baseline ran, so its changes don't mean what a whole run's do.
+Runs recorded in this project, newest first. `--context NAME` filters (a context with no runs is an error, exit 2), `-n` limits. `incomplete` marks a run that skipped examples its baseline ran, so its changes don't mean what a whole run's do; `interrupted (signal 2)` marks one a Ctrl-C ended, which was never compared and is never a baseline.
 
 ```
 $ siftr history
@@ -420,41 +469,6 @@ next: siftr history --signals
 
 A judgement holds however often the change comes back, so you can answer a regression the third time it returns and never hear about it again.
 
-### `siftr ingest [FILE]`
-
-Records a file, or stdin, as a run's stdout, for output you already have. `--context NAME` groups comparable inputs (default `ingest`). `--dir DIR` replays a captured scenario: any of `stdout.txt`, `stderr.txt`, `rspec.ndjson`, `test.log`, `exit_code.txt`. `--quiet-unless-changed` and `--no-report` work as for `run`.
-
-```
-$ siftr ingest --context demo --dir fixtures/rails_demo/baseline      # and baseline_2
-$ siftr ingest --context demo --dir fixtures/rails_demo/slow
-r15 vs 2 baseline runs (r13 r14): 1 change
-  s9   LATENCY     2 baseline runs  ./spec/models/post_spec.rb # Post summarizes the body  5.37ms → 311ms
-       evidence: 1 line
-next: siftr explain s9
-```
-
-### `siftr follow`
-
-Reports each shape on stdin the first time it is seen, while the input is still open — for pointing siftr at a live log. `ingest` reads to EOF before it records or compares anything, and a `tail -f` never reaches EOF, so it would stay silent forever.
-
-```
-$ tail -f log/production.log | siftr follow
-siftr: following stdin; reporting each shape the first time it is seen
-      1  log            Started GET "/users/<int>" for <ip> at <timestamp>
-      2  log            User Load (<duration>) SELECT "users".* FROM "users" WHERE "users"."id" = <int> LIMIT <int>
-      3  log            Completed <int> OK in <duration> (Views: <duration> | ActiveRecord: <duration>)
-      7  log            E, [<timestamp>] ERROR -- : boom id=<int>
-```
-
-Only the **first** sighting of a shape prints, which is what makes a follow readable rather than a second copy of the log: 100 templates carry 70% of a real log's lines and 1,000 carry 88% ([docs/findings/log-contexts.md](docs/findings/log-contexts.md)), so after a short warmup a follow is quiet until something genuinely novel arrives. It doesn't go *silent* — the one-off tail keeps trickling, about 4.8% of lines on a whole-system log and 0.3% on a narrow one.
-
-It records nothing: no run, no baseline, no comparison, nothing written to the data directory. Comparing a stream nobody ever closes needs a windowing policy first, and that is still an open question. The shapes are exactly the behaviors `siftr ingest` records for the same bytes — one normalizer, one interpreter chain.
-
-- `-J` prints one compact JSON object per line: `seq`, `stream`, `behavior`, `kind`, `template`.
-- `-j` is a usage error. A pretty JSON document has one beginning and one end; a follow has neither.
-- Only the template is ever printed, never a raw line, so no `SIFTR_REDACT` setting changes what a follow can disclose.
-- Past 20,000 distinct shapes siftr says so once on stderr and reports no more.
-
 ### `siftr cron`
 
 What runs on a schedule here, where cron's output goes, and the line that records each crontab job through `siftr --quiet-unless-changed --`. It reads your crontab, `/etc/crontab`, `/etc/cron.d`, launchd user agents on a calendar or interval, the mail spool, `/var/log/cron`, syslog and the macOS unified log. It edits nothing, runs no job and records nothing. With a synthetic crontab and agent:
@@ -517,14 +531,14 @@ With no command it judges the directory alone, and says that's what it did. This
 ### Common flags and exit codes
 
 - `-j` prints exactly one JSON document on stdout, on every command. Empty results are still that command's document (exit 1). Errors, argument errors included, are `{"error": {"code", "message"}}` (exit 2), where `code` is `usage`, `not_found`, `busy` (another siftr held the data directory too long; retry) or `failed`. **[docs/json.md](docs/json.md) describes every command's document field by field**, including the shapes that differ between commands — three commands return a bare array, and `streams` is null in `changes` but a list in `run -j`.
+- `-J` is `siftr ingest`'s alone: one compact object per behavior as it is first seen, then the whole `-j` report as a final line. Every other command has one answer and prints it with `-j`.
 - `--home DIR` or `SIFTR_HOME`: the data directory. Default `$XDG_DATA_HOME/siftr`, else `~/.local/share/siftr`.
 - Every human report ends with a `next:` line: the command to drill down with.
 
 | Command | Exit |
 |---|---|
 | `run` | the command's own code; 125 if siftr fails before starting it, 126 if it can't be executed, 127 if not found |
-| `ingest` | 0 recorded, 2 error |
-| `follow` | 0 the input ended, 2 error |
+| `ingest`, and `siftr FILE` or a pipe | 0 recorded, 2 error — or dies of the signal that ended the input, so 130 after a Ctrl-C |
 | `cron` | 0 found a job or cron output, 1 found neither, 2 error |
 | `sources` | 0 listed, 2 error |
 | `changes`, `explain`, `summary`, `history` | 0 results, 1 nothing found, 2 error |
