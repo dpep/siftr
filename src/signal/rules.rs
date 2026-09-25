@@ -60,6 +60,13 @@ pub struct Frequency {
 }
 
 /// `baseline` holds the measure from every baseline run; a run without it disqualifies the comparison.
+///
+/// The zero tolerance an exact baseline grants is right for a count that holds still, which is what
+/// `signals.md` §1 measured a suite's counts doing. On a count that varies it is a coincidence at
+/// small `n` — and so is the varying arm's `VARYING_WIDTHS * width`, which the range of two draws
+/// makes a weaker bar than the range of five. Both were priced in `docs/findings/frequency-small-n.md`
+/// and left alone: the rate is ~25% at n = 2 whatever the count's size, so no guard on either branch
+/// alone is worth what it costs in real changes.
 pub fn frequency(baseline: &[f64], current: f64) -> Option<Frequency> {
     let n = baseline.len();
     if n < MIN_RUNS {

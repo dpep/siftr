@@ -223,6 +223,10 @@ recall tables stand. The prediction is re-registered per load regime in
   Verify on a larger Rails app before trusting exact per-example counts there.
 - **Confidence calibration** is untested beyond ordering. One latency toggle
   can't calibrate e/(1+e).
+- **Counts that vary at all.** §1 measured every count in this corpus as exactly
+  deterministic, so none of the above says what FREQUENCY does to a count that
+  moves on its own. Priced in `frequency-small-n.md` (§9 below): about a quarter
+  of comparisons at n = 2, whatever the count's size.
 
 ## 6. Test vectors
 
@@ -478,3 +482,34 @@ line, no persistent-errors section. What would change the answer:
 
 Shipped from this: `log show`/`log stream` column headers (default, compact
 and syslog styles) are no longer a behavior, in `interpret::generic`.
+
+## 9. FREQUENCY on counts that vary: nothing changed (2026-09-25)
+
+§3's zero false positives came from a corpus whose counts §1 measured as exactly
+deterministic, so it could not price either branch of `rules::frequency` against
+a count that moves on its own. `frequency-small-n.md` does, on synthetic stable
+generators, and **§2's rules and thresholds are unchanged** as a result.
+
+The occasion was a FREQUENCY false positive on the third read of a synthetic log:
+two runs coincided, so the third met `min == max` and any change counted. That
+is real — an exact baseline is a coincidence 17% of the time at a count of ~3 at
+n = 2, and nearly every such baseline then fires. But the rule's total false
+positive rate at n = 2 is **about a quarter of comparisons whatever the count's
+size** (24–26% from counts of 1 to 100); what the size moves is only which
+branch does it, since the varying branch's `2 × (max − min)` is a ~2.3σ bar at
+n = 2 against a ~4.7σ one at n = 5. So every guard confined to the exact branch
+buys 0–6 of those 25 points and loses the smallest real changes on the
+deterministic counts §1 measured — permanently, since an unreported change is in
+the baseline by the next run. The rate falls with `n` alone: 25%, 7.5%, 3%, 1%,
+0.05% for n = 2, 3, 4, 5, 10.
+
+What the numbers do support is a floor of k·√(φ·median), with the
+variance-to-mean ratio φ estimated from the *median* behavior of the whole
+context rather than from the two or three values one behavior has. It is exactly
+zero on a context whose counts hold still, so it is inert on every corpus siftr
+has — which is also why it is not shipped: `k` needs a real log corpus to
+calibrate, and nothing here could check it. The ranking inversion (an exact
+baseline's undiscounted confidence outranking a discounted varying one) is
+priced there too, and left alone for the same reason.
+
+Harness: `tests/signals_backtest.rs`, sweeps under `--ignored`.
