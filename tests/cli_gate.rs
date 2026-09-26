@@ -70,14 +70,19 @@ fn the_gate_records_with_the_newest_local_build_and_says_which() {
         let mut perms = fs::metadata(&bin).unwrap().permissions();
         std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
         fs::set_permissions(&bin, perms).unwrap();
-        fs::File::open(&bin)
-            .unwrap()
-            .set_times(fs::FileTimes::new().set_modified(at))
+        // Closed before the gate runs it: Linux refuses to exec a file anyone still holds open for
+        // writing (ETXTBSY), where macOS doesn't care.
+        let file = fs::File::options().write(true).open(&bin).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(at))
             .unwrap();
+        drop(file);
         bin
     };
+    // `bash SCRIPT` rather than exec'ing the script: a copy this fresh can still be ETXTBSY on Linux, and
+    // `$0` still resolves ROOT either way. Executing it directly passed here and failed on CI.
     let which = || {
-        let output = Command::new(root.path().join("script/gate"))
+        let output = Command::new("bash")
+            .arg(root.path().join("script/gate"))
             .arg("--which")
             .env_remove("SIFTR_BIN")
             .output()
